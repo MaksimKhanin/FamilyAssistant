@@ -1,0 +1,73 @@
+# Серверная часть семейного ассистента: панель, бот, планировщик, БД и шина событий.
+# Домашний edge-воркер (камеры и YOLO) живёт вне Docker, рядом с камерами — см. docs/deployment.md.
+#
+#   cp .env.__EXAMPLE__ .env      # заполнить секреты
+#   docker compose up -d --build
+#   docker compose exec web python -m scripts.seed --name Марина --username marina --password ...
+
+x-app: &app
+  build: .
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_started
+  environment:
+    DATABASE_URL: postgresql://family:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/family_assistant
+    REDIS_URL: redis://redis:6379/0
+    MEDIA_ROOT: /media
+    SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+    INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+    COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+    TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+    LLM_API_KEY: ${LLM_API_KEY:-}
+    LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+    LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  volumes:
+    - media:/media
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: family
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: family_assistant
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U family -d family_assistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  # Веб-панель и ingest-эндпоинт для домашнего воркера.
+  web:
+    <<: *app
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+
+  # Telegram-бот: тот же диалог, что и в панели.
+  bot:
+    <<: *app
+    command: ["python", "-m", "app.channels.telegram.bot"]
+
+  # Расписания, напоминания и ротация архива с камер.
+  scheduler:
+    <<: *app
+    command: ["python", "-m", "app.scheduler"]
+
+volumes:
+  db:
+  media:

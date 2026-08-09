@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+<div class="dashed stack" style="max-width:520px;align-items:center;padding:36px;cursor:default">
+  <div style="color:var(--text-4)">{{ ic.icon("shield", 32) }}</div>
+  <div class="card-title">Модуль выключен</div>
+  <p class="muted">
+    Для {{ viewed_user.display_name|genitive }} безопасность пока не включена.
+    Включить её может глава семьи на экране «Семья и модули».
+  </p>
+  {% if current_user.is_head %}
+    <a class="btn" href="/settings/family">Открыть настройки семьи</a>
+  {% endif %}
+</div>
+{% endblock %}

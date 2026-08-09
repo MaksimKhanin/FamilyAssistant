@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row wrap" style="gap:8px;margin-bottom:16px">
+  {% for value, label in filters %}
+    <a class="chip {% if active_filter == value %}active{% endif %}"
+       href="/memory{% if value %}?kind={{ value }}{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div class="two-col">
+  <div class="stack">
+    {% for note in notes %}
+      <div class="card tight stack" style="gap:8px">
+        <div class="row wrap" style="gap:8px">
+          <span class="badge {{ note.kind }}">{{ kind_labels.get(note.kind, "заметка") }}</span>
+          <span class="tiny">{{ note.source }}</span>
+          {% if editable %}
+            <span class="spacer"></span>
+            <form method="post" action="/memory/{{ note.id }}/pin">
+              <button class="btn link small" type="submit">{{ "Закреплено" if note.pinned else "Закрепить" }}</button>
+            </form>
+            <form method="post" action="/memory/{{ note.id }}/forget">
+              <button class="btn link small" type="submit" style="color:var(--alarm-text)">Забыть</button>
+            </form>
+          {% endif %}
+        </div>
+        <div>{{ note.text }}</div>
+        <div class="tiny">
+          {% if note.when_text %}⏱ напомню: {{ note.when_text }}{% else %}когда придётся к слову{% endif %}
+        </div>
+      </div>
+    {% else %}
+      <div class="card stack">
+        <div class="card-title">Память пока пустая</div>
+        <p class="muted">Скажите ассистенту «запомни…» — или добавьте заметку справа.</p>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="stack">
+    {% if editable %}
+      <form class="card stack" method="post" action="/memory/add">
+        <div class="card-title">Добавить в память</div>
+        <textarea class="field" name="text" rows="3" placeholder="Например: Соня не ест грибы"></textarea>
+        <select class="field" name="kind">
+          {% for value, label in kind_labels.items() %}
+            <option value="{{ value }}" {% if value == "fact" %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn" type="submit">Добавить в память</button>
+      </form>
+    {% endif %}
+
+    <div class="card dark stack">
+      <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
+      <p>
+        Ассистент запоминает то, что всплывает в разговоре, и возвращается к этому,
+        когда приходится к слову. Ничего из этого не видят другие члены семьи.
+      </p>
+      <p class="tiny" style="color:var(--dark-text-2)">
+        {{ counters.total|counted("заметка", "заметки", "заметок") }} в памяти ·
+        {{ counters.waiting }} {{ counters.waiting|plural("ждёт", "ждут", "ждут") }} напоминания
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

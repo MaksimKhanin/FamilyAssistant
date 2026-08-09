@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="grid auto-260">
+  {% for camera in cameras %}
+    <div class="card stack">
+      <div style="position:relative">
+        <img class="camera-preview" src="/security/camera-preview/{{ camera.id }}" alt=""
+             onerror="this.style.visibility='hidden'">
+        <span class="badge neutral" style="position:absolute;top:10px;left:10px">{{ camera.zone }}</span>
+        <span class="badge {{ 'ok' if camera.notify_enabled else 'neutral' }}"
+              style="position:absolute;top:10px;right:10px">{{ camera.mode_label }}</span>
+      </div>
+      <div class="row">
+        <div>
+          <div class="card-title">{{ camera.label }}</div>
+          <div class="tiny">
+            тихие часы {{ "%02d"|format(camera.quiet_from) }}:00–{{ "%02d"|format(camera.quiet_to) }}:00
+          </div>
+        </div>
+        <form class="spacer" method="post" action="/security/cameras/{{ camera.id }}/notify">
+          <input type="hidden" name="enabled" value="{{ 'off' if camera.notify_enabled else 'on' }}">
+          <button class="toggle {% if camera.notify_enabled %}on{% endif %}" type="submit"
+                  title="{{ 'Выключить уведомления' if camera.notify_enabled else 'Включить уведомления' }}">
+            <span></span>
+          </button>
+        </form>
+      </div>
+      <p class="tiny">
+        {{ camera.hint or "Запись хранится " ~ camera.retention_days ~ " дней." }}
+      </p>
+    </div>
+  {% else %}
+    <div class="card stack">
+      <div class="card-title">Камер пока нет</div>
+      <p class="muted">
+        Камера появится здесь сама, как только домашний воркер пришлёт первое событие.
+        Настройка — в <span class="mono">edge/cameras.yml</span>.
+      </p>
+    </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

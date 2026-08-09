@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="stepper" style="max-width:640px">
+  {% for i in range(1, steps + 1) %}<i class="{% if i <= step %}on{% endif %}"></i>{% endfor %}
+</div>
+
+{% if step == 1 %}
+  <form class="card stack" method="post" action="/onboarding/name" style="max-width:520px">
+    <div class="card-title">Как называется ваша семья?</div>
+    <p class="muted">Это увидят все, кто зайдёт в панель. Можно поменять в любой момент.</p>
+    <input class="field" name="name" value="{{ family.name }}" autofocus>
+    <div class="row">
+      <a class="btn" href="/onboarding?step=2" style="visibility:hidden">Дальше</a>
+      <button class="btn spacer" type="submit">Дальше</button>
+    </div>
+  </form>
+
+{% elif step == 2 %}
+  <div class="card stack" style="max-width:640px">
+    <div class="card-title">Кто в семье</div>
+    {% for row in member_rows %}
+      <div class="row" style="gap:10px">
+        <span class="avatar small" style="background:{{ row.avatar.bg }};color:{{ row.avatar.fg }}">
+          {{ row.avatar.initial }}
+        </span>
+        <div style="flex:1">
+          <div style="font-weight:600">{{ row.user.display_name }}</div>
+          <div class="tiny">{{ row.user.relation or ("глава семьи" if row.user.is_head else "участник") }}</div>
+        </div>
+        {% if row.user.telegram_id %}
+          <span class="badge ok">подключён</span>
+        {% elif row.user.link_code %}
+          <span class="badge neutral">код: <span class="mono">{{ row.user.link_code }}</span></span>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    {% if can_toggle %}
+      <form class="row wrap" method="post" action="/onboarding/member" style="gap:8px;margin-top:8px">
+        <input class="field" name="display_name" placeholder="Имя" style="flex:1;min-width:160px">
+        <input class="field" name="relation" placeholder="кем приходится" style="flex:1;min-width:140px">
+        <button class="btn ghost" type="submit">+ добавить</button>
+      </form>
+      <p class="tiny">
+        Каждому участнику достаётся короткий код: он отправляет его боту командой
+        <span class="mono">/start &lt;код&gt;</span> — и его Telegram привязывается к профилю.
+      </p>
+    {% endif %}
+
+    <div class="row">
+      <a class="btn ghost" href="/onboarding?step=1">Назад</a>
+      <a class="btn spacer" href="/onboarding?step=3">Дальше</a>
+    </div>
+  </div>
+
+{% else %}
+  <div class="card stack" style="max-width:640px">
+    <div class="card-title">Кому какие модули</div>
+
+    <div class="matrix">
+      <div class="label">Участник</div>
+      {% for module in module_list %}<div class="label" style="text-align:center">{{ module.title }}</div>{% endfor %}
+    </div>
+
+    {% for member in members %}
+      <div class="matrix" style="padding:8px 0;border-top:1px solid var(--border)">
+        <div>{{ member.display_name }}</div>
+        {% for module in module_list %}
+          <form method="post" action="/onboarding/modules" style="text-align:center">
+            <input type="hidden" name="user_id" value="{{ member.id }}">
+            <input type="hidden" name="module" value="{{ module.name }}">
+            <input type="hidden" name="enabled" value="{{ 'off' if matrix[member.id][module.name] else 'on' }}">
+            <button class="toggle {% if matrix[member.id][module.name] %}on{% endif %}" type="submit"
+                    {% if not can_toggle %}disabled{% endif %}><span></span></button>
+          </form>
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    <p class="tiny">Никаких ролей и прав — только включено или выключено.</p>
+    <div class="row">
+      <a class="btn ghost" href="/onboarding?step=2">Назад</a>
+      <form class="spacer" method="post" action="/onboarding/finish">
+        <button class="btn" type="submit">Готово</button>
+      </form>
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}
