@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход · Семейный ассистент</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-page">
+  <form class="card login-card stack" method="post" action="/login">
+    <div class="row">
+      <div class="brand-mark">С</div>
+      <div>
+        <div class="brand-name">Семья</div>
+        <div class="brand-sub">цифровой ассистент</div>
+      </div>
+    </div>
+    <p class="muted">Тот же дом, тот же ассистент — просто с большого экрана.</p>
+    <input class="field" name="username" placeholder="Имя пользователя" autocomplete="username" autofocus>
+    <input class="field" name="password" type="password" placeholder="Пароль" autocomplete="current-password">
+    {% if error %}<p class="tiny" style="color:var(--alarm-text)">{{ error }}</p>{% endif %}
+    <button class="btn" type="submit">Войти</button>
+  </form>
+</div>
+</body>
+</html>

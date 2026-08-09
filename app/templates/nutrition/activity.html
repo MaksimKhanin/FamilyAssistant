@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+
+<div class="two-col">
+  <form class="card stack" method="post" action="/nutrition/activity">
+    <div class="card-title">Что сегодня было</div>
+    <div class="row wrap" style="gap:6px">
+      {% for key, label, unit, rate in kinds %}
+        <label class="chip">
+          <input type="radio" name="kind" value="{{ key }}" data-rate="{{ rate }}" data-unit="{{ unit }}"
+                 {% if loop.first %}checked{% endif %} onchange="recalc()" style="margin-right:4px">
+          {{ label }}
+        </label>
+      {% endfor %}
+    </div>
+
+    <input class="field" type="number" name="value" id="activity-value" min="0" step="1"
+           placeholder="Сколько" oninput="recalc()">
+    <p class="muted" id="activity-estimate">≈ 0 ккал</p>
+    <p class="tiny">Оценка по простым коэффициентам — точность как у шагомера, не как у лаборатории.</p>
+    <button class="btn green" type="submit">Записать</button>
+  </form>
+
+  <div class="card stack">
+    <div class="card-title">Сегодня</div>
+    {% for entry in today %}
+      <div class="row" style="gap:10px">
+        <div style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none;
+                    background:color-mix(in srgb, var(--ok) 14%, transparent);color:var(--ok-dark)">
+          {{ ic.icon("pulse", 16) }}
+        </div>
+        <div style="flex:1">
+          <div style="font-weight:600">{{ entry.label }}</div>
+          <div class="tiny">{{ entry.happened_at|ru_time }} · {{ entry.value|int }} {{ entry.unit }}</div>
+        </div>
+        <div style="color:var(--ok-dark);font-weight:600">−{{ entry.kcal }}</div>
+      </div>
+    {% else %}
+      <p class="muted">Пока ничего не записано.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  function recalc() {
+    const selected = document.querySelector('input[name="kind"]:checked');
+    const value = parseFloat(document.getElementById('activity-value').value) || 0;
+    const kcal = Math.round(value * parseFloat(selected.dataset.rate));
+    document.getElementById('activity-estimate').textContent = '≈ ' + kcal + ' ккал';
+  }
+</script>
+{% endblock %}

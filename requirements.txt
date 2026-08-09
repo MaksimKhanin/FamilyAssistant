@@ -1,0 +1,22 @@
+# Сервер: веб-панель (она же PWA на телефоне), агентское ядро, уведомления.
+# Edge-воркер (камеры, YOLO) ставится отдельно — см. requirements-edge.txt.
+
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.27
+jinja2>=3.1
+python-multipart>=0.0.9        # формы и загрузка фото
+
+SQLAlchemy>=2.0,<3.0
+psycopg2-binary>=2.9           # Postgres в проде; для локального запуска хватит sqlite
+
+bcrypt>=4.1
+itsdangerous>=2.1              # подпись сессионных cookie
+httpx>=0.27                    # обращения к LLM и push-сервисам
+PyYAML>=6.0
+
+# Web push: подпись VAPID и шифрование по RFC 8291 сделаны на этих примитивах,
+# без pywebpush — он тянет заброшенный http-ece, который не собирается.
+cryptography>=42.0
+
+redis>=5.0                     # необязательно: шина событий между процессами
+aiogram>=3.4,<4.0              # необязательный Telegram-канал (compose profile «telegram»)

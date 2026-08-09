@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+
+<div class="two-col">
+  <div>
+    {% if state == "estimate" and meal %}
+      <form class="card stack" method="post" action="/nutrition/meal/{{ meal.id }}/confirm">
+        <div class="row wrap" style="gap:14px;align-items:flex-start">
+          {% if meal.image_path %}
+            <div style="width:104px;height:104px;border-radius:14px;
+                        background:linear-gradient(135deg,#E6C9A8,#CFA277)"></div>
+          {% endif %}
+          <div class="stack" style="flex:1;min-width:200px;gap:6px">
+            <span class="badge estimate">≈ оценка, можно поправить</span>
+            <h2 style="font-size:21px">{{ meal.title }}</h2>
+            <p class="muted">
+              Это приблизительная оценка по {{ "фото" if meal.source == "photo" else "описанию" }},
+              а не медицинский расчёт. Поправьте цифры, если знаете точнее.
+            </p>
+            {% if meal.note %}<p class="tiny">{{ meal.note }}</p>{% endif %}
+          </div>
+        </div>
+
+        <div class="grid auto-180">
+          {% for field, label, step in [("kcal", "Ккал", 10), ("protein", "Белки", 1),
+                                        ("fat", "Жиры", 1), ("carbs", "Углеводы", 1)] %}
+            <div class="card tight" style="background:var(--surface-2);border:none">
+              <div class="label">{{ label }}</div>
+              <div class="row" style="gap:8px;margin-top:6px">
+                <button class="btn ghost small" type="button"
+                        onclick="step('{{ field }}', -{{ step }})">−</button>
+                <input class="field" style="text-align:center" type="number" min="0"
+                       id="{{ field }}" name="{{ field }}" value="{{ meal|attr(field) }}">
+                <button class="btn ghost small" type="button"
+                        onclick="step('{{ field }}', {{ step }})">+</button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="row wrap" style="gap:10px">
+          <button class="btn" type="submit">Всё верно, сохранить</button>
+          <button class="btn ghost" type="submit" formaction="/nutrition/meal/{{ meal.id }}/discard">
+            Это не то блюдо
+          </button>
+        </div>
+      </form>
+
+    {% elif state == "done" and meal %}
+      <div class="card stack">
+        <div style="width:44px;height:44px;border-radius:50%;display:grid;place-items:center;
+                    background:color-mix(in srgb, var(--ok) 16%, transparent);color:var(--ok-dark)">
+          {{ ic.icon("check", 22) }}
+        </div>
+        <h2 style="font-size:21px">Записал: {{ meal.title }}</h2>
+        <p class="muted">
+          {{ meal.kcal }} ккал · Б {{ meal.protein }} / Ж {{ meal.fat }} / У {{ meal.carbs }}
+          <span class="badge {{ 'ok' if meal.status == 'confirmed' else 'neutral' }}">{{ meal.status_label }}</span>
+        </p>
+        <div class="row wrap" style="gap:10px">
+          <a class="btn" href="/nutrition/meal">Добавить ещё</a>
+          <a class="btn ghost" href="/nutrition/stats">Открыть статистику</a>
+        </div>
+      </div>
+
+    {% else %}
+      <form class="card stack" method="post" action="/nutrition/meal/estimate"
+            enctype="multipart/form-data">
+        <div class="segment">
+          <button class="on" type="button" onclick="showMode('photo', this)">Фото</button>
+          <button type="button" onclick="showMode('text', this)">Текстом</button>
+        </div>
+
+        <div id="mode-photo">
+          <label class="dashed" style="display:block;min-height:230px;padding-top:70px">
+            <div style="display:grid;place-items:center;gap:8px">
+              {{ ic.icon("camera", 28) }}
+              <div>Перетащите фото тарелки</div>
+              <div class="tiny">или нажмите, чтобы выбрать · так же, как в боте</div>
+            </div>
+            <input type="file" name="photo" accept="image/*" hidden
+                   onchange="this.closest('label').querySelector('div div').textContent = this.files[0].name">
+          </label>
+        </div>
+
+        <div id="mode-text" style="display:none">
+          <textarea class="field" name="text" rows="6" id="meal-text"
+                    placeholder="Например: кофе с молоком и бутерброд с сыром"></textarea>
+          <div class="row wrap" style="gap:6px;margin-top:10px">
+            {% for phrase in quick_phrases %}
+              <button class="chip" type="button"
+                      onclick="document.getElementById('meal-text').value='{{ phrase }}'">{{ phrase }}</button>
+            {% endfor %}
+          </div>
+        </div>
+
+        {% if error %}
+          <p class="tiny" style="color:var(--alarm-text)">
+            {% if error == "vision" %}Не смог разглядеть блюдо — модель не отвечает. Попробуйте описать словами.
+            {% else %}Нужно фото или пара слов о том, что вы съели.{% endif %}
+          </p>
+        {% endif %}
+        <button class="btn" type="submit">Показать оценку</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="card stack">
+    <div class="card-title">Сегодня</div>
+    {% for item in today_meals %}
+      <div class="row" style="gap:10px">
+        <div style="width:38px;height:38px;border-radius:10px;flex:none;
+                    background:linear-gradient(135deg,#E6C9A8,#CFA277)"></div>
+        <div style="flex:1">
+          <div style="font-weight:600">{{ item.title }}</div>
+          <div class="tiny">{{ item.eaten_at|ru_time }} · {{ item.status_label }}</div>
+        </div>
+        <div class="muted">{{ item.kcal }}</div>
+      </div>
+    {% else %}
+      <p class="muted">Сегодня записей ещё нет.</p>
+    {% endfor %}
+    <p class="tiny">«≈» значит оценку, а не медицинский расчёт. Цифры всегда можно поправить.</p>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  function step(id, delta) {
+    const input = document.getElementById(id);
+    input.value = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
+  }
+  function showMode(mode, button) {
+    document.getElementById('mode-photo').style.display = mode === 'photo' ? '' : 'none';
+    document.getElementById('mode-text').style.display  = mode === 'text'  ? '' : 'none';
+    button.parentNode.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+    button.classList.add('on');
+  }
+</script>
+{% endblock %}

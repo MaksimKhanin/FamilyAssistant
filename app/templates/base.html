@@ -1,0 +1,142 @@
+{% import "partials/icons.html" as ic %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{ title }} · Семейный ассистент</title>
+
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="{{ accent }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Ассистент">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+  <style>:root { --acc: {{ accent }}; }</style>
+</head>
+<body>
+<div class="layout">
+  <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeDrawer()"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">С</div>
+      <div>
+        <div class="brand-name">{{ family.name if family else "Семья" }}</div>
+        <div class="brand-sub">цифровой ассистент</div>
+      </div>
+      <button class="btn ghost small spacer only-mobile" type="button" onclick="closeDrawer()">
+        {{ ic.icon("close", 14) }}
+      </button>
+    </div>
+
+    <button class="nav-item accent" type="button" onclick="openChat()">
+      {{ ic.icon("chat") }} Спросить ассистента
+    </button>
+
+    {% for group in nav_groups %}
+      {% if group.title %}<div class="nav-group-title">{{ group.title }}</div>{% endif %}
+      {% for item in group.entries %}
+        <a class="nav-item {% if active_path == item.url %}active{% endif %}" href="{{ item.url }}">
+          {{ ic.icon(item.icon) }} {{ item.label }}
+          {% if item.badge_key and badges.get(item.badge_key) %}
+            <span class="nav-badge">{{ badges[item.badge_key] }}</span>
+          {% endif %}
+        </a>
+      {% endfor %}
+    {% endfor %}
+
+    <div class="assistant-card">
+      <span class="pulse-dot"></span>Ассистент на связи
+    </div>
+  </aside>
+
+  <main>
+    <header class="header">
+      <button class="btn ghost small only-mobile" type="button" onclick="openDrawer()"
+              aria-label="Меню">{{ ic.icon("grid", 16) }}</button>
+      <div>
+        <h1>{{ title }}</h1>
+        {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
+      </div>
+      <div class="header-right">
+        <span class="badge neutral no-mobile">{{ "Глава семьи" if current_user.is_head else "Участник" }}</span>
+        <button class="btn no-mobile" type="button" onclick="openChat()">
+          {{ ic.icon("chat", 15) }} Спросить ассистента
+        </button>
+        <div class="row" style="gap:6px">
+          {% for member in avatars %}
+            <form method="post" action="/switch-member/{{ member.id }}">
+              <button class="avatar {% if member.id == viewed_user.id %}selected{% endif %}"
+                      style="background:{{ member.bg }};color:{{ member.fg }}"
+                      title="{{ member.name }}{% if member.relation %} · {{ member.relation }}{% endif %}">
+                {{ member.initial }}
+              </button>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+    </header>
+
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+
+<nav class="bottom-nav only-mobile">
+  {% for item in quick_nav %}
+    <a class="{% if active_path == item.url %}active{% endif %}" href="{{ item.url }}">
+      {{ ic.icon(item.icon, 20) }}
+      <span>{{ item.short_label }}</span>
+      {% if item.badge_key and badges.get(item.badge_key) %}<i class="dot"></i>{% endif %}
+    </a>
+  {% endfor %}
+  <button type="button" onclick="openChat()">
+    {{ ic.icon("chat", 20) }}<span>Спросить</span>
+  </button>
+</nav>
+
+<div class="chat-backdrop" id="chat-backdrop" onclick="closeChat()"></div>
+<aside class="chat-panel" id="chat-panel"
+       hx-get="/chat/panel" hx-trigger="load" hx-swap="innerHTML"></aside>
+
+{% if request.query_params.get("welcome") %}
+  <div class="toast" id="toast">Готово — всё настроено</div>
+{% endif %}
+
+<script>
+  function openChat()  { document.getElementById('chat-panel').classList.add('open');
+                         document.getElementById('chat-backdrop').classList.add('open');
+                         document.body.classList.add('no-scroll'); }
+  function closeChat() { document.getElementById('chat-panel').classList.remove('open');
+                         document.getElementById('chat-backdrop').classList.remove('open');
+                         document.body.classList.remove('no-scroll'); }
+  function openDrawer()  { document.getElementById('sidebar').classList.add('open');
+                           document.getElementById('drawer-backdrop').classList.add('open'); }
+  function closeDrawer() { document.getElementById('sidebar').classList.remove('open');
+                           document.getElementById('drawer-backdrop').classList.remove('open'); }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeChat(); closeDrawer(); } });
+
+  const toast = document.getElementById('toast');
+  if (toast) setTimeout(() => toast.remove(), 2200);
+
+  // Чат: после каждого ответа прокручиваем ленту вниз, как в мессенджере.
+  document.body.addEventListener('htmx:afterSwap', e => {
+    const body = document.getElementById('chat-body');
+    if (body) body.scrollTop = body.scrollHeight;
+    const input = document.getElementById('chat-input');
+    if (input && e.detail.target.id === 'chat-body') input.value = '';
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

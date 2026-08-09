@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+
+<form method="post" action="/settings/model">
+  <div class="two-col">
+    <div class="stack">
+      <div class="card stack">
+        <div class="card-title">Ядро ассистента</div>
+        <p class="muted">Кто думает и принимает решения о вызове инструментов.</p>
+        <div class="grid auto-230">
+          {% for value, label, hint in core_models %}
+            <label class="card tight stack" style="cursor:pointer;gap:6px;
+                   {% if settings_row.core_model == value %}background:var(--surface-2){% endif %}">
+              <div class="row">
+                <input type="radio" name="core_model" value="{{ value }}"
+                       {% if settings_row.core_model == value %}checked{% endif %}>
+                <span style="font-weight:600">{{ label }}</span>
+              </div>
+              <div class="tiny">{{ hint }}</div>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div class="card-title">Распознавание блюд</div>
+        <div class="grid auto-230">
+          {% for value, label, hint in vlm_modes %}
+            <label class="card tight stack" style="cursor:pointer;gap:6px;
+                   {% if settings_row.vlm_mode == value %}background:var(--surface-2){% endif %}">
+              <div class="row">
+                <input type="radio" name="vlm_mode" value="{{ value }}"
+                       {% if settings_row.vlm_mode == value %}checked{% endif %}>
+                <span style="font-weight:600">{{ label }}</span>
+              </div>
+              <div class="tiny">{{ hint }}</div>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div class="card-title">Детекция на камерах</div>
+        <div class="grid auto-230">
+          {% for value, label, hint in yolo_models %}
+            <label class="card tight stack" style="cursor:pointer;gap:6px;
+                   {% if settings_row.yolo_model == value %}background:var(--surface-2){% endif %}">
+              <div class="row">
+                <input type="radio" name="yolo_model" value="{{ value }}"
+                       {% if settings_row.yolo_model == value %}checked{% endif %}>
+                <span style="font-weight:600">{{ label }}</span>
+              </div>
+              <div class="tiny">{{ hint }}</div>
+            </label>
+          {% endfor %}
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <div style="flex:1">
+            <div style="font-weight:600">Кадры с камер не покидают дом</div>
+            <div class="tiny">
+              В облако уходит только текстовое описание события — «человек у калитки в 23:14»,
+              без самого снимка.
+            </div>
+          </div>
+          <label class="toggle {% if settings_row.frames_stay_home %}on{% endif %}">
+            <input type="checkbox" name="frames_stay_home" hidden
+                   {% if settings_row.frames_stay_home %}checked{% endif %}
+                   onchange="this.parentNode.classList.toggle('on')">
+            <span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card stack">
+        <div class="row">
+          <span class="card-title">Потолок расходов на облако</span>
+          <span class="spacer stepper-value" id="budget-label">{{ settings_row.cloud_budget_eur }} €</span>
+        </div>
+        <input type="range" name="cloud_budget" min="0" max="60" step="5"
+               value="{{ settings_row.cloud_budget_eur }}"
+               oninput="document.getElementById('budget-label').textContent = this.value + ' €'">
+        <div class="tiny">Сейчас потрачено: {{ "%.2f"|format(settings_row.cloud_spent_eur) }} €</div>
+      </div>
+
+      <button class="btn" type="submit">Сохранить</button>
+    </div>
+
+    <div class="card stack">
+      <div class="card-title">База знаний семьи (RAG)</div>
+      <p class="muted">Что ассистент может брать в контекст, отвечая на вопросы.</p>
+      {% for key, label in rag_sources.items() %}
+        <div class="row">
+          <span style="flex:1">{{ label }}</span>
+          <label class="toggle {% if rag_values[key] %}on{% endif %}">
+            <input type="checkbox" name="rag_{{ key }}" hidden {% if rag_values[key] %}checked{% endif %}
+                   onchange="this.parentNode.classList.toggle('on')">
+            <span></span>
+          </label>
+        </div>
+      {% endfor %}
+      <p class="tiny">
+        Личные разделы участников — записи о еде, заметки в памяти — в общий индекс не попадают.
+      </p>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

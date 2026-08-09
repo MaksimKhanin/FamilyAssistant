@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Приглашение · Семейный ассистент</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-page">
+  <form class="card login-card stack" method="post" action="/invite/{{ code }}">
+    <div class="row">
+      <div class="brand-mark">С</div>
+      <div>
+        <div class="brand-name">{{ invited.family.name if invited.family else "Семья" }}</div>
+        <div class="brand-sub">цифровой ассистент</div>
+      </div>
+    </div>
+
+    <h1 style="font-size:21px">Здравствуйте, {{ invited.display_name }}</h1>
+    <p class="muted">
+      Придумайте пароль — и ассистент будет ваш. Логин уже есть:
+      <span class="mono">{{ invited.username }}</span>
+    </p>
+
+    <input class="field" type="password" name="password" placeholder="Пароль"
+           autocomplete="new-password" autofocus>
+    <input class="field" type="password" name="password_repeat" placeholder="Ещё раз"
+           autocomplete="new-password">
+
+    {% if error %}<p class="tiny" style="color:var(--alarm-text)">{{ error }}</p>{% endif %}
+    <button class="btn" type="submit">Готово</button>
+    <p class="tiny">Ссылка одноразовая: после этого она перестанет работать.</p>
+  </form>
+</div>
+</body>
+</html>

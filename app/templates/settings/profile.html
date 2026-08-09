@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="two-col">
+  <form class="card stack" method="post" action="/settings/profile">
+    <div class="row" style="gap:12px">
+      <span class="avatar" style="width:52px;height:52px;font-size:18px;
+            background:{{ viewed_avatar.bg }};color:{{ viewed_avatar.fg }}">{{ viewed_avatar.initial }}</span>
+      <div>
+        <div class="card-title">{{ viewed_user.display_name }}</div>
+        <div class="tiny">
+          {{ viewed_user.relation or ("глава семьи" if viewed_user.is_head else "участник") }} ·
+          @{{ viewed_user.username }}
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="label">Цель</div>
+      <div class="row wrap" style="gap:6px;margin-top:6px">
+        {% for value, label in goal_labels.items() %}
+          <label class="chip {% if profile.goal == value %}active{% endif %}">
+            <input type="radio" name="goal" value="{{ value }}" style="margin-right:4px"
+                   {% if profile.goal == value %}checked{% endif %}
+                   {% if not can_edit %}disabled{% endif %}>{{ label }}
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div>
+      <div class="row">
+        <span class="label">Суточная норма</span>
+        <span class="spacer stepper-value" id="kcal-label">{{ profile.daily_kcal }}</span>
+      </div>
+      <input type="range" name="daily_kcal" min="1200" max="3400" step="50" value="{{ profile.daily_kcal }}"
+             oninput="document.getElementById('kcal-label').textContent = this.value"
+             {% if not can_edit %}disabled{% endif %}>
+      <p class="tiny">Ориентир, а не диагноз: ассистент использует его только чтобы показать баланс дня.</p>
+    </div>
+
+    {% if can_edit %}<button class="btn" type="submit">Сохранить</button>{% endif %}
+  </form>
+
+  <div class="stack">
+    <div class="card stack" id="push-card">
+      <div class="row">
+        <span class="card-title">Уведомления на телефон</span>
+        <span class="badge neutral spacer" id="push-state">проверяю…</span>
+      </div>
+      <p class="muted" id="push-hint">
+        Ассистент напишет, только если дома что-то действительно требует взгляда,
+        или когда придёт время напоминания.
+      </p>
+      <div class="row wrap" style="gap:8px">
+        <button class="btn" type="button" id="push-toggle" hidden></button>
+        <button class="btn ghost" type="button" id="push-test" hidden
+                onclick="familyPush.test().then(showTestResult)">Проверить</button>
+        <button class="btn ghost" type="button" data-install-app hidden
+                onclick="familyInstall()">Установить приложение</button>
+      </div>
+      <p class="tiny" id="push-devices">
+        {{ push_devices|counted("устройство", "устройства", "устройств") }} подключено
+      </p>
+    </div>
+
+    <div class="card stack">
+      <div class="card-title">Модули</div>
+      {% for module in module_list %}
+        <div class="row">
+          <div style="flex:1">
+            <div style="font-weight:600">{{ module.title }}</div>
+            <div class="tiny">{{ module.description }}</div>
+          </div>
+          <form method="post" action="/settings/family/module">
+            <input type="hidden" name="user_id" value="{{ viewed_user.id }}">
+            <input type="hidden" name="module" value="{{ module.name }}">
+            <input type="hidden" name="enabled" value="{{ 'off' if matrix.get(module.name) else 'on' }}">
+            <button class="toggle {% if matrix.get(module.name) %}on{% endif %}" type="submit"
+                    {% if not can_toggle %}disabled title="Модули включает глава семьи"{% endif %}>
+              <span></span>
+            </button>
+          </form>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="card stack" style="border-style:dashed">
+      <div class="card-title">Место под новые модули</div>
+      <div class="row">
+        <div style="flex:1">
+          <div style="font-weight:600;color:var(--text-3)">Финансы</div>
+          <div class="tiny">Пример: новый модуль выглядит ровно так же — название, описание и тумблер</div>
+        </div>
+        <button class="toggle" disabled><span></span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  const stateBadge = document.getElementById('push-state');
+  const hint = document.getElementById('push-hint');
+  const toggle = document.getElementById('push-toggle');
+  const testButton = document.getElementById('push-test');
+
+  const HINTS = {
+    'ios-needs-install': 'На iPhone уведомления работают только у приложения: откройте «Поделиться» → ' +
+                         '«На экран Домой», и кнопка появится.',
+    'unsupported': 'Этот браузер не умеет уведомления. Панель работает, но о тревоге узнаете, только открыв её.',
+    'not-configured': 'На сервере не заданы ключи VAPID — уведомления пока не отправляются.',
+    'denied': 'Уведомления запрещены в настройках браузера для этого сайта — разрешить можно только там.',
+  };
+
+  function paint(state) {
+    if (!state.supported) {
+      stateBadge.textContent = 'недоступны';
+      hint.textContent = HINTS[state.reason] || HINTS.unsupported;
+      return;
+    }
+    if (state.permission === 'denied') {
+      stateBadge.textContent = 'запрещены';
+      hint.textContent = HINTS.denied;
+      return;
+    }
+    if (state.error === 'not-configured') {
+      stateBadge.textContent = 'не настроены';
+      hint.textContent = HINTS['not-configured'];
+      return;
+    }
+
+    stateBadge.textContent = state.subscribed ? 'включены' : 'выключены';
+    stateBadge.className = 'badge spacer ' + (state.subscribed ? 'ok' : 'neutral');
+    toggle.hidden = false;
+    toggle.textContent = state.subscribed ? 'Выключить на этом устройстве' : 'Включить на этом устройстве';
+    toggle.className = state.subscribed ? 'btn ghost' : 'btn';
+    testButton.hidden = !state.subscribed;
+    toggle.onclick = () => (state.subscribed ? familyPush.disable() : familyPush.enable()).then(paint);
+  }
+
+  function showTestResult(result) {
+    const text = { ok: 'Отправил — уведомление должно прийти через секунду.',
+                   no_devices: 'Ни одного подключённого устройства.',
+                   not_configured: 'На сервере не заданы ключи VAPID.' }[result.status];
+    document.getElementById('push-devices').textContent = text || 'Не получилось отправить.';
+  }
+
+  window.addEventListener('load', () => familyPush.status().then(paint));
+</script>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p class="muted" style="max-width:70ch;margin-bottom:16px">
+  Подключения личные: то, что подключил один член семьи, не видно остальным.
+  Начинать стоит с «только читает» — так понятнее, что ассистент вообще делает.
+</p>
+
+<div class="stack">
+  {% for row in connectors %}
+    <div class="card stack">
+      <div class="row wrap" style="gap:10px">
+        <span class="card-title">{{ row.spec.label }}</span>
+        <span class="badge {{ 'ok' if row.connected else 'neutral' }}">
+          {{ "подключено" if row.connected else "не подключено" }}
+        </span>
+        <form class="spacer" method="post" action="/settings/connectors/{{ row.spec.service }}">
+          <input type="hidden" name="action" value="toggle">
+          <button class="btn {{ 'ghost' if row.connected else '' }} small" type="submit"
+                  {% if not can_edit %}disabled{% endif %}>
+            {{ "Отключить" if row.connected else "Подключить" }}
+          </button>
+        </form>
+      </div>
+      <p class="muted">{{ row.spec.description }}</p>
+      <p class="tiny">{{ row.permission_text }}</p>
+
+      <div class="segment">
+        {% for value in ["read", "write", "act"] %}
+          <form method="post" action="/settings/connectors/{{ row.spec.service }}">
+            <input type="hidden" name="action" value="permission">
+            <input type="hidden" name="permission" value="{{ value }}">
+            <button class="{% if row.permission == value %}on{% endif %}" type="submit"
+                    {% if not row.connected or not can_edit %}disabled
+                       style="color:#C3B9A9;cursor:not-allowed"{% endif %}>
+              {{ permission_labels[value] }}
+            </button>
+          </form>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

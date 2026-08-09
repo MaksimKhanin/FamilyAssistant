@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if can_toggle %}
+  <form class="card row wrap" method="post" action="/settings/family/name" style="gap:10px;margin-bottom:16px">
+    <div style="flex:1;min-width:220px">
+      <div class="label">Название семьи</div>
+      <input class="field" name="name" value="{{ family.name }}">
+    </div>
+    <button class="btn" type="submit" style="align-self:flex-end">Сохранить</button>
+  </form>
+{% endif %}
+
+<div class="card">
+  <div class="row" style="margin-bottom:14px">
+    <span class="card-title">Кому какие модули включены</span>
+    <a class="btn ghost small spacer" href="/onboarding?step=2">Добавить участника</a>
+  </div>
+
+  <div class="matrix" style="margin-bottom:8px">
+    <div class="label">Участник</div>
+    {% for module in module_list %}<div class="label" style="text-align:center">{{ module.title }}</div>{% endfor %}
+  </div>
+
+  {% for member in members %}
+    <div class="matrix" style="padding:10px 0;border-top:1px solid var(--border)">
+      <div>
+        <div style="font-weight:600">{{ member.display_name }}</div>
+        <div class="tiny">{{ member.relation or ("глава семьи" if member.is_head else "участник") }}</div>
+      </div>
+      {% for module in module_list %}
+        <form method="post" action="/settings/family/module" style="text-align:center">
+          <input type="hidden" name="user_id" value="{{ member.id }}">
+          <input type="hidden" name="module" value="{{ module.name }}">
+          <input type="hidden" name="enabled"
+                 value="{{ 'off' if matrix[member.id][module.name] else 'on' }}">
+          <button class="toggle {% if matrix[member.id][module.name] %}on{% endif %}" type="submit"
+                  {% if not can_toggle %}disabled title="Модули включает глава семьи"{% endif %}>
+            <span></span>
+          </button>
+        </form>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  <p class="tiny" style="margin-top:14px">
+    Никаких ролей и прав — только включено или выключено. Выключенный модуль исчезает
+    из меню и из набора инструментов ассистента.
+  </p>
+</div>
+
+{% endblock %}

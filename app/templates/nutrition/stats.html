@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="segment" style="margin-bottom:16px">
+  {% for value, label in period_labels.items() %}
+    <a class="{% if period == value %}on{% endif %}" href="/nutrition/stats?period={{ value }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div class="grid auto-180" style="margin-bottom:16px">
+  <div class="card tight">
+    <div class="label">Получено</div>
+    <div class="big-number">{{ stats.consumed }}</div>
+    <div class="tiny">в среднем {{ stats.avg_consumed }} в день</div>
+  </div>
+  <div class="card tight">
+    <div class="label">Потрачено</div>
+    <div class="big-number">{{ stats.burned }}</div>
+    <div class="tiny">по записям активности</div>
+  </div>
+  <div class="card tight">
+    <div class="label">Баланс</div>
+    <div class="big-number">{{ "%+d"|format(stats.balance) }}</div>
+    <div class="tiny">получено минус потрачено</div>
+  </div>
+  <div class="card tight">
+    <div class="label">Суточная норма</div>
+    <div class="big-number">{{ stats.norm }}</div>
+    <div class="tiny">цель: {{ profile.goal_label }}</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="row" style="margin-bottom:12px">
+    <span class="card-title">Потреблено и потрачено</span>
+    <span class="tiny spacer">
+      <span style="color:var(--acc)">■</span> получено
+      <span style="color:var(--ok)">■</span> потрачено
+    </span>
+  </div>
+  <div class="chart">
+    <div class="chart-norm" style="bottom:{{ (stats.norm / chart_peak * 100)|round|int }}%">норма</div>
+    {% for day in stats.days %}
+      <div class="chart-col">
+        <div class="chart-bars">
+          <i class="consumed" style="height:{{ (day.consumed / chart_peak * 100)|round|int }}%"
+             title="{{ day.consumed }} ккал получено"></i>
+          <i class="burned" style="height:{{ (day.burned / chart_peak * 100)|round|int }}%"
+             title="{{ day.burned }} ккал потрачено"></i>
+        </div>
+        <div class="tiny" {% if loop.last %}style="color:var(--text)"{% endif %}>
+          {% if stats.period == "day" %}сегодня{% else %}{{ day.day.strftime("%d.%m") }}{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="grid auto-300">
+  <div class="card stack">
+    <div class="card-title">Белки, жиры, углеводы</div>
+    {% set macros = stats.macros %}
+    {% set macro_total = (macros.protein + macros.fat + macros.carbs) or 1 %}
+    {% for key, label, color in [("protein", "Белки", "var(--acc)"),
+                                 ("fat", "Жиры", "var(--warn)"),
+                                 ("carbs", "Углеводы", "var(--ok)")] %}
+      <div>
+        <div class="row"><span class="muted">{{ label }}</span>
+          <span class="spacer muted">{{ macros[key] }} г</span></div>
+        <div class="progress" style="margin-top:5px">
+          <i style="width:{{ (macros[key] / macro_total * 100)|round|int }}%;background:{{ color }}"></i>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="card stack">
+    <div class="card-title">Что заметил ассистент</div>
+    <p class="muted">
+      {% if stats.consumed == 0 %}
+        За период записей нет — пришлите фото тарелки, и картинка начнёт складываться.
+      {% elif stats.avg_consumed > stats.norm %}
+        В среднем выходит чуть больше нормы. Ничего страшного — если хотите, соберу идеи полегче.
+      {% else %}
+        В среднем получается {{ stats.avg_consumed }} ккал в день при норме {{ stats.norm }}. Спокойный ритм.
+      {% endif %}
+    </p>
+    <a class="btn ghost" href="/nutrition/plan">Посмотреть идеи питания</a>
+  </div>
+</div>
+
+{% endblock %}

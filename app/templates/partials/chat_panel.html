@@ -1,0 +1,41 @@
+{% import "partials/icons.html" as ic %}
+<div class="chat-head">
+  <div class="brand-mark" style="width:34px;height:34px">{{ ic.icon("chat", 16) }}</div>
+  <div>
+    <div style="font-weight:600">Ассистент</div>
+    <div class="tiny">разговор один — и здесь, и с телефона</div>
+  </div>
+  <button class="btn ghost small spacer" type="button" onclick="closeChat()">{{ ic.icon("close", 14) }}</button>
+</div>
+
+<div class="chat-body" id="chat-body">
+  {% if not messages %}
+    <div class="bubble assistant">
+      Здравствуйте. Расскажите, что съели, спросите про дом или попросите что-нибудь запомнить.
+    </div>
+  {% endif %}
+  {% include "partials/chat_messages.html" %}
+</div>
+
+<form class="chat-foot" hx-post="/chat/send" hx-target="#chat-body" hx-swap="beforeend"
+      hx-encoding="multipart/form-data">
+  <div class="row wrap" style="gap:6px">
+    {% for suggestion in suggestions %}
+      <button class="chip" type="button"
+              onclick="document.getElementById('chat-input').value='{{ suggestion }}'">{{ suggestion }}</button>
+    {% endfor %}
+  </div>
+  <div class="thinking"><span class="pulse-dot"></span>думает и подбирает инструмент…</div>
+  <div class="row" style="gap:8px">
+    <textarea class="field" id="chat-input" name="message" rows="1"
+              placeholder="Напишите, как в мессенджере" style="min-height:42px"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit();}"></textarea>
+    <button class="btn" type="submit" style="width:42px;height:42px;border-radius:50%;padding:0">
+      {{ ic.icon("send", 18) }}
+    </button>
+  </div>
+  <p class="tiny">
+    Агент сам выбирает инструмент. Что он делает без спроса — настраивается на экране
+    <a href="/settings/agent" style="color:var(--acc)">«Агент и инструменты»</a>.
+  </p>
+</form>

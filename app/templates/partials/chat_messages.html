@@ -1,0 +1,87 @@
+{# Bubbles, tool traces and action cards. Rendered both on panel open and after every send. #}
+{% for message in messages %}
+  {% if message.role == "user" %}
+    <div class="bubble user">{{ message.text }}</div>
+  {% else %}
+    {% for trace in message.traces %}
+      <div class="trace {{ trace.status }}">
+        <span class="dot"></span>
+        <code>{{ trace.signature }}</code>
+        <span>· {% if trace.status == "awaiting" %}ждёт подтверждения
+              {%- elif trace.status == "confirmed" %}подтверждено вами
+              {%- elif trace.status == "failed" %}не получилось
+              {%- else %}выполнено{% endif %}</span>
+      </div>
+    {% endfor %}
+
+    <div class="bubble assistant">{{ message.text }}</div>
+
+    {% for card in message.cards %}
+      {% if card.type == "meal" %}
+        <div class="agent-card">
+          {% if card.is_estimate %}<span class="badge estimate">≈ оценка</span>{% endif %}
+          <div style="font-weight:600">{{ card.title }}</div>
+          <div class="muted">{{ card.kcal }} ккал · Б {{ card.protein }} / Ж {{ card.fat }} / У {{ card.carbs }}</div>
+          {% if card.is_estimate %}
+            <div class="row" style="gap:8px">
+              <a class="btn small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=done">Подтвердить</a>
+              <a class="btn ghost small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=estimate">Поправить</a>
+            </div>
+          {% endif %}
+        </div>
+      {% elif card.type == "stats" %}
+        <div class="agent-card">
+          <div class="row" style="gap:18px">
+            <div><div class="label">Получено</div><div class="big-number">{{ card.consumed }}</div></div>
+            <div><div class="label">Потрачено</div><div class="big-number">{{ card.burned }}</div></div>
+          </div>
+          <a class="btn link" href="/nutrition/stats?period={{ card.period }}">Открыть →</a>
+        </div>
+      {% elif card.type == "security" %}
+        <div class="agent-card alarm">
+          <div style="font-weight:600">{{ card.title }}</div>
+          <div class="muted">{{ card.camera }} · {{ card.at }}</div>
+          <a class="btn link" href="/security/events?event_id={{ card.event_id }}">Посмотреть →</a>
+        </div>
+      {% elif card.type == "plan" %}
+        <div class="agent-card">
+          {% for day in card.days %}
+            <div>
+              <div style="font-weight:600">{{ day.title }} · ≈ {{ day.kcal }} ккал</div>
+              <div class="muted">{{ day.meals | map(attribute="name") | join(", ") }}</div>
+            </div>
+          {% endfor %}
+          {% if card.comment %}<p class="tiny">{{ card.comment }}</p>{% endif %}
+        </div>
+      {% elif card.type == "memory" %}
+        <div class="agent-card">
+          <span class="badge {{ card.kind }}">{{ card.kind_label }}</span>
+          <div>{{ card.text }}</div>
+          {% if card.when %}<div class="tiny">напомню: {{ card.when }}</div>{% endif %}
+          <a class="btn link" href="/memory">Вся память и напоминания →</a>
+        </div>
+      {% elif card.type == "recall" %}
+        <div class="agent-card">
+          {% for note in card.notes %}
+            <div class="row" style="gap:8px;align-items:flex-start">
+              <span class="badge {{ note.kind }}">{{ note.kind_label }}</span>
+              <span>{{ note.text }}</span>
+            </div>
+          {% endfor %}
+          <a class="btn link" href="/memory">Вся память и напоминания →</a>
+        </div>
+      {% elif card.type == "confirm" %}
+        <div class="agent-card">
+          <div style="font-weight:600">{{ card.title }}</div>
+          <div class="mono">{{ card.tool }}</div>
+          <div class="row" style="gap:8px">
+            <button class="btn small" hx-post="/chat/actions/{{ card.pending_id }}/approve"
+                    hx-target="#chat-body" hx-swap="beforeend">Да, сделай</button>
+            <button class="btn ghost small" hx-post="/chat/actions/{{ card.pending_id }}/reject"
+                    hx-target="#chat-body" hx-swap="beforeend">Не надо</button>
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+{% endfor %}

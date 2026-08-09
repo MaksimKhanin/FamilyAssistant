@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row wrap" style="gap:8px;margin-bottom:16px">
+  {% for value, label in filters %}
+    <a class="chip {% if active_filter == value %}active{% endif %}"
+       href="/security/events?only={{ value }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div class="stack">
+  {% for event in events %}
+    {% set camera = cameras.get(event.camera_id) %}
+    <a class="event {% if event.verdict == 'anomaly' %}anomaly{% elif event.verdict == 'check' %}check{% endif %}"
+       href="/security/events?only={{ active_filter }}&event_id={{ event.id }}">
+      {% if event.snapshot_path %}
+        <img class="event-preview" src="/security/snapshot/{{ event.id }}" alt="">
+      {% else %}
+        <div class="event-preview"></div>
+      {% endif %}
+      <div style="flex:1">
+        <div class="row wrap" style="gap:8px">
+          <span style="font-weight:600">
+            {{ {"person": "Человек", "car": "Машина"}.get(event.detected_class, "Движение") }}
+            у камеры «{{ camera.label if camera else "—" }}»
+          </span>
+          <span class="badge {% if event.verdict == 'anomaly' %}alarm
+                             {%- elif event.verdict == 'check' %}estimate
+                             {%- else %}neutral{% endif %}">{{ event.verdict_label }}</span>
+          {% if event.resolution == "ours" %}<span class="badge ok">свои</span>{% endif %}
+        </div>
+        <div class="tiny">{{ event.happened_at|ru_datetime }} · {{ event.reason }}</div>
+      </div>
+      <div class="tiny" style="text-align:right">
+        {{ "уведомил семью" if event.notified_at else "только в логе" }}
+      </div>
+    </a>
+  {% else %}
+    <div class="card stack">
+      <div class="card-title">Пока тихо</div>
+      <p class="muted">За последнюю неделю камеры ничего не прислали.</p>
+    </div>
+  {% endfor %}
+</div>
+
+<p class="tiny" style="margin-top:16px;max-width:70ch">
+  Я показываю не всё подряд: сначала камера сама решает, есть ли в кадре человек или машина,
+  потом правила смотрят на время и зону, и только спорное отправляется модели. И вердикт,
+  и «тревога / не тревога» — это оценка, а не факт.
+</p>
+
+{% if alert %}
+  {% set camera = cameras.get(alert.camera_id) %}
+  <div class="modal-backdrop" onclick="if(event.target===this) location.href='/security/events'">
+    <div class="modal">
+      {% if alert.snapshot_path %}
+        <img class="modal-image" src="/security/snapshot/{{ alert.id }}" alt="">
+      {% else %}
+        <div class="modal-image"></div>
+      {% endif %}
+      <div class="modal-body">
+        <div class="tiny">{{ camera.label if camera else "Камера" }} · {{ alert.happened_at|ru_datetime }}</div>
+        <span class="badge {% if alert.verdict == 'anomaly' %}alarm{% else %}estimate{% endif %}">
+          {{ alert.verdict_label }}
+        </span>
+        <h2 style="font-size:19px">
+          {{ {"person": "Кто-то", "car": "Машина"}.get(alert.detected_class, "Движение") }}
+          у камеры «{{ camera.label if camera else "—" }}»
+        </h2>
+        <p class="muted">{{ alert.note or alert.reason }} Это оценка модели, а не факт.</p>
+        <div class="row wrap" style="gap:10px">
+          <form method="post" action="/security/events/{{ alert.id }}/ours">
+            <button class="btn" type="submit">Это свои, всё хорошо</button>
+          </form>
+          <a class="btn ghost" href="/security/events">Закрыть</a>
+        </div>
+        <p class="tiny">Так же выглядит уведомление на телефоне.</p>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

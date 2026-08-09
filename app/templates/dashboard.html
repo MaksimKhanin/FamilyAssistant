@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+
+<div class="grid auto-300" style="margin-bottom:16px">
+  {% if nutrition_on and can_see_figures and day and profile %}
+    <div class="card row wrap" style="gap:22px">
+      <div class="ring" style="background:conic-gradient(var(--acc) {{ ring_degrees }}deg, #EDE4D6 0)">
+        <div>
+          <div class="big-number">{{ day.consumed }}</div>
+          <div class="tiny">из {{ profile.daily_kcal }} ккал</div>
+        </div>
+      </div>
+      <div class="stack" style="flex:1;min-width:200px">
+        <h2 style="font-size:19px">{{ greeting }}, {{ viewed_user.display_name }}</h2>
+        <p class="muted">
+          {% if day.consumed %}
+            Сегодня получилось {{ day.consumed }} ккал и {{ day.burned }} потрачено.
+            {% if day.consumed <= profile.daily_kcal %}Всё в порядке — день можно провести спокойно.{% endif %}
+          {% else %}
+            Пока ничего не записано. Пришлите фото тарелки — я прикину, что к чему.
+          {% endif %}
+        </p>
+        <div class="row wrap" style="gap:8px">
+          <span class="chip">Б {{ day.protein }} г</span>
+          <span class="chip">Ж {{ day.fat }} г</span>
+          <span class="chip">У {{ day.carbs }} г</span>
+        </div>
+      </div>
+    </div>
+  {% elif nutrition_on %}
+    <div class="card stack">
+      <h2 style="font-size:19px">{{ greeting }}</h2>
+      <p class="muted">Цифры питания {{ viewed_user.display_name|genitive }} видит только {{ viewed_user.display_name }}.</p>
+    </div>
+  {% endif %}
+
+  {% if security_on and home %}
+    <div class="card dark stack">
+      <div class="row">
+        <span class="card-title" style="color:var(--dark-text)">Дом под присмотром</span>
+        <span class="badge neutral spacer" style="background:rgba(237,231,219,.14);color:var(--dark-text)">
+          {{ home.cameras_notifying }} из {{ home.cameras_total }} камер
+        </span>
+      </div>
+      <p>
+        {% if home.anomalies %}
+          {{ home.anomalies }} {{ home.anomalies|plural("событие требует", "события требуют", "событий требуют") }}
+          взгляда. Остальное — обычная жизнь дома, о ней не пишу.
+        {% else %}
+          За сутки ничего необычного. {{ home.events }}
+          {{ home.events|plural("событие", "события", "событий") }} — всё штатное.
+        {% endif %}
+      </p>
+      <div class="row" style="gap:10px">
+        <a class="btn light" href="/security/events">Лента событий</a>
+        <a class="btn ghost" href="/security/cameras">Камеры</a>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<div class="grid auto-230" style="margin-bottom:16px">
+  {% if nutrition_on %}
+    <a class="card action-card" href="/nutrition/meal">
+      <div class="action-icon">{{ ic.icon("plus", 20) }}</div>
+      <div class="card-title">Записать приём пищи</div>
+      <p class="muted">Фото тарелки или пара слов — я оценю</p>
+    </a>
+    <a class="card action-card" href="/nutrition/activity">
+      <div class="action-icon">{{ ic.icon("pulse", 20) }}</div>
+      <div class="card-title">Активность</div>
+      <p class="muted">{% if steps_today %}Сегодня {{ steps_today }} шагов{% else %}Добавить шаги или тренировку{% endif %}</p>
+    </a>
+    <a class="card action-card" href="/nutrition/plan">
+      <div class="action-icon">{{ ic.icon("book", 20) }}</div>
+      <div class="card-title">Идеи на завтра</div>
+      <p class="muted">Не предписание, просто идеи</p>
+    </a>
+  {% else %}
+    <div class="card stack">
+      <div class="card-title">Модули пока выключены</div>
+      <p class="muted">Питание и безопасность включает глава семьи на экране «Семья и модули».</p>
+    </div>
+  {% endif %}
+</div>
+
+{% if family_strip %}
+  <div class="card">
+    <div class="row" style="margin-bottom:14px">
+      <span class="card-title">Сегодня у семьи</span>
+      <span class="tiny spacer">цифры питания видит только сам участник</span>
+    </div>
+    <div class="grid auto-180">
+      {% for row in family_strip %}
+        <div class="card tight stack" style="gap:8px">
+          <div class="row">
+            <span class="avatar small" style="background:{{ row.avatar.bg }};color:{{ row.avatar.fg }}">
+              {{ row.avatar.initial }}
+            </span>
+            <div>
+              <div style="font-weight:600">{{ row.user.display_name }}</div>
+              <div class="tiny">{{ row.user.relation or row.modules_label }}</div>
+            </div>
+          </div>
+          <div class="progress"><i style="width:{{ row.progress if row.own else 0 }}%"></i></div>
+          <div class="tiny">
+            {% if row.own %}
+              {{ row.progress }}% суточной нормы
+            {% elif row.last_meal_at %}
+              последняя запись в {{ row.last_meal_at|ru_time }} · цифры видит только сам
+            {% else %}
+              сегодня записей нет
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}
