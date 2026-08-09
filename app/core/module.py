@@ -29,6 +29,12 @@ class NavItem:
     group: str = ""                 # микро-заголовок группы: «Питание», «Безопасность», ...
     badge_key: Optional[str] = None  # ключ в контексте шаблона для счётчика-бейджа
     head_only: bool = False
+    #: Короткая подпись для нижней панели на телефоне — там на пункт около 70px.
+    short: Optional[str] = None
+
+    @property
+    def short_label(self) -> str:
+        return self.short or self.label
 
 
 @dataclass

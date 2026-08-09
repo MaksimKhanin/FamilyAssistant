@@ -22,6 +22,9 @@ x-app: &app
     COOKIE_SECURE: ${COOKIE_SECURE:-true}
     PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
     TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+    VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+    VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+    VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
     TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
     LLM_API_KEY: ${LLM_API_KEY:-}
@@ -58,9 +61,12 @@ services:
     ports:
       - "${WEB_PORT:-8000}:8000"
 
-  # Telegram-бот: тот же диалог, что и в панели.
+  # Необязательный Telegram-канал. По умолчанию не поднимается: семья общается
+  # через панель, установленную на телефон, и получает web push.
+  #   docker compose --profile telegram up -d
   bot:
     <<: *app
+    profiles: ["telegram"]
     command: ["python", "-m", "app.channels.telegram.bot"]
 
   # Расписания, напоминания и ротация архива с камер.

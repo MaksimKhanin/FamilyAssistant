@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.agent import policy
 from app.core import connectors as connector_service
 from app.core import family as family_service
+from app.core import push
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
@@ -236,6 +237,7 @@ def profile_screen(
     context.update(
         profile=nutrition_service.get_profile(db, viewed.id),
         goal_labels=GOAL_LABELS,
+        push_devices=push.device_count(db, viewed.id),
         module_list=module_list,
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]).get(viewed.id, {}),
         can_toggle=current.is_head,

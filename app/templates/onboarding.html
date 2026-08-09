@@ -28,10 +28,11 @@
           <div style="font-weight:600">{{ row.user.display_name }}</div>
           <div class="tiny">{{ row.user.relation or ("глава семьи" if row.user.is_head else "участник") }}</div>
         </div>
-        {% if row.user.telegram_id %}
-          <span class="badge ok">подключён</span>
-        {% elif row.user.link_code %}
-          <span class="badge neutral">код: <span class="mono">{{ row.user.link_code }}</span></span>
+        {% if row.user.password_hash %}
+          <span class="badge ok">заходит сам</span>
+        {% elif row.invite_url %}
+          <button class="btn ghost small" type="button"
+                  onclick="copyInvite('{{ row.invite_url }}', this)">Скопировать приглашение</button>
         {% endif %}
       </div>
     {% endfor %}
@@ -43,8 +44,9 @@
         <button class="btn ghost" type="submit">+ добавить</button>
       </form>
       <p class="tiny">
-        Каждому участнику достаётся короткий код: он отправляет его боту командой
-        <span class="mono">/start &lt;код&gt;</span> — и его Telegram привязывается к профилю.
+        Каждому участнику достаётся личная ссылка-приглашение: по ней он придумывает
+        себе пароль и сразу попадает в панель. Ссылка одноразовая — передайте её тем
+        способом, каким обычно общаетесь.
       </p>
     {% endif %}
 
@@ -88,4 +90,15 @@
   </div>
 {% endif %}
 
+{% endblock %}
+{% block scripts %}
+<script>
+  function copyInvite(url, button) {
+    const done = () => { button.textContent = 'Ссылка скопирована';
+                         setTimeout(() => button.textContent = 'Скопировать приглашение', 2000); };
+    // clipboard API есть только на HTTPS — на локальном HTTP показываем ссылку как есть
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => prompt('Ссылка:', url));
+    else prompt('Ссылка для приглашения:', url);
+  }
+</script>
 {% endblock %}

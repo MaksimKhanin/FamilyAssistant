@@ -13,7 +13,8 @@ module = Module(
     title="Память и заметки",
     description="Ассистент помнит предпочтения, ограничения и напоминания",
     routers=[router],
-    nav_items=[NavItem(slug="memory", label="Память и заметки", url="/memory", icon="note")],
+    nav_items=[NavItem(slug="memory", label="Память и заметки", url="/memory",
+                       icon="note", short="Память")],
     per_user=True,
     always_on=True,
 )

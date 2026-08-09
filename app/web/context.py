@@ -72,6 +72,21 @@ def build_nav(db: Session, current: User, viewed: User) -> List[dict]:
     return [{"title": group, "entries": groups[group]} for group in ordered]
 
 
+#: Что попадает в нижнюю панель на телефоне — по одному пункту на то, ради чего
+#: приложение вообще открывают. Остальное прячется в выдвижное меню.
+QUICK_NAV = [
+    ("dashboard", None),
+    ("meal", "nutrition"),
+    ("events", "security"),
+    ("memory", None),
+]
+
+
+def build_quick_nav(db: Session, current: User, viewed: User) -> List[NavItem]:
+    by_slug = {item.slug: item for group in build_nav(db, current, viewed) for item in group["entries"]}
+    return [by_slug[slug] for slug, _ in QUICK_NAV if slug in by_slug]
+
+
 def badges(db: Session, viewed: User) -> Dict[str, int]:
     """Counters the sidebar shows next to nav items."""
     result: Dict[str, int] = {}
@@ -99,6 +114,7 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
         "avatars": [avatar(m) for m in members],
         "viewed_avatar": avatar(viewed),
         "nav_groups": build_nav(db, current, viewed),
+        "quick_nav": build_quick_nav(db, current, viewed),
         "badges": badges(db, viewed),
         "active_path": request.url.path,
         "can_edit": can_act_as(current, viewed),

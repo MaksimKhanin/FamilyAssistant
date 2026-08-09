@@ -1,0 +1,22 @@
+{
+  "name": "Семейный ассистент",
+  "short_name": "Ассистент",
+  "description": "Домашний ассистент: питание, дом и память семьи",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F1EADF",
+  "theme_color": "#2E6E7E",
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Записать приём пищи", "url": "/nutrition/meal" },
+    { "name": "События дома", "url": "/security/events" }
+  ]
+}

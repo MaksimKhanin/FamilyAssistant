@@ -6,7 +6,6 @@ Run once after the first `docker compose up`. Everything else — the rest of th
 family, module flags, cameras — is done from the panel itself.
 """
 import argparse
-import secrets
 import sys
 
 from app.core.auth import hash_password
@@ -46,14 +45,13 @@ def main():
             role=ROLE_HEAD,
             avatar_slot=0,
             autonomy=1,
-            link_code=secrets.token_hex(3),
         )
         db.add(head)
         db.flush()
         get_settings(db, family.id)
 
         print(f"Готово. Семья «{family.name}», глава семьи {head.display_name} (@{head.username}).")
-        print(f"Код привязки Telegram: {head.link_code} — отправьте боту /start {head.link_code}")
+        print("Заходите в панель и добавляйте остальных — каждому достанется своя ссылка-приглашение.")
     return 0
 
 

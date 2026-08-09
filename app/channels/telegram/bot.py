@@ -1,14 +1,17 @@
-"""Telegram-бот — основной канал общения с семьёй.
+"""Telegram-бот — необязательный дополнительный канал.
 
     python -m app.channels.telegram.bot
 
-The bot is a channel, not a second brain: every message goes through the same
-`Agent.respond` as the web panel and lands in the same `chat_messages`. A person
-sends a photo of their plate here and sees the estimate in the panel, and vice
-versa.
+**По умолчанию выключен**: семья общается с ассистентом через панель, установленную
+на телефон как приложение, и получает уведомления через web push (`app/core/push.py`).
+Бот остаётся рабочим примером того, как выглядит канал, и запасным вариантом —
+поднимается профилем compose:
 
-It also listens to the Event Bus, so an anomaly at the gate or a due reminder
-reaches people's phones without anyone opening anything.
+    docker compose --profile telegram up -d
+
+Канал — это только транспорт: сообщение идёт через тот же `Agent.respond`, что и
+панель, и ложится в те же `chat_messages`. Чтобы прикрутить другой мессенджер,
+достаточно повторить этот файл с другим SDK.
 """
 import asyncio
 import json
@@ -48,11 +51,15 @@ def _find_user(db, telegram_id: str) -> Optional[User]:
 
 
 def _link_by_code(db, telegram_id: str, code: str) -> Optional[User]:
-    user = db.query(User).filter(User.link_code == code.strip()).one_or_none()
+    """Привязать Telegram по тому же коду, что и ссылка-приглашение в панель.
+
+    Код здесь намеренно не гасится: панель — основной вход, и он ещё понадобится
+    человеку, чтобы задать себе пароль.
+    """
+    user = db.query(User).filter(User.invite_code == code.strip()).one_or_none()
     if user is None:
         return None
     user.telegram_id = str(telegram_id)
-    user.link_code = None      # код одноразовый
     db.commit()
     return user
 

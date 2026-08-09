@@ -133,6 +133,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .card.tight { padding: 16px 18px; border-radius: 16px; }
 .card.dark { background: var(--dark); color: var(--dark-text); border-color: transparent; }
 .card.dark .muted, .card.dark p { color: var(--dark-text-2); }
+/* Обводочная кнопка на тёмной карточке: обычная рамка на ней не видна. */
+.card.dark .btn.ghost { color: var(--dark-text); border-color: rgba(237, 231, 219, .34); }
+.card.dark .btn.ghost:hover { background: rgba(237, 231, 219, .1); }
 
 .grid { display: grid; gap: 16px; }
 .grid.auto-300 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
@@ -141,11 +144,82 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .grid.auto-180 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 .two-col { display: grid; gap: 18px; grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr); }
 
+/* ---------- телефон ----------
+   Панель установлена на телефон как приложение и работает как приложение:
+   сайдбар уезжает в выдвижное меню, снизу появляется панель с тем, ради чего
+   её вообще открывают, чат раскрывается на весь экран. */
+
+.only-mobile { display: none; }
+.bottom-nav { display: none; }
+.drawer-backdrop { display: none; }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; }
   .two-col { grid-template-columns: 1fr; }
+
+  .only-mobile { display: inline-flex; }
+  .no-mobile { display: none !important; }
+
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 45;
+    transform: translateX(-100%); transition: transform .22s ease;
+    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+  }
+  .sidebar.open { transform: none; box-shadow: 16px 0 50px rgba(35, 32, 28, .22); }
+
+  .drawer-backdrop {
+    position: fixed; inset: 0; z-index: 44;
+    background: rgba(35, 32, 28, .34); backdrop-filter: blur(2px);
+  }
+  .drawer-backdrop.open { display: block; }
+
+  .header { padding: 14px 16px; gap: 12px; align-items: center; }
+  .header h1 { font-size: 18px; }
+  .header .subtitle { display: none; }
+  .header-right { gap: 8px; }
+
+  .content {
+    padding: 18px 16px calc(96px + env(safe-area-inset-bottom));
+  }
+
+  .bottom-nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+    background: rgba(255, 252, 246, .94); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  .bottom-nav a, .bottom-nav button {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 2px; border: none; background: none; cursor: pointer;
+    font-size: 10px; color: var(--text-3); position: relative;
+  }
+  /* Подпись всегда в одну строку — иначе панель растёт и наезжает на контент. */
+  .bottom-nav span {
+    max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .bottom-nav .active { color: var(--acc); font-weight: 600; }
+  .bottom-nav .dot {
+    position: absolute; top: 4px; right: 50%; margin-right: -14px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--alarm);
+  }
+
+  .chat-panel { width: 100%; border-radius: 0; }
+  .chat-body { padding: 14px 16px; }
+  .chat-foot { padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); }
+  .bubble { max-width: 92%; }
+
+  .card { padding: 16px 16px; border-radius: 16px; }
+  .modal { border-radius: 18px; }
+  .matrix { grid-template-columns: 1fr 64px 64px; }
+  .ring { width: 96px; height: 96px; }
+  .ring > div { width: 74px; height: 74px; }
+  .chart { height: 170px; gap: 8px; }
+  .chart-bars i { width: 11px; }
+  .field { font-size: 16px; }   /* иначе Safari зумит страницу на фокусе */
 }
+
+body.no-scroll { overflow: hidden; }
 
 .row { display: flex; align-items: center; gap: 10px; }
 .row.wrap { flex-wrap: wrap; }

@@ -32,7 +32,7 @@
         <div class="tiny">{{ event.happened_at|ru_datetime }} · {{ event.reason }}</div>
       </div>
       <div class="tiny" style="text-align:right">
-        {{ "отправлено в Telegram" if event.notified_at else "только в логе" }}
+        {{ "уведомил семью" if event.notified_at else "только в логе" }}
       </div>
     </a>
   {% else %}
@@ -74,7 +74,7 @@
           </form>
           <a class="btn ghost" href="/security/events">Закрыть</a>
         </div>
-        <p class="tiny">Так же выглядит сообщение в Telegram.</p>
+        <p class="tiny">Так же выглядит уведомление на телефоне.</p>
       </div>
     </div>
   </div>

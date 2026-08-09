@@ -10,17 +10,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.core import push
 from app.core.auth import NotAuthenticatedException
 from app.core.config import settings
 from app.core.db import create_all
-from app.core.events import bus
+from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.templating import render
 from app.modules import load_modules
-from app.web import routes_auth, routes_chat, routes_dashboard, routes_onboarding, routes_settings
+from app.web import (
+    routes_auth, routes_chat, routes_dashboard, routes_invite, routes_onboarding,
+    routes_push, routes_settings,
+)
 
 logger = get_logger("app")
 
@@ -28,7 +32,16 @@ logger = get_logger("app")
 async def lifespan(_: FastAPI):
     Path(settings.media_root).mkdir(parents=True, exist_ok=True)
     create_all()
+
+    # Уведомления рассылает только веб-процесс: при работе через Redis событие
+    # приходит во все процессы, и подпишись на него каждый — семья получила бы
+    # по три одинаковых сообщения на каждую тревогу.
+    bus.subscribe(AGENT_MESSAGE, push.handle_agent_message)
     bus.start()
+
+    if not push.configured():
+        logger.warning("VAPID-ключи не заданы — уведомления на телефоны не пойдут "
+                       "(python -m scripts.vapid_keys)")
     logger.info("Семейный ассистент запущен: модули — "
                 + ", ".join(m.name for m in load_modules()))
     yield
@@ -46,8 +59,10 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(routes_auth.router)
+app.include_router(routes_invite.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_chat.router)
+app.include_router(routes_push.router)
 app.include_router(routes_settings.router)
 app.include_router(routes_onboarding.router)
 
@@ -59,6 +74,24 @@ for module in load_modules():
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"status": "ok", "modules": [m.name for m in load_modules()]}
+
+
+# Service worker обязан отдаваться из корня: со /static/ его область видимости
+# ограничилась бы этой папкой, и он не смог бы управлять страницами приложения.
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(static_dir / "sw.js", media_type="application/javascript",
+                        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest():
+    return FileResponse(static_dir / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(static_dir / "icons" / "favicon-32.png", media_type="image/png")
 
 
 @app.exception_handler(404)

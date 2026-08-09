@@ -45,6 +45,18 @@ class LLMSettings:
 
 
 @dataclass
+class PushSettings:
+    """Web Push (VAPID). Ключи генерируются один раз: python -m scripts.vapid_keys"""
+    public_key: str
+    private_key: str
+    subject: str
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.public_key and self.private_key)
+
+
+@dataclass
 class Settings:
     database_url: str
     media_root: str
@@ -56,6 +68,7 @@ class Settings:
     public_base_url: str
     timezone: str
     media_retention_days: int
+    push: PushSettings = field(default_factory=lambda: PushSettings("", "", "mailto:admin@example.com"))
     llm: LLMSettings = field(default_factory=lambda: LLMSettings("", "", "", "", 0.3, 1024, 60.0))
 
 
@@ -71,6 +84,11 @@ def load_settings() -> Settings:
         public_base_url=os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000"),
         timezone=os.environ.get("TIMEZONE", "Europe/Moscow"),
         media_retention_days=_int("MEDIA_RETENTION_DAYS", 14),
+        push=PushSettings(
+            public_key=os.environ.get("VAPID_PUBLIC_KEY", ""),
+            private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),
+            subject=os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com"),
+        ),
         llm=LLMSettings(
             base_url=os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"),
             api_key=os.environ.get("LLM_API_KEY", ""),

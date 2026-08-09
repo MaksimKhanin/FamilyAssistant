@@ -62,8 +62,11 @@ class User(Base):
     relation = Column(String(32), nullable=True)          # «мама», «сын», ... — только для тёплого тона UI
     role = Column(String(16), nullable=False, default=ROLE_MEMBER)
 
+    #: Одноразовый код приглашения: по ссылке /invite/<код> человек задаёт себе
+    #: пароль и попадает в панель. Сгорает, как только пароль задан.
+    invite_code = Column(String(32), nullable=True, index=True)
+    #: Заполняется, только если включён необязательный Telegram-канал.
     telegram_id = Column(String(32), unique=True, nullable=True, index=True)
-    link_code = Column(String(16), nullable=True, index=True)   # одноразовый код привязки Telegram
 
     avatar_slot = Column(Integer, nullable=False, default=0)    # индекс палитры аватара 0..4
     autonomy = Column(Integer, nullable=False, default=1)
@@ -167,6 +170,27 @@ class ScheduledJob(Base):
     weekday = Column(Integer, nullable=True)          # 0..6 для недельных задач
     enabled = Column(Boolean, nullable=False, default=False)
     last_run_at = Column(DateTime, nullable=True)
+
+
+class PushSubscription(Base):
+    """Подписка браузера на уведомления — по одной на каждое устройство человека.
+
+    Это и есть канал доставки: телефон с установленной панелью получает сообщение
+    о тревоге, не открывая её. Мёртвые подписки (браузер отозвал, приложение
+    переустановили) удаляются при первой же неудачной отправке.
+    """
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    endpoint = Column(String(512), nullable=False, unique=True)
+    p256dh = Column(String(255), nullable=False)      # публичный ключ браузера
+    auth = Column(String(64), nullable=False)         # общий секрет подписки
+
+    device_label = Column(String(128), nullable=True)  # «Телефон Марины» — из User-Agent
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
 
 
 class FamilySettings(Base):

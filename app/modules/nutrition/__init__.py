@@ -13,7 +13,8 @@ module = Module(
     description="Записывает еду по фото или словам, считает баланс дня",
     routers=[router],
     nav_items=[
-        NavItem(slug="meal", label="Приём пищи", url="/nutrition/meal", icon="plus", group="Питание"),
+        NavItem(slug="meal", label="Приём пищи", url="/nutrition/meal", icon="plus",
+                group="Питание", short="Еда"),
         NavItem(slug="stats", label="Статистика", url="/nutrition/stats", icon="chart", group="Питание"),
         NavItem(slug="activity", label="Активность", url="/nutrition/activity", icon="pulse", group="Питание"),
         NavItem(slug="plan", label="План питания", url="/nutrition/plan", icon="book", group="Питание"),

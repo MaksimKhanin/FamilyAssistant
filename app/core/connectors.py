@@ -36,13 +36,12 @@ class ConnectorSpec:
 
 
 CATALOG: List[ConnectorSpec] = [
-    ConnectorSpec("telegram", "Telegram", "Тот же диалог с ассистентом, что и в панели"),
-    ConnectorSpec("gcal", "Google Календарь", "Видит планы семьи, чтобы не предлагать невпопад"),
+    ConnectorSpec("gcal", "Календарь", "Видит планы семьи, чтобы не предлагать невпопад"),
     ConnectorSpec("mail", "Почта", "Замечает важные письма и напоминает о них"),
     ConnectorSpec("notes", "Заметки", "Складывает списки и идеи туда, где вы их ищете"),
     ConnectorSpec("grocery", "Доставка продуктов", "Собирает корзину по плану питания"),
-    ConnectorSpec("whatsapp", "WhatsApp", "Ещё один канал для сообщений семье"),
-    ConnectorSpec("social", "Соцсети", "Смотрит за упоминаниями семьи и детей"),
+    ConnectorSpec("fitness", "Шагомер", "Забирает шаги с телефона, чтобы не вводить вручную"),
+    ConnectorSpec("music", "Музыка", "Ставит то, что просят, на домашней колонке"),
 ]
 
 
