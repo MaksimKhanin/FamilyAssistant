@@ -8,6 +8,9 @@ media/
 *.sqlite3
 smoke-media/
 
+# локальный запуск: база, медиа и сгенерированные ключи
+.local/
+
 # python
 __pycache__/
 *.py[cod]

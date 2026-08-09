@@ -13,6 +13,7 @@ os.environ.setdefault("INGEST_API_KEY", "test-ingest-key")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP}/test.db")
 os.environ.setdefault("MEDIA_ROOT", f"{_TMP}/media")
 os.environ.setdefault("COOKIE_SECURE", "false")
+os.environ.setdefault("TIMEZONE", "UTC")   # тесты не должны зависеть от пояса машины
 os.environ.setdefault("LLM_BASE_URL", "http://localhost:0/v1")
 os.environ.setdefault("LLM_MODEL", "test-model")
 

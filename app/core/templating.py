@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.core.clock import local_now, to_local
+
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
 
@@ -53,28 +55,33 @@ def genitive(name: str) -> str:
 
 
 def ru_time(value: datetime) -> str:
-    return value.strftime("%H:%M") if value else ""
+    """Время события в часовом поясе семьи — в базе оно лежит в UTC."""
+    local = to_local(value)
+    return local.strftime("%H:%M") if local else ""
 
 
 def ru_date(value: datetime) -> str:
-    if not value:
+    local = to_local(value)
+    if not local:
         return ""
-    return f"{value.day} {_MONTHS[value.month - 1]}"
+    return f"{local.day} {_MONTHS[local.month - 1]}"
 
 
 def ru_datetime(value: datetime, now: datetime = None) -> str:
-    if not value:
+    local = to_local(value)
+    if not local:
         return ""
-    now = now or datetime.utcnow()
-    if value.date() == now.date():
-        return f"Сегодня, {value.strftime('%H:%M')}"
-    if (now.date() - value.date()).days == 1:
-        return f"Вчера, {value.strftime('%H:%M')}"
-    return f"{ru_date(value)}, {value.strftime('%H:%M')}"
+    now = now or local_now()
+    if local.date() == now.date():
+        return f"Сегодня, {local.strftime('%H:%M')}"
+    if (now.date() - local.date()).days == 1:
+        return f"Вчера, {local.strftime('%H:%M')}"
+    return f"{ru_date(value)}, {local.strftime('%H:%M')}"
 
 
 def weekday_short(value: datetime) -> str:
-    return _WEEKDAYS[value.weekday()][:2] if value else ""
+    local = to_local(value)
+    return _WEEKDAYS[local.weekday()][:2] if local else ""
 
 
 templates.env.filters["plural"] = plural

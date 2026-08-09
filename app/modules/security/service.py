@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import days_ago_start_utc, to_local, utc_now
 from app.core.logging import get_logger
 from app.modules.security.models import (
     VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL, Camera, SecurityEvent,
@@ -107,7 +108,9 @@ def set_camera_notify(db: Session, family_id: int, camera_id: int, enabled: bool
 def record_event(db: Session, family_id: int, camera: Camera, happened_at: datetime,
                  detected_class: str = None, confidence: float = None, area: int = None,
                  snapshot_path: str = None, clip_path: str = None) -> SecurityEvent:
-    decision = decide(camera, detected_class, happened_at, confidence)
+    # Правила смотрят на «тихие часы» дома, поэтому решение принимается по
+    # локальному времени, а храним всё по-прежнему в UTC.
+    decision = decide(camera, detected_class, to_local(happened_at), confidence)
 
     event = SecurityEvent(
         family_id=family_id,
@@ -133,7 +136,7 @@ def list_events(db: Session, family_id: int, only: str = "all", days: int = 7,
     query = (
         db.query(SecurityEvent)
         .filter(SecurityEvent.family_id == family_id,
-                SecurityEvent.happened_at >= datetime.utcnow() - timedelta(days=days))
+                SecurityEvent.happened_at >= days_ago_start_utc(days - 1))
     )
     if only == "anomaly":
         query = query.filter(SecurityEvent.verdict.in_((VERDICT_ANOMALY, VERDICT_CHECK)))
@@ -153,7 +156,7 @@ def anomaly_count(db: Session, family_id: int, days: int = 1) -> int:
         .filter(SecurityEvent.family_id == family_id,
                 SecurityEvent.verdict.in_((VERDICT_ANOMALY, VERDICT_CHECK)),
                 SecurityEvent.resolution.is_(None),
-                SecurityEvent.happened_at >= datetime.utcnow() - timedelta(days=days))
+                SecurityEvent.happened_at >= days_ago_start_utc(days - 1))
         .count()
     )
 
@@ -164,7 +167,7 @@ def mark_ours(db: Session, family_id: int, event_id: int) -> Optional[SecurityEv
     if event is None:
         return None
     event.resolution = "ours"
-    event.resolved_at = datetime.utcnow()
+    event.resolved_at = utc_now()
     db.commit()
     return event
 
@@ -173,4 +176,4 @@ def describe(event: SecurityEvent, camera: Camera = None) -> str:
     """One warm, non-dramatic sentence about an event."""
     label = camera.label if camera else "камера"
     what = {"person": "кто-то", "car": "машина"}.get((event.detected_class or "").lower(), "движение")
-    return f"{what.capitalize()} у камеры «{label}», {event.happened_at:%H:%M}. {event.reason}."
+    return f"{what.capitalize()} у камеры «{label}», {to_local(event.happened_at):%H:%M}. {event.reason}."

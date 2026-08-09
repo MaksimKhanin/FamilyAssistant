@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core import media
+from app.core.clock import day_bounds_utc, local_date, local_today, utc_now
 from app.modules.nutrition.models import (
     ACTIVITY_KCAL, GOAL_KEEP, SOURCE_PHOTO, SOURCE_TEXT, STATUS_CONFIRMED,
     STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, NutritionProfile,
@@ -121,11 +122,10 @@ def delete_meal(db: Session, user_id: int, meal_id: int) -> bool:
 
 
 def meals_for_day(db: Session, user_id: int, day: date = None) -> List[Meal]:
-    day = day or datetime.utcnow().date()
-    start = datetime.combine(day, datetime.min.time())
+    start, end = day_bounds_utc(day or local_today())
     return (
         db.query(Meal)
-        .filter(Meal.user_id == user_id, Meal.eaten_at >= start, Meal.eaten_at < start + timedelta(days=1))
+        .filter(Meal.user_id == user_id, Meal.eaten_at >= start, Meal.eaten_at < end)
         .order_by(Meal.eaten_at)
         .all()
     )
@@ -153,13 +153,12 @@ def log_activity(db: Session, user_id: int, kind: str, value: float,
 
 
 def activity_for_day(db: Session, user_id: int, day: date = None) -> List[ActivityLog]:
-    day = day or datetime.utcnow().date()
-    start = datetime.combine(day, datetime.min.time())
+    start, end = day_bounds_utc(day or local_today())
     return (
         db.query(ActivityLog)
         .filter(ActivityLog.user_id == user_id,
                 ActivityLog.happened_at >= start,
-                ActivityLog.happened_at < start + timedelta(days=1))
+                ActivityLog.happened_at < end)
         .order_by(ActivityLog.happened_at)
         .all()
     )
@@ -213,20 +212,20 @@ class PeriodStats:
 
     @property
     def today(self) -> DayTotals:
-        return self.days[-1] if self.days else DayTotals(day=datetime.utcnow().date())
+        return self.days[-1] if self.days else DayTotals(day=local_today())
 
 
 def period_stats(db: Session, user_id: int, period: str = "day", today: date = None) -> PeriodStats:
     """Per-day consumed/burned totals for the requested window, oldest day first."""
     span = PERIODS.get(period, 1)
-    today = today or datetime.utcnow().date()
+    today = today or local_today()
     first_day = today - timedelta(days=span - 1)
-    start = datetime.combine(first_day, datetime.min.time())
+    start, _ = day_bounds_utc(first_day)
 
     buckets = {first_day + timedelta(days=i): DayTotals(day=first_day + timedelta(days=i)) for i in range(span)}
 
     for meal in db.query(Meal).filter(Meal.user_id == user_id, Meal.eaten_at >= start).all():
-        bucket = buckets.get(meal.eaten_at.date())
+        bucket = buckets.get(local_date(meal.eaten_at))
         if bucket is None:
             continue
         bucket.consumed += meal.kcal
@@ -236,7 +235,7 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
 
     for entry in db.query(ActivityLog).filter(ActivityLog.user_id == user_id,
                                               ActivityLog.happened_at >= start).all():
-        bucket = buckets.get(entry.happened_at.date())
+        bucket = buckets.get(local_date(entry.happened_at))
         if bucket is not None:
             bucket.burned += entry.kcal
 
@@ -245,7 +244,7 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
 
 
 def recent_meal_titles(db: Session, user_id: int, days: int = 14, limit: int = 25) -> List[str]:
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utc_now() - timedelta(days=days)
     rows = (
         db.query(Meal)
         .filter(Meal.user_id == user_id, Meal.eaten_at >= since)

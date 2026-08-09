@@ -9,13 +9,14 @@ Runs beside the web app and the bot. It does three things, once a minute:
   * rotates camera media past its retention window.
 
 It never talks to a channel directly — it publishes on the Event Bus, and whoever
-owns the channel (today: the Telegram bot) delivers it.
+owns the channel (today: web push from the panel) delivers it.
 """
 import time
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import local_now, to_local, to_utc, utc_now
 from app.core.db import session_scope
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
@@ -40,7 +41,8 @@ def _due(job: ScheduledJob, now: datetime) -> bool:
         return False
     if job.weekday is not None and now.weekday() != job.weekday:
         return False
-    if job.last_run_at and (now - job.last_run_at) < timedelta(minutes=2):
+    # last_run_at, как и всё в базе, лежит в UTC — сравниваем в одной системе.
+    if job.last_run_at and (now - to_local(job.last_run_at)) < timedelta(minutes=2):
         return False
     return True
 
@@ -84,7 +86,7 @@ def run_jobs(db: Session, now: datetime):
             continue
 
         text = _digest_text(db, user, job.kind)
-        job.last_run_at = now
+        job.last_run_at = to_utc(now)
         db.commit()
 
         if not text:
@@ -115,11 +117,12 @@ def run_retention(db: Session):
 
 
 def tick(now: datetime = None):
-    now = now or datetime.utcnow()
+    # Расписания семьи — по местному времени, напоминания хранятся в UTC.
+    local = now or local_now()
     with session_scope() as db:
-        run_jobs(db, now)
-        run_reminders(db, now)
-        if now.hour == RETENTION_HOUR and now.minute == 0:
+        run_jobs(db, local)
+        run_reminders(db, utc_now())
+        if local.hour == RETENTION_HOUR and local.minute == 0:
             run_retention(db)
 
 

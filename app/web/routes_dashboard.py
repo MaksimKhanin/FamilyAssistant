@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core import family as family_service
 from app.core.access import is_module_enabled
 from app.core.auth import can_see_figures, get_current_user, get_viewed_user
+from app.core.clock import local_now
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render
@@ -31,8 +32,6 @@ def dashboard(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    from datetime import datetime
-
     context = screen_context(request, db, current, viewed,
                              title="Главная", subtitle="Спокойный обзор дня — питание и дом")
 
@@ -62,7 +61,7 @@ def dashboard(
         }
 
     context.update(
-        greeting=_greeting(datetime.now().hour),
+        greeting=_greeting(local_now().hour),
         nutrition_on=nutrition_on,
         security_on=security_on,
         day=day,

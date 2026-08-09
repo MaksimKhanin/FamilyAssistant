@@ -8,6 +8,7 @@ assistant's character.
 from datetime import datetime
 from typing import List
 
+from app.core.clock import local_now
 from app.core.models import AUTONOMY_LEVELS, User
 
 TONE = """\
@@ -34,7 +35,7 @@ TOOLS_RULES = """\
 
 
 def system_prompt(user: User, modules: List[str], now: datetime = None) -> str:
-    now = now or datetime.now()
+    now = now or local_now()
     autonomy = AUTONOMY_LEVELS.get(user.autonomy or 0, "Спрашивает про важное")
     who = f"{user.display_name}"
     if user.relation:

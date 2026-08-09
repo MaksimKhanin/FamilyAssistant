@@ -38,10 +38,13 @@ class LLMSettings:
     temperature: float
     max_tokens: int
     request_timeout: float
+    #: Офлайн-режим для пробного запуска: вместо модели — разбор ключевых слов.
+    #: Включается сам, когда модель не настроена (см. `load_settings`).
+    stub: bool = False
 
     @property
     def configured(self) -> bool:
-        return bool(self.model) and bool(self.base_url)
+        return self.stub or (bool(self.model) and bool(self.base_url))
 
 
 @dataclass
@@ -97,6 +100,7 @@ def load_settings() -> Settings:
             temperature=float(os.environ.get("LLM_TEMPERATURE", "0.3")),
             max_tokens=_int("LLM_MAX_TOKENS", 1024),
             request_timeout=float(os.environ.get("LLM_TIMEOUT", "60")),
+            stub=_flag("LLM_STUB", False),
         ),
     )
 

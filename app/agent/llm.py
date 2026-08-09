@@ -71,6 +71,9 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
     ) -> LLMResponse:
+        if self.cfg.stub:
+            from app.agent import stub
+            return stub.chat(messages, tools)
         if not self.configured:
             raise LLMUnavailable("LLM не сконфигурирован: задайте LLM_BASE_URL и LLM_MODEL")
 
@@ -147,6 +150,10 @@ class LLMClient:
         relied upon — plenty of OpenAI-compatible servers ignore it, so the answer
         is also unwrapped from ```json fences before parsing.
         """
+        if self.cfg.stub:
+            from app.agent import stub
+            return stub.json_completion(system, user_content)
+
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
