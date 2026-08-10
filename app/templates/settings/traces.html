@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="stack">
+
+  <div class="card stack">
+    <div class="row">
+      <div>
+        <div class="card-title">Запись трейсов</div>
+        <p class="tiny" style="margin:0">
+          Пишется всё: системный промпт и обёртки, история, схемы инструментов, ответ модели,
+          аргументы и результат каждого вызова — и токены. Это переписка всех домашних целиком,
+          поэтому раздел закрыт для всех, кроме вас.
+        </p>
+      </div>
+      <form class="spacer" method="post" action="/settings/traces/toggle">
+        <input type="hidden" name="enabled" value="{{ 'off' if trace_settings.enabled else 'on' }}">
+        <button class="toggle {% if trace_settings.enabled %}on{% endif %}" type="submit"><span></span></button>
+      </form>
+    </div>
+
+    <div class="row wrap" style="gap:10px">
+      <form class="row" style="gap:6px" method="post" action="/settings/traces/keep">
+        <span class="tiny">Хранить последних прогонов</span>
+        <input class="field" type="number" name="keep_runs" min="10" max="5000"
+               value="{{ trace_settings.keep_runs }}" style="width:96px">
+        <button class="btn ghost small" type="submit">Сохранить</button>
+      </form>
+      <a class="btn small spacer" href="/settings/traces/export.json{{ export_query }}">Выгрузить JSON</a>
+      <form method="post" action="/settings/traces/clear"
+            onsubmit="return confirm('Стереть все трейсы вместе с промптами?')">
+        <button class="btn ghost small" type="submit">Стереть всё</button>
+      </form>
+    </div>
+  </div>
+
+  {% if filter_user_id or filter_session_id %}
+    <div class="row">
+      <span class="tiny">
+        Показаны только
+        {% if filter_session_id %}прогоны разговора <span class="mono">{{ filter_session_id }}</span>{% endif %}
+        {% if filter_user_id %}прогоны выбранного человека{% endif %}
+      </span>
+      <a class="btn ghost small spacer" href="/settings/traces">Показать все</a>
+    </div>
+  {% endif %}
+
+  <div class="two-col">
+    <div class="card stack">
+      <div class="card-title">Токены по людям</div>
+      {% for row in by_user %}
+        <div class="row wrap" style="gap:8px;padding:8px 0;border-top:1px solid var(--border)">
+          <div style="flex:1;min-width:140px">
+            <div style="font-weight:600">{{ row.name }}</div>
+            <div class="tiny">{{ row.runs }} прогонов · {{ row.sessions }} разговоров</div>
+          </div>
+          <div class="tiny" style="text-align:right">
+            <div><b>{{ row.total_tokens }}</b> всего</div>
+            <div>{{ row.prompt_tokens }} вход · {{ row.completion_tokens }} выход</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <a class="btn ghost small" href="/settings/traces?user_id={{ row.user_id }}">Показать</a>
+            <a class="btn ghost small" href="/settings/traces/export.json?user_id={{ row.user_id }}">JSON</a>
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Пока ничего не записано.</p>
+      {% endfor %}
+    </div>
+
+    <div class="card stack">
+      <div class="card-title">Разговоры</div>
+      {% for row in by_session %}
+        <div class="row wrap" style="gap:8px;padding:8px 0;border-top:1px solid var(--border)">
+          <div style="flex:1;min-width:140px">
+            <div style="font-weight:600">{{ row.name }} · <span class="tiny">{{ row.channel }}</span></div>
+            <div class="tiny mono">{{ row.session_id }}</div>
+            <div class="tiny">
+              {{ row.started_at|ru_datetime }} · {{ row.runs }} прогонов
+            </div>
+          </div>
+          <div class="tiny" style="text-align:right">
+            <div><b>{{ row.total_tokens }}</b> всего</div>
+            <div>{{ row.prompt_tokens }} / {{ row.completion_tokens }}</div>
+          </div>
+          <div class="row" style="gap:6px">
+            <a class="btn ghost small" href="/settings/traces?session_id={{ row.session_id }}">Показать</a>
+            <a class="btn ghost small"
+               href="/settings/traces/export.json?session_id={{ row.session_id }}">JSON</a>
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Разговоров пока не было.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card stack">
+    <div class="card-title">Прогоны</div>
+    {% for run in runs %}
+      <details class="trace-run">
+        <summary>
+          <span class="tiny">{{ run.at|ru_datetime }}</span>
+          <b>{{ run.user.name }}</b>
+          <span class="tiny">{{ run.channel }}</span>
+          <span class="tiny">· {{ run.tokens.total }} токенов ({{ run.tokens.prompt }}/{{ run.tokens.completion }})</span>
+          <span class="tiny">· {{ run.llm_calls }} к модели, {{ run.tool_calls }} инструментов</span>
+          <span class="tiny">· {{ run.duration_ms }} мс</span>
+          {% if run.error %}<span class="badge estimate">сорвался</span>{% endif %}
+        </summary>
+
+        <div class="stack" style="padding:10px 0">
+          <div>
+            <div class="label">Реплика</div>
+            <div>{{ run.trigger }}</div>
+          </div>
+          <div>
+            <div class="label">Ответ</div>
+            <div>{{ run.reply or "—" }}</div>
+          </div>
+          {% if run.error %}
+            <div>
+              <div class="label">Ошибка</div>
+              <div class="mono">{{ run.error }}</div>
+            </div>
+          {% endif %}
+
+          {% for step in run.steps %}
+            <details class="trace-step">
+              <summary>
+                <span class="mono">#{{ step.step_no }} {{ step.kind }}</span>
+                <b>{{ step.name }}</b>
+                <span class="tiny">· {{ step.status }}</span>
+                {% if step.tokens.total %}
+                  <span class="tiny">· {{ step.tokens.prompt }} → {{ step.tokens.completion }}</span>
+                {% endif %}
+                <span class="tiny">· {{ step.duration_ms }} мс</span>
+              </summary>
+              <div class="label">Запрос</div>
+              <pre class="trace-json">{{ step.request_text }}</pre>
+              <div class="label">Ответ</div>
+              <pre class="trace-json">{{ step.response_text }}</pre>
+            </details>
+          {% else %}
+            <p class="tiny">Шагов не записано.</p>
+          {% endfor %}
+
+          <div class="row" style="gap:8px">
+            <a class="btn ghost small" href="/settings/traces?session_id={{ run.session_id }}">Весь разговор</a>
+            <a class="btn ghost small"
+               href="/settings/traces/export.json?run_id={{ run.run_id }}">JSON прогона</a>
+          </div>
+        </div>
+      </details>
+    {% else %}
+      <p class="muted">
+        {% if trace_settings.enabled %}
+          Записи пока нет — напишите ассистенту, и прогон появится здесь.
+        {% else %}
+          Запись выключена. Включите переключатель выше, и следующий разговор попадёт сюда.
+        {% endif %}
+      </p>
+    {% endfor %}
+  </div>
+
+</div>
+
+{% endblock %}
