@@ -214,6 +214,73 @@ def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int 
 
 
 @tool(
+    name="delete_meal",
+    module=MODULE,
+    title="Удалить запись о еде",
+    description="""
+    Удалить ошибочную запись о еде: человек записал не то, продиктовал дважды или
+    передумал. meal_id — из предыдущего ответа; без него удаляется самая свежая
+    запись («удали последнее», «убери то, что записал только что»).
+    Не путай с исправлением: если человек уточняет блюдо или вес, это confirm_meal.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "meal_id": {"type": "integer",
+                        "description": "Номер записи; без него — самая свежая"},
+        },
+    },
+    # Удаление необратимо, поэтому на всех уровнях, кроме максимального, агент
+    # готовит действие и ждёт «да». Ровно то, ради чего заведены pending-действия.
+    auto_from=3,
+)
+def delete_meal(ctx: ToolContext, meal_id: int = None) -> ToolResult:
+    meal = (service.get_meal(ctx.db, ctx.subject.id, meal_id) if meal_id
+            else service.last_meal(ctx.db, ctx.subject.id))
+    if meal is None:
+        return ToolResult(summary="Такой записи о еде нет — возможно, её уже удалили.", ok=False)
+
+    title, kcal = meal.title, meal.kcal
+    service.delete_meal(ctx.db, ctx.subject.id, meal.id)
+    return ToolResult(
+        summary=f"Удалил запись: {title} — {kcal} ккал. В дневном балансе она больше не считается.",
+        data={"meal_id": meal.id},
+    )
+
+
+@tool(
+    name="delete_activity",
+    module=MODULE,
+    title="Удалить запись об активности",
+    description="""
+    Удалить ошибочную запись об активности. activity_id — из предыдущего ответа;
+    без него удаляется самая свежая запись.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "activity_id": {"type": "integer",
+                            "description": "Номер записи; без него — самая свежая"},
+        },
+    },
+    auto_from=3,
+)
+def delete_activity(ctx: ToolContext, activity_id: int = None) -> ToolResult:
+    entry = (service.get_activity(ctx.db, ctx.subject.id, activity_id) if activity_id
+             else service.last_activity(ctx.db, ctx.subject.id))
+    if entry is None:
+        return ToolResult(summary="Такой записи об активности нет.", ok=False)
+
+    label = ACTIVITY_LABELS.get(entry.kind, entry.kind).lower()
+    unit, value, kcal = ACTIVITY_UNITS.get(entry.kind, ""), int(entry.value), entry.kcal
+    service.delete_activity(ctx.db, ctx.subject.id, entry.id)
+    return ToolResult(
+        summary=f"Удалил запись: {label} — {value} {unit}, примерно {kcal} ккал.",
+        data={"activity_id": entry.id},
+    )
+
+
+@tool(
     name="log_activity",
     module=MODULE,
     title="Записать активность",

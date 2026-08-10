@@ -121,6 +121,16 @@ def delete_meal(db: Session, user_id: int, meal_id: int) -> bool:
     return True
 
 
+def last_meal(db: Session, user_id: int) -> Optional[Meal]:
+    """Самая свежая запись о еде — то, что человек имеет в виду под «удали последнее»."""
+    return (
+        db.query(Meal)
+        .filter(Meal.user_id == user_id)
+        .order_by(Meal.eaten_at.desc(), Meal.id.desc())
+        .first()
+    )
+
+
 def meals_for_day(db: Session, user_id: int, day: date = None) -> List[Meal]:
     start, end = day_bounds_utc(day or local_today())
     return (
@@ -150,6 +160,29 @@ def log_activity(db: Session, user_id: int, kind: str, value: float,
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def get_activity(db: Session, user_id: int, activity_id: int) -> Optional[ActivityLog]:
+    entry = db.get(ActivityLog, activity_id)
+    return entry if entry is not None and entry.user_id == user_id else None
+
+
+def last_activity(db: Session, user_id: int) -> Optional[ActivityLog]:
+    return (
+        db.query(ActivityLog)
+        .filter(ActivityLog.user_id == user_id)
+        .order_by(ActivityLog.happened_at.desc(), ActivityLog.id.desc())
+        .first()
+    )
+
+
+def delete_activity(db: Session, user_id: int, activity_id: int) -> bool:
+    entry = get_activity(db, user_id, activity_id)
+    if entry is None:
+        return False
+    db.delete(entry)
+    db.commit()
+    return True
 
 
 def activity_for_day(db: Session, user_id: int, day: date = None) -> List[ActivityLog]:

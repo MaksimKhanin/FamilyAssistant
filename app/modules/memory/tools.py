@@ -102,7 +102,8 @@ def recall_notes(ctx: ToolContext, query: str = None, kind: str = None) -> ToolR
         return ToolResult(summary="В памяти пока ничего подходящего нет.",
                           data={"notes": []})
 
-    lines = [f"- [{KIND_LABELS.get(n.kind, n.kind)}] {n.text}" for n in notes]
+    # Номер в строке — чтобы на «забудь про грибы» было чем сослаться на заметку.
+    lines = [f"- #{n.id} [{KIND_LABELS.get(n.kind, n.kind)}] {n.text}" for n in notes]
     return ToolResult(
         summary="Из памяти:\n" + "\n".join(lines),
         data={"notes": [{"id": n.id, "text": n.text, "kind": n.kind} for n in notes]},
@@ -113,3 +114,34 @@ def recall_notes(ctx: ToolContext, query: str = None, kind: str = None) -> ToolR
                       for n in notes[:4]],
         },
     )
+
+
+@tool(
+    name="forget_note",
+    module=MODULE,
+    title="Забыть заметку",
+    description="""
+    Убрать из памяти заметку или напоминание: «забудь, что я говорил про грибы»,
+    «отмени напоминание про врача». Номер заметки бери из recall_notes; если его нет,
+    сначала вызови recall_notes и найди нужную.
+    Формулировку, которую человек перестал разделять, лучше забыть, а не переписывать
+    поверх: память — не журнал правок.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "note_id": {"type": "integer", "description": "Номер заметки из recall_notes"},
+        },
+        "required": ["note_id"],
+    },
+    # Как и удаление еды: необратимо, поэтому спрашиваем на всех уровнях, кроме максимального.
+    auto_from=3,
+)
+def forget_note(ctx: ToolContext, note_id: int) -> ToolResult:
+    note = service.get_note(ctx.db, ctx.subject.id, note_id)
+    if note is None:
+        return ToolResult(summary="Такой заметки нет — возможно, её уже забыли.", ok=False)
+
+    text = note.text
+    service.forget(ctx.db, ctx.subject.id, note.id)
+    return ToolResult(summary=f"Забыл: {text}.", data={"note_id": note_id})
