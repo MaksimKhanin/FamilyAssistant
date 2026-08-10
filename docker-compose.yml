@@ -1,9 +1,9 @@
 # Серверная часть семейного ассистента: панель, бот, планировщик, БД и шина событий.
 # Домашний edge-воркер (камеры и YOLO) живёт вне Docker, рядом с камерами — см. docs/deployment.md.
 #
-#   cp .env.__EXAMPLE__ .env      # заполнить секреты
+#   cp .env.__EXAMPLE__ .env      # секреты + ADMIN_USERNAME / ADMIN_PASSWORD
 #   docker compose up -d --build
-#   docker compose exec web python -m scripts.seed --name Марина --username marina --password ...
+# Глава семьи создаётся при первом старте из ADMIN_*; остальных он заводит в панели.
 
 x-app: &app
   build: .
@@ -20,6 +20,12 @@ x-app: &app
     SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
     COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    ADMIN_NAME: ${ADMIN_NAME:-}
+    ADMIN_RELATION: ${ADMIN_RELATION:-}
+    ADMIN_PASSWORD_RESET: ${ADMIN_PASSWORD_RESET:-false}
+    FAMILY_NAME: ${FAMILY_NAME:-Семья}
     PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:5000}
     TIMEZONE: ${TIMEZONE:-Europe/Moscow}
     VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}

@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if error %}
+  <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
+    <p class="muted" style="color:var(--alarm-text)">{{ error }}</p>
+  </div>
+{% elif notice %}
+  <div class="card tight" style="border-left:4px solid var(--ok);margin-bottom:16px">
+    <p class="muted">{{ notice }}</p>
+  </div>
+{% endif %}
+
 <div class="two-col">
   <form class="card stack" method="post" action="/settings/profile">
     <div class="row" style="gap:12px">
@@ -63,6 +73,20 @@
         {{ push_devices|counted("устройство", "устройства", "устройств") }} подключено
       </p>
     </div>
+
+    {% if current_user.id == viewed_user.id %}
+      <form class="card stack" method="post" action="/settings/profile/password">
+        <div class="card-title">Сменить пароль</div>
+        <p class="muted">Свой пароль вы меняете сами — глава семьи его не видит.</p>
+        <input class="field" type="password" name="current_password" placeholder="Текущий пароль"
+               autocomplete="current-password">
+        <input class="field" type="password" name="new_password" placeholder="Новый пароль"
+               autocomplete="new-password">
+        <input class="field" type="password" name="new_password_repeat" placeholder="Ещё раз"
+               autocomplete="new-password">
+        <button class="btn" type="submit">Сохранить пароль</button>
+      </form>
+    {% endif %}
 
     <div class="card stack">
       <div class="card-title">Модули</div>

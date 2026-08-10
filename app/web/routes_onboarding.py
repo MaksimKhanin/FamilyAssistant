@@ -8,15 +8,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.core import accounts
 from app.core import family as family_service
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import get_current_user, get_viewed_user
 from app.core.db import get_db
-from app.core.models import ROLE_MEMBER, User
+from app.core.models import User
 from app.core.templating import render
 from app.modules import togglable
 from app.web.context import avatar, screen_context
-from app.web.routes_invite import invite_url, new_invite_code
+from app.web.routes_invite import invite_url
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -66,42 +67,12 @@ def add_member(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """Add a person and mint the one-time link they use to set their own password."""
-    if not current.is_head or not display_name.strip():
-        return RedirectResponse("/onboarding?step=2", status_code=303)
-
-    members = family_service.members(db, current.family_id)
-    base = _username_from(display_name)
-    username = base
-    suffix = 2
-    while db.query(User).filter(User.username == username).one_or_none() is not None:
-        username = f"{base}{suffix}"
-        suffix += 1
-
-    user = User(
-        family_id=current.family_id,
-        username=username,
-        display_name=display_name.strip()[:64],
-        relation=relation.strip()[:32] or None,
-        role=ROLE_MEMBER,
-        avatar_slot=len(members) % 5,
-        invite_code=new_invite_code(),
-    )
-    db.add(user)
-    db.commit()
+    """Завести человека. Пароль он придумает сам по ссылке-приглашению."""
+    try:
+        accounts.create_member(db, current, display_name, relation)
+    except accounts.AccountError:
+        pass          # подробный разбор ошибок — на экране «Семья и модули»
     return RedirectResponse("/onboarding?step=2", status_code=303)
-
-
-def _username_from(display_name: str) -> str:
-    translit = str.maketrans({
-        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh",
-        "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
-        "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts",
-        "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
-    })
-    slug = display_name.strip().lower().translate(translit)
-    slug = "".join(ch for ch in slug if ch.isalnum())
-    return slug[:32] or "member"
 
 
 @router.post("/modules")

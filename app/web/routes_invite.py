@@ -5,12 +5,11 @@
 Глава добавляет участника и передаёт ссылку любым способом; ссылка одноразовая и
 сгорает, как только пароль задан.
 """
-import secrets
-
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.core.accounts import find_by_invite, new_invite_code  # noqa: F401  (реэкспорт для роутов)
 from app.core.auth import hash_password, set_session_cookie
 from app.core.config import settings
 from app.core.db import get_db
@@ -22,16 +21,12 @@ router = APIRouter(tags=["invite"])
 MIN_PASSWORD_LENGTH = 6
 
 
-def new_invite_code() -> str:
-    return secrets.token_urlsafe(9)
-
-
 def invite_url(user: User) -> str:
     return f"{settings.public_base_url.rstrip('/')}/invite/{user.invite_code}" if user.invite_code else ""
 
 
 def _find(db: Session, code: str) -> User:
-    return db.query(User).filter(User.invite_code == code).one_or_none() if code else None
+    return find_by_invite(db, code)
 
 
 @router.get("/invite/{code}", response_class=HTMLResponse)

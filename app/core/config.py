@@ -48,6 +48,28 @@ class LLMSettings:
 
 
 @dataclass
+class AdminSettings:
+    """Первый вход в систему — глава семьи, заводится из окружения при первом старте.
+
+    Дальше учётные записи нарезаются в панели: пароль отсюда применяется только к
+    пустой базе и больше не трогается, чтобы смена пароля в интерфейсе не
+    откатывалась при каждом рестарте.
+    """
+    username: str
+    password: str
+    display_name: str
+    relation: str
+    family_name: str
+    #: Аварийный сброс пароля главы семьи на значение из окружения. Держать
+    #: включённым не надо: снимайте сразу после того, как вошли.
+    reset_password: bool
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.username and self.password)
+
+
+@dataclass
 class PushSettings:
     """Web Push (VAPID). Ключи генерируются один раз: python -m scripts.vapid_keys"""
     public_key: str
@@ -72,6 +94,8 @@ class Settings:
     timezone: str
     media_retention_days: int
     push: PushSettings = field(default_factory=lambda: PushSettings("", "", "mailto:admin@example.com"))
+    admin: AdminSettings = field(
+        default_factory=lambda: AdminSettings("", "", "", "", "Семья", False))
     llm: LLMSettings = field(default_factory=lambda: LLMSettings("", "", "", "", 0.3, 1024, 60.0))
 
 
@@ -87,6 +111,14 @@ def load_settings() -> Settings:
         public_base_url=os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000"),
         timezone=os.environ.get("TIMEZONE", "Europe/Moscow"),
         media_retention_days=_int("MEDIA_RETENTION_DAYS", 14),
+        admin=AdminSettings(
+            username=os.environ.get("ADMIN_USERNAME", "admin").strip(),
+            password=os.environ.get("ADMIN_PASSWORD", ""),
+            display_name=os.environ.get("ADMIN_NAME", "").strip(),
+            relation=os.environ.get("ADMIN_RELATION", "").strip(),
+            family_name=os.environ.get("FAMILY_NAME", "Семья").strip() or "Семья",
+            reset_password=_flag("ADMIN_PASSWORD_RESET", False),
+        ),
         push=PushSettings(
             public_key=os.environ.get("VAPID_PUBLIC_KEY", ""),
             private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),

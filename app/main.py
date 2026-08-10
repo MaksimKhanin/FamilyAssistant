@@ -15,8 +15,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core import push
 from app.core.auth import NotAuthenticatedException
+from app.core.bootstrap import ensure_admin
 from app.core.config import settings
-from app.core.db import create_all
+from app.core.db import create_all, session_scope
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.templating import render
@@ -32,6 +33,11 @@ logger = get_logger("app")
 async def lifespan(_: FastAPI):
     Path(settings.media_root).mkdir(parents=True, exist_ok=True)
     create_all()
+
+    # Глава семьи заводится из окружения при первом старте; дальше учётные записи
+    # он нарезает в панели. Вызов идемпотентный — на непустой базе ничего не делает.
+    with session_scope() as db:
+        ensure_admin(db)
 
     # Уведомления рассылает только веб-процесс: при работе через Redis событие
     # приходит во все процессы, и подпишись на него каждый — семья получила бы

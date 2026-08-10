@@ -1,5 +1,31 @@
 {% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
 {% block content %}
+
+{% if error %}
+  <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
+    <p class="muted" style="color:var(--alarm-text)">{{ error }}</p>
+  </div>
+{% elif notice %}
+  <div class="card tight" style="border-left:4px solid var(--ok);margin-bottom:16px">
+    <p class="muted">{{ notice }}</p>
+  </div>
+{% endif %}
+
+{% if invite_link %}
+  <div class="card stack" style="margin-bottom:16px;border-left:4px solid var(--acc)">
+    <div class="card-title">Ссылка для {{ invited_user.display_name }}</div>
+    <p class="muted">
+      По ней человек придумает себе пароль и сразу попадёт в панель. Ссылка одноразовая —
+      покажу её только сейчас, потом можно будет только выпустить новую.
+    </p>
+    <div class="row wrap" style="gap:8px">
+      <input class="field" id="invite-link" value="{{ invite_link }}" readonly
+             onclick="this.select()" style="flex:1;min-width:240px">
+      <button class="btn" type="button" onclick="copyInvite()">Скопировать</button>
+    </div>
+  </div>
+{% endif %}
 
 {% if can_toggle %}
   <form class="card row wrap" method="post" action="/settings/family/name" style="gap:10px;margin-bottom:16px">
@@ -11,42 +37,112 @@
   </form>
 {% endif %}
 
-<div class="card">
-  <div class="row" style="margin-bottom:14px">
-    <span class="card-title">Кому какие модули включены</span>
-    <a class="btn ghost small spacer" href="/onboarding?step=2">Добавить участника</a>
-  </div>
+<div class="stack">
+  {% for row in members_info %}
+    {% set member = row.user %}
+    <div class="card stack">
+      <div class="row wrap" style="gap:10px">
+        <span class="avatar" style="background:{{ row.avatar.bg }};color:{{ row.avatar.fg }}">
+          {{ row.avatar.initial }}
+        </span>
+        <div style="flex:1;min-width:180px">
+          <div class="row wrap" style="gap:8px">
+            <span style="font-weight:600">{{ member.display_name }}</span>
+            {% if member.is_head %}<span class="badge ok">глава семьи</span>{% endif %}
+            <span class="badge {{ 'neutral' if member.password_hash else 'estimate' }}">{{ row.status }}</span>
+          </div>
+          <div class="tiny">{{ member.relation or "участник" }} · @{{ member.username }}</div>
+        </div>
 
-  <div class="matrix" style="margin-bottom:8px">
-    <div class="label">Участник</div>
-    {% for module in module_list %}<div class="label" style="text-align:center">{{ module.title }}</div>{% endfor %}
-  </div>
-
-  {% for member in members %}
-    <div class="matrix" style="padding:10px 0;border-top:1px solid var(--border)">
-      <div>
-        <div style="font-weight:600">{{ member.display_name }}</div>
-        <div class="tiny">{{ member.relation or ("глава семьи" if member.is_head else "участник") }}</div>
+        {% for module in module_list %}
+          <form method="post" action="/settings/family/module" style="text-align:center">
+            <input type="hidden" name="user_id" value="{{ member.id }}">
+            <input type="hidden" name="module" value="{{ module.name }}">
+            <input type="hidden" name="enabled"
+                   value="{{ 'off' if matrix[member.id][module.name] else 'on' }}">
+            <div class="tiny" style="margin-bottom:3px">{{ module.title }}</div>
+            <button class="toggle {% if matrix[member.id][module.name] %}on{% endif %}" type="submit"
+                    {% if not can_toggle %}disabled title="Модули включает глава семьи"{% endif %}>
+              <span></span>
+            </button>
+          </form>
+        {% endfor %}
       </div>
-      {% for module in module_list %}
-        <form method="post" action="/settings/family/module" style="text-align:center">
-          <input type="hidden" name="user_id" value="{{ member.id }}">
-          <input type="hidden" name="module" value="{{ module.name }}">
-          <input type="hidden" name="enabled"
-                 value="{{ 'off' if matrix[member.id][module.name] else 'on' }}">
-          <button class="toggle {% if matrix[member.id][module.name] %}on{% endif %}" type="submit"
-                  {% if not can_toggle %}disabled title="Модули включает глава семьи"{% endif %}>
-            <span></span>
-          </button>
-        </form>
-      {% endfor %}
+
+      {% if can_toggle %}
+        <div class="divider" style="margin:6px 0"></div>
+        <div class="row wrap" style="gap:8px">
+          <form method="post" action="/settings/family/member/{{ member.id }}/rename"
+                class="row wrap" style="gap:6px;flex:1;min-width:280px">
+            <input class="field" name="display_name" value="{{ member.display_name }}"
+                   style="flex:1;min-width:120px">
+            <input class="field" name="relation" value="{{ member.relation or '' }}"
+                   placeholder="кем приходится" style="flex:1;min-width:120px">
+            <button class="btn ghost small" type="submit">Сохранить</button>
+          </form>
+
+          {% if row.can_change_role %}
+            <form method="post" action="/settings/family/member/{{ member.id }}/role">
+              <input type="hidden" name="head" value="{{ 'off' if member.is_head else 'on' }}">
+              <button class="btn ghost small" type="submit">
+                {{ "Снять роль главы" if member.is_head else "Сделать главой" }}
+              </button>
+            </form>
+          {% endif %}
+
+          <form method="post" action="/settings/family/member/{{ member.id }}/invite"
+                onsubmit="return confirm('Выпустить новую ссылку для {{ member.display_name }}? Текущий пароль перестанет работать.')">
+            <button class="btn ghost small" type="submit">
+              {{ "Сбросить пароль" if member.password_hash else "Выпустить ссылку" }}
+            </button>
+          </form>
+
+          {% if member.invite_code and not member.password_hash %}
+            <form method="post" action="/settings/family/member/{{ member.id }}/revoke">
+              <button class="btn ghost small" type="submit">Отозвать ссылку</button>
+            </form>
+          {% endif %}
+
+          {% if row.can_delete %}
+            <form method="post" action="/settings/family/member/{{ member.id }}/delete"
+                  onsubmit="return confirm('Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, заметки и переписка с ассистентом. Это необратимо.')">
+              <button class="btn ghost small" type="submit" style="color:var(--alarm-text)">Удалить</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
     </div>
   {% endfor %}
 
-  <p class="tiny" style="margin-top:14px">
-    Никаких ролей и прав — только включено или выключено. Выключенный модуль исчезает
-    из меню и из набора инструментов ассистента.
-  </p>
+  {% if can_toggle %}
+    <form class="card row wrap" method="post" action="/settings/family/member" style="gap:8px">
+      <div style="flex:1;min-width:160px">
+        <div class="label">Имя</div>
+        <input class="field" name="display_name" placeholder="Соня">
+      </div>
+      <div style="flex:1;min-width:160px">
+        <div class="label">Кем приходится</div>
+        <input class="field" name="relation" placeholder="дочь">
+      </div>
+      <button class="btn" type="submit" style="align-self:flex-end">Добавить</button>
+    </form>
+  {% endif %}
 </div>
 
+<p class="tiny" style="margin-top:16px;max-width:72ch">
+  Никаких ролей и прав, кроме одной: глава семьи заводит людей и включает им модули.
+  Выключенный модуль исчезает и из меню, и из набора инструментов ассистента.
+  Пароль человек придумывает сам по ссылке — админ его не видит и не задаёт.
+</p>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  function copyInvite() {
+    const field = document.getElementById('invite-link');
+    field.select();
+    if (navigator.clipboard) navigator.clipboard.writeText(field.value);
+    else document.execCommand('copy');   // http без TLS: clipboard API недоступен
+  }
+</script>
 {% endblock %}

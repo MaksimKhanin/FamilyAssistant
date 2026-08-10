@@ -1,11 +1,13 @@
 """Настройки: коннекторы, агент и инструменты, семья и модули, профиль, модель и знания."""
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.agent import policy
+from app.core import accounts
 from app.core import connectors as connector_service
 from app.core import family as family_service
 from app.core import push
@@ -15,7 +17,8 @@ from app.core.db import get_db
 from app.core.models import AUTONOMY_LEVELS, ActionLog, ScheduledJob, User
 from app.core.templating import render
 from app.modules import togglable
-from app.web.context import screen_context
+from app.web.context import avatar, screen_context
+from app.web.routes_invite import invite_url
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -177,20 +180,43 @@ def toggle_job(
 @router.get("/family", response_class=HTMLResponse)
 def family_screen(
     request: Request,
+    notice: str = None,
+    error: str = None,
+    invited: int = None,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
     context = screen_context(request, db, current, viewed,
                              title="Семья и модули",
-                             subtitle="Никаких ролей и прав — только включено или выключено")
+                             subtitle="Кто есть в семье, кому что включено и как они заходят")
     module_list = togglable()
+    invited_user = db.get(User, invited) if invited else None
+
+    members_info = accounts.overview(db, current)
+    for row in members_info:
+        row["avatar"] = avatar(row["user"])
+
     context.update(
         module_list=module_list,
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]),
+        members_info=members_info,
         can_toggle=current.is_head,
+        notice=notice,
+        error=error,
+        # Ссылка показывается один раз, сразу после выпуска: копировать её больше неоткуда.
+        invite_link=(invite_url(invited_user)
+                     if invited_user is not None and invited_user.family_id == viewed.family_id
+                     else None),
+        invited_user=invited_user,
     )
     return render(request, "settings/family.html", context)
+
+
+def _back(notice: str = None, error: str = None, invited: int = None) -> RedirectResponse:
+    params = {k: v for k, v in (("notice", notice), ("error", error), ("invited", invited)) if v}
+    query = "?" + urlencode(params) if params else ""
+    return RedirectResponse(f"/settings/family{query}", status_code=303)
 
 
 @router.post("/family/module")
@@ -205,7 +231,94 @@ def toggle_module(
     target = db.get(User, user_id)
     if current.is_head and target is not None and target.family_id == current.family_id:
         set_module_enabled(db, user_id, module, enabled == "on")
-    return RedirectResponse("/settings/family", status_code=303)
+    return _back()
+
+
+@router.post("/family/member")
+def add_member(
+    display_name: str = Form(...),
+    relation: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        member = accounts.create_member(db, current, display_name, relation)
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    return _back(notice=f"Добавил: {member.display_name}. Передайте ссылку — по ней задаётся пароль.",
+                 invited=member.id)
+
+
+@router.post("/family/member/{user_id}/rename")
+def rename_member(
+    user_id: int,
+    display_name: str = Form(...),
+    relation: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        accounts.rename(db, current, user_id, display_name, relation)
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    return _back(notice="Сохранил.")
+
+
+@router.post("/family/member/{user_id}/role")
+def set_member_role(
+    user_id: int,
+    head: str = Form("off"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        member = accounts.set_head(db, current, user_id, head == "on")
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    role = "глава семьи" if member.is_head else "участник"
+    return _back(notice=f"{member.display_name} теперь {role}.")
+
+
+@router.post("/family/member/{user_id}/invite")
+def issue_invite(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Новая ссылка-приглашение. Она же сброс пароля: старый перестаёт работать."""
+    try:
+        member = accounts.issue_invite(db, current, user_id)
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    return _back(notice=f"Новая ссылка для {member.display_name}. "
+                        f"Старый пароль больше не работает.",
+                 invited=member.id)
+
+
+@router.post("/family/member/{user_id}/revoke")
+def revoke_invite(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        member = accounts.revoke_invite(db, current, user_id)
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    return _back(notice=f"Ссылка для {member.display_name} отозвана.")
+
+
+@router.post("/family/member/{user_id}/delete")
+def delete_member(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        name = accounts.delete_member(db, current, user_id)
+    except accounts.AccountError as e:
+        return _back(error=str(e))
+    return _back(notice=f"Удалил: {name}. Записи и переписка тоже.")
 
 
 @router.post("/family/name")
@@ -224,6 +337,8 @@ def rename_family(
 @router.get("/profile", response_class=HTMLResponse)
 def profile_screen(
     request: Request,
+    notice: str = None,
+    error: str = None,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -238,11 +353,31 @@ def profile_screen(
         profile=nutrition_service.get_profile(db, viewed.id),
         goal_labels=GOAL_LABELS,
         push_devices=push.device_count(db, viewed.id),
+        notice=notice,
+        error=error,
         module_list=module_list,
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]).get(viewed.id, {}),
         can_toggle=current.is_head,
     )
     return render(request, "settings/profile.html", context)
+
+
+@router.post("/profile/password")
+def change_password(
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    new_password_repeat: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Свой пароль человек меняет сам — чужой сбрасывает глава семьи ссылкой."""
+    try:
+        accounts.change_own_password(db, current, current_password,
+                                     new_password, new_password_repeat)
+    except accounts.AccountError as e:
+        return RedirectResponse(f"/settings/profile?{urlencode({'error': str(e)})}", status_code=303)
+    return RedirectResponse(f"/settings/profile?{urlencode({'notice': 'Пароль изменён.'})}",
+                            status_code=303)
 
 
 @router.post("/profile")

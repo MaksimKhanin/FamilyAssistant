@@ -6,13 +6,29 @@ level by always scoping module tables on `user_id` (personal data) or `family_id
 """
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.core.config import settings
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True, future=True)
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _):
+    """SQLite по умолчанию не соблюдает внешние ключи.
+
+    Без этого `ON DELETE CASCADE` работает в Postgres и молча не работает
+    локально: удалённый человек оставлял бы за собой записи о еде и заметки.
+    Пусть локальная база ведёт себя как боевая.
+    """
+    if not settings.database_url.startswith("sqlite"):
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 Base = declarative_base()

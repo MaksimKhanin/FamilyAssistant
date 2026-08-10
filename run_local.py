@@ -87,6 +87,13 @@ def prepare_environment(port: int) -> dict:
     os.environ.setdefault("PUBLIC_BASE_URL", f"http://127.0.0.1:{port}")
     os.environ["COOKIE_SECURE"] = "false"          # локально всегда http
 
+    # С --no-demo база будет пустой, и войти было бы некому: тот же bootstrap
+    # из окружения, что и в бою, только с заранее известным паролем.
+    os.environ.setdefault("ADMIN_USERNAME", "admin")
+    os.environ.setdefault("ADMIN_PASSWORD", DEMO_PASSWORD)
+    os.environ.setdefault("ADMIN_NAME", "Администратор")
+    os.environ.setdefault("FAMILY_NAME", "Наша семья")
+
     # Настоящая модель — если её положили в .env; иначе офлайн-режим.
     if not os.environ.get("LLM_API_KEY") and not os.environ.get("LLM_BASE_URL"):
         os.environ.setdefault("LLM_STUB", "1")
@@ -218,6 +225,8 @@ def banner(port: int, demo: dict, stub: bool):
         print(f"  Вход:        {demo['head']} / {DEMO_PASSWORD}   (глава семьи)")
         print(f"               leva / {DEMO_PASSWORD}   (участник — увидит, что чужие цифры скрыты)")
         print(f"  Приглашение: http://127.0.0.1:{port}/invite/{demo['invite']}   (Соня задаст пароль)")
+    if not demo:
+        print(f"  Вход:        admin / {DEMO_PASSWORD}   (создан из ADMIN_* при первом старте)")
     if stub:
         print("  Агент:       офлайн-режим без модели — понимает простые фразы")
         print("               («съел суп и салат», «что было ночью», «запомни: …»)")
