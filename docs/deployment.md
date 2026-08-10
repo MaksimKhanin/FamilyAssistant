@@ -46,7 +46,7 @@ docker compose exec web python -m scripts.seed \
 ```
 
 Поднимутся `web` (панель + уведомления + ingest), `scheduler`, `db` и `redis`.
-Проверить: `curl localhost:8000/healthz`.
+Проверить: `curl localhost:5000/healthz`.
 
 Остальных участников глава семьи добавляет в панели; каждому достаётся одноразовая
 ссылка-приглашение, по которой человек придумывает себе пароль.
@@ -63,7 +63,7 @@ docker compose exec web python -m scripts.seed \
 
 ```
 assistant.example.com {
-    reverse_proxy localhost:8000
+    reverse_proxy localhost:5000
 }
 ```
 

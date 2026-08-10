@@ -20,7 +20,7 @@ x-app: &app
     SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
     COOKIE_SECURE: ${COOKIE_SECURE:-true}
-    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:5000}
     TIMEZONE: ${TIMEZONE:-Europe/Moscow}
     VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
     VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
@@ -59,7 +59,7 @@ services:
   web:
     <<: *app
     ports:
-      - "${WEB_PORT:-8000}:8000"
+      - "${WEB_PORT:-5000}:8000"
 
   # Необязательный Telegram-канал. По умолчанию не поднимается: семья общается
   # через панель, установленную на телефон, и получает web push.
