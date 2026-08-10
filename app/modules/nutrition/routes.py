@@ -112,15 +112,45 @@ def confirm_meal(
 
 @router.post("/meal/{meal_id}/discard")
 def discard_meal(
+    request: Request,
     meal_id: int,
+    back: str = None,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """«Это не то блюдо» — черновик удаляется, экран возвращается к вводу."""
-    if can_act_as(current, viewed):
+    """Удалить запись о еде — и ошибочный черновик, и уже подтверждённую.
+
+    Один обработчик на две точки входа, потому что дело одно и то же. С экрана
+    приходит обычная форма и получает переход, из чата — запрос htmx, и тогда в
+    ленту возвращается реплика ассистента: человек видит подтверждение там же,
+    где нажал, а не на внезапно сменившемся экране.
+    """
+    meal = service.get_meal(db, viewed.id, meal_id) if can_act_as(current, viewed) else None
+    if meal is not None:
+        title, kcal = meal.title, meal.kcal
         service.delete_meal(db, viewed.id, meal_id)
-    return RedirectResponse("/nutrition/meal", status_code=303)
+        said = f"Удалил запись: {title} — {kcal} ккал. В дневном балансе она больше не считается."
+    else:
+        said = "Эту запись уже не удалить — возможно, её удалили раньше."
+
+    if request.headers.get("HX-Request"):
+        return render(request, "partials/chat_messages.html",
+                      {"request": request,
+                       "messages": [{"role": "assistant", "text": said, "traces": [], "cards": []}]})
+    return RedirectResponse(back or "/nutrition/meal", status_code=303)
+
+
+@router.post("/activity/{activity_id}/discard")
+def discard_activity(
+    activity_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    if can_act_as(current, viewed):
+        service.delete_activity(db, viewed.id, activity_id)
+    return RedirectResponse("/nutrition/activity", status_code=303)
 
 
 @router.get("/stats", response_class=HTMLResponse)

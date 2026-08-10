@@ -35,6 +35,14 @@
           <div class="tiny">{{ entry.happened_at|ru_time }} · {{ entry.value|int }} {{ entry.unit }}</div>
         </div>
         <div style="color:var(--ok-dark);font-weight:600">−{{ entry.kcal }}</div>
+        {% if can_edit %}
+          <form method="post" action="/nutrition/activity/{{ entry.id }}/discard"
+                onsubmit="return confirm('Удалить запись «{{ entry.label }}»?')">
+            <button class="btn ghost small" type="submit" title="Удалить запись">
+              {{ ic.icon("close", 13) }}
+            </button>
+          </form>
+        {% endif %}
       </div>
     {% else %}
       <p class="muted">Пока ничего не записано.</p>

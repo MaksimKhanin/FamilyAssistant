@@ -230,7 +230,14 @@ class Agent:
                           status="awaiting", summary="ждёт подтверждения", pending_id=pending.id)
             card = {"type": "confirm", "pending_id": pending.id, "tool": spec.name,
                     "title": spec.title, "arguments": call.arguments}
-            return trace, "Действие подготовлено и ждёт подтверждения человека. Не выполняй его повторно.", card
+            # Формулировка нарочно резкая: модель охотно пишет «удалил» о том, что
+            # ещё не сделано, и человек уходит уверенным, что записи больше нет.
+            return trace, (
+                f"СТОП: «{spec.title}» ещё НЕ выполнено. Действие подготовлено и ждёт «да» "
+                f"от человека. Скажи, что именно собираешься сделать, и попроси подтверждения. "
+                f"Не пиши «сделал», «удалил», «записал», «готово» — это будет неправдой. "
+                f"Повторно инструмент не вызывай."
+            ), card
 
         started = time.monotonic()
         result = registry.execute(spec, ctx, call.arguments)

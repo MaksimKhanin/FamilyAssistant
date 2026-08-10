@@ -22,12 +22,16 @@
           {% if card.is_estimate %}<span class="badge estimate">≈ оценка</span>{% endif %}
           <div style="font-weight:600">{{ card.title }}</div>
           <div class="muted">{{ card.kcal }} ккал · Б {{ card.protein }} / Ж {{ card.fat }} / У {{ card.carbs }}</div>
-          {% if card.is_estimate %}
-            <div class="row" style="gap:8px">
+          <div class="row" style="gap:8px">
+            {% if card.is_estimate %}
               <a class="btn small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=done">Подтвердить</a>
               <a class="btn ghost small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=estimate">Поправить</a>
-            </div>
-          {% endif %}
+            {% endif %}
+            {# Удалить можно и оценку, и подтверждённую запись: ошибиться легко на любом шаге. #}
+            <button class="btn ghost small" hx-post="/nutrition/meal/{{ card.meal_id }}/discard"
+                    hx-target="#chat-body" hx-swap="beforeend"
+                    hx-confirm="Удалить запись «{{ card.title }}»?">Удалить</button>
+          </div>
         </div>
       {% elif card.type == "stats" %}
         <div class="agent-card">
@@ -73,7 +77,12 @@
       {% elif card.type == "confirm" %}
         <div class="agent-card">
           <div style="font-weight:600">{{ card.title }}</div>
-          <div class="mono">{{ card.tool }}</div>
+          {# С чем именно: подтверждать вслепую «удалить запись о еде» человек не должен. #}
+          <div class="mono">
+            {{ card.tool }}({% for name, value in (card.arguments or {}).items() %}
+              {{- name }}={{ value }}{% if not loop.last %}, {% endif %}
+            {%- endfor %})
+          </div>
           <div class="row" style="gap:8px">
             <button class="btn small" hx-post="/chat/actions/{{ card.pending_id }}/approve"
                     hx-target="#chat-body" hx-swap="beforeend">Да, сделай</button>

@@ -61,6 +61,12 @@
         <div class="row wrap" style="gap:10px">
           <a class="btn" href="/nutrition/meal">Добавить ещё</a>
           <a class="btn ghost" href="/nutrition/stats">Открыть статистику</a>
+          {% if can_edit %}
+            <form method="post" action="/nutrition/meal/{{ meal.id }}/discard"
+                  onsubmit="return confirm('Удалить запись «{{ meal.title }}»?')">
+              <button class="btn ghost" type="submit">Удалить</button>
+            </form>
+          {% endif %}
         </div>
       </div>
 
@@ -117,6 +123,14 @@
           <div class="tiny">{{ item.eaten_at|ru_time }} · {{ item.status_label }}</div>
         </div>
         <div class="muted">{{ item.kcal }}</div>
+        {% if can_edit %}
+          <form method="post" action="/nutrition/meal/{{ item.id }}/discard"
+                onsubmit="return confirm('Удалить запись «{{ item.title }}»?')">
+            <button class="btn ghost small" type="submit" title="Удалить запись">
+              {{ ic.icon("close", 13) }}
+            </button>
+          </form>
+        {% endif %}
       </div>
     {% else %}
       <p class="muted">Сегодня записей ещё нет.</p>
