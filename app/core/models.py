@@ -193,6 +193,81 @@ class PushSubscription(Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class AgentRun(Base):
+    """Один ответ ассистента целиком — от реплики человека до текста ответа.
+
+    Экран «Трейсы агента» показывает именно прогоны: внутри одного лежат все
+    обращения к модели и все вызовы инструментов (`AgentTraceStep`). Токены
+    сложены здесь же, чтобы разбивка по людям и сессиям считалась без чтения шагов.
+    """
+    __tablename__ = "agent_runs"
+
+    id = Column(Integer, primary_key=True)
+    #: Разговор: соседние прогоны одного человека склеиваются, пока между ними
+    #: меньше `SESSION_GAP` (см. app/agent/tracing.py).
+    session_id = Column(String(32), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    #: За кого агент действовал: глава семьи может писать «от лица» другого.
+    subject_id = Column(Integer, nullable=True)
+    channel = Column(String(16), nullable=False, default="web")     # web|telegram|schedule|event
+
+    trigger = Column(Text, nullable=True)          # с чего начался прогон
+    reply = Column(Text, nullable=True)            # чем закончился
+    error = Column(Text, nullable=True)            # если не закончился
+
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    llm_calls = Column(Integer, nullable=False, default=0)
+    tool_calls = Column(Integer, nullable=False, default=0)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    steps = relationship("AgentTraceStep", back_populates="run",
+                         cascade="all, delete-orphan", order_by="AgentTraceStep.step_no")
+
+
+class AgentTraceStep(Base):
+    """Один шаг прогона: обращение к модели или вызов инструмента.
+
+    `request_json` для шага `llm` — это буквально тело запроса, ушедшее в сеть:
+    системный промпт, вся история, схемы инструментов и поля управления
+    размышлением. Ради этого экран и заводился — видеть, что модель получила
+    на самом деле, а не что мы собирались отправить.
+    """
+    __tablename__ = "agent_trace_steps"
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_no = Column(Integer, nullable=False, default=0)
+
+    kind = Column(String(8), nullable=False)        # llm|tool
+    name = Column(String(64), nullable=False)       # имя модели или инструмента
+    status = Column(String(16), nullable=False, default="ok")   # ok|failed|retried|awaiting
+
+    request_json = Column(Text, nullable=True)
+    response_json = Column(Text, nullable=True)
+
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    total_tokens = Column(Integer, nullable=False, default=0)
+    duration_ms = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    run = relationship("AgentRun", back_populates="steps")
+
+
+class TraceSettings(Base):
+    """Выключатель записи трейсов — один на семью, доступен только главе."""
+    __tablename__ = "trace_settings"
+
+    id = Column(Integer, primary_key=True)
+    family_id = Column(Integer, ForeignKey("families.id", ondelete="CASCADE"), nullable=False, unique=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    #: Сколько последних прогонов хранить: трейсы весят куда больше переписки.
+    keep_runs = Column(Integer, nullable=False, default=300)
+
+
 class FamilySettings(Base):
     """Screen «Модель и знания» — family-wide, editable by the head only."""
     __tablename__ = "family_settings"

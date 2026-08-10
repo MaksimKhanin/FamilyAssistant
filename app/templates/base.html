@@ -129,12 +129,47 @@
   const toast = document.getElementById('toast');
   if (toast) setTimeout(() => toast.remove(), 2200);
 
-  // Чат: после каждого ответа прокручиваем ленту вниз, как в мессенджере.
-  document.body.addEventListener('htmx:afterSwap', e => {
+  // Чат ведёт себя как мессенджер: лента всегда прокручена вниз.
+  function scrollChat() {
     const body = document.getElementById('chat-body');
     if (body) body.scrollTop = body.scrollHeight;
+  }
+  document.body.addEventListener('htmx:afterSwap', scrollChat);
+
+  // Сообщение показывается сразу, не дожидаясь ответа: ответ идёт секунды, и
+  // всё это время человек видел свой текст в поле ввода и не понимал, ушло ли
+  // оно. Поле при этом заперто (hx-disabled-elt на форме) — второй раз не отправить.
+  let sending = '';
+  document.body.addEventListener('htmx:beforeRequest', e => {
+    if (e.detail.elt.id !== 'chat-form') return;
     const input = document.getElementById('chat-input');
-    if (input && e.detail.target.id === 'chat-body') input.value = '';
+    // htmx уже забрал значение в тело запроса, поле можно чистить.
+    sending = input.value;
+    input.value = '';
+    const text = sending.trim();
+    if (text) {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user';
+      bubble.textContent = text;
+      document.getElementById('chat-body').appendChild(bubble);
+    }
+    scrollChat();
+  });
+
+  // Не дошло — возвращаем текст в поле, чтобы не набирать заново.
+  document.body.addEventListener('htmx:afterRequest', e => {
+    if (e.detail.elt.id !== 'chat-form') return;
+    const input = document.getElementById('chat-input');
+    if (!e.detail.successful) {
+      const failed = document.createElement('div');
+      failed.className = 'bubble assistant';
+      failed.textContent = 'Сообщение не дошло. Проверьте связь и попробуйте ещё раз.';
+      document.getElementById('chat-body').appendChild(failed);
+      input.value = sending;
+    }
+    sending = '';
+    scrollChat();
+    input.focus();
   });
 </script>
 {% block scripts %}{% endblock %}

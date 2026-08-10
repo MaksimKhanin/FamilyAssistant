@@ -14,15 +14,28 @@ def test_read_only_tools_never_ask(db, head):
 
 
 def test_autonomy_slider_gates_writing_tools(db, head):
-    log_meal = registry.get("log_meal")      # auto_from = 2
+    remember = registry.get("remember")      # auto_from = 2
 
     head.autonomy = 1
     db.commit()
-    assert policy.resolve_mode(db, head, log_meal) == MODE_ASK
+    assert policy.resolve_mode(db, head, remember) == MODE_ASK
 
     head.autonomy = 2
     db.commit()
-    assert policy.resolve_mode(db, head, log_meal) == MODE_AUTO
+    assert policy.resolve_mode(db, head, remember) == MODE_AUTO
+
+
+def test_the_meal_draft_is_not_gated_twice(db, head):
+    """У записи еды своё подтверждение — карточкой, с цифрами перед глазами.
+
+    Если ещё и ползунок будет её придерживать, оценка не посчитается вовсе, и
+    подтверждать человеку станет нечего: ассистент скажет «записал» без единой цифры.
+    """
+    head.autonomy = 0        # «всё спрашивает»
+    db.commit()
+
+    assert policy.resolve_mode(db, head, registry.get("log_meal")) == MODE_AUTO
+    assert policy.resolve_mode(db, head, registry.get("confirm_meal")) == MODE_AUTO
 
 
 def test_notifying_the_whole_family_needs_the_top_setting(db, head):

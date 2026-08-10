@@ -24,7 +24,7 @@ from app.core.templating import render
 from app.modules import load_modules
 from app.web import (
     routes_auth, routes_chat, routes_dashboard, routes_invite, routes_onboarding,
-    routes_push, routes_settings,
+    routes_push, routes_settings, routes_traces,
 )
 
 logger = get_logger("app")
@@ -70,6 +70,7 @@ app.include_router(routes_dashboard.router)
 app.include_router(routes_chat.router)
 app.include_router(routes_push.router)
 app.include_router(routes_settings.router)
+app.include_router(routes_traces.router)
 app.include_router(routes_onboarding.router)
 
 for module in load_modules():

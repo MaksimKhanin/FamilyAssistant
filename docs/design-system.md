@@ -73,6 +73,7 @@ sidebar 246px  |  header (sticky)
 | Семья и модули | `settings/family.html` | `/settings/family` |
 | Профиль | `settings/profile.html` | `/settings/profile` |
 | Модель и знания | `settings/model.html` | `/settings/model` |
+| Трейсы агента | `settings/traces.html` | `/settings/traces` |
 | Онбординг (3 шага) | `onboarding.html` | `/onboarding` |
 | Приглашение участника | `invite.html`, `invite_expired.html` | `/invite/{код}` |
 

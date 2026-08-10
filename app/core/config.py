@@ -56,6 +56,16 @@ class LLMSettings:
     #: По умолчанию off: ассистент занят маршрутизацией в инструменты и короткими
     #: ответами, а «думающая» модель на этом добавляет секунды на ровном месте.
     reasoning: str = "off"
+    #: Режим размышления отдельно для оценочных вызовов: КБЖУ по фото и по описанию,
+    #: разбор события с камеры. Ручка отдельная, потому что задача другая — не выбор
+    #: инструмента, а прикидка чисел.
+    #:
+    #: По умолчанию всё же off. Замер на Qwen3 через OpenRouter: с `low` те же самые
+    #: цифры, но 2600 токенов бюджета вместо 600 и вчетверо дольше, а при 1800 модель
+    #: не успевала даже дописать JSON — весь бюджет уходил в мысли. Работу делает
+    #: не размышление, а подробный промпт (см. MEAL_TEXT_SYSTEM). Если ваша модель
+    #: думает дёшево — поставьте low, механизм на месте.
+    reasoning_estimate: str = "off"
     #: Произвольные поля запроса для нестандартных провайдеров, JSON из LLM_EXTRA_BODY.
     #: Перекрывают всё, что подставил пресет.
     extra_body: dict = field(default_factory=dict)
@@ -154,6 +164,7 @@ def load_settings() -> Settings:
             max_tokens=_int("LLM_MAX_TOKENS", 1024),
             request_timeout=float(os.environ.get("LLM_TIMEOUT", "60")),
             reasoning=os.environ.get("LLM_REASONING", "off").strip().lower(),
+            reasoning_estimate=os.environ.get("LLM_REASONING_ESTIMATE", "off").strip().lower(),
             extra_body=_json_env("LLM_EXTRA_BODY"),
             stub=_flag("LLM_STUB", False),
         ),

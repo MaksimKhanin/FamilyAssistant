@@ -431,3 +431,19 @@ textarea.field { font-size: 13.5px; resize: vertical; }
 .matrix { display: grid; grid-template-columns: 1fr 92px 92px; align-items: center; gap: 8px; }
 .stepper-value { min-width: 3ch; text-align: right; }
 input[type="range"] { accent-color: var(--acc); width: 100%; }
+
+/* ---------- трейсы агента ---------- */
+
+.trace-run, .trace-step { border-top: 1px solid var(--border); }
+.trace-run > summary, .trace-step > summary {
+  cursor: pointer; padding: 9px 0; display: flex; flex-wrap: wrap;
+  align-items: baseline; gap: 7px; font-size: 12.5px;
+}
+.trace-step { margin-left: 12px; }
+.trace-step > summary { padding: 7px 0; }
+.trace-json {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin: 4px 0 10px; max-height: 340px; overflow: auto;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+}

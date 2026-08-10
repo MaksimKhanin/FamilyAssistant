@@ -76,11 +76,9 @@ async def send(
         subject=viewed if current.is_head or viewed.id == current.id else current,
     )
 
-    entries = [
-        {"role": "user", "text": text or "Фото блюда", "traces": [], "cards": []},
-        {"role": "assistant", "text": reply.text, **reply.to_payload()},
-    ]
-    return _render(request, entries)
+    # Пузырь с репликой человека рисует сам браузер — сразу, не дожидаясь модели
+    # (см. htmx:beforeRequest в base.html). Здесь — только ответ ассистента.
+    return _render(request, [{"role": "assistant", "text": reply.text, **reply.to_payload()}])
 
 
 @router.post("/actions/{pending_id}/approve", response_class=HTMLResponse)

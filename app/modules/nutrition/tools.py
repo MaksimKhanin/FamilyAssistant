@@ -36,31 +36,74 @@ def _meal_card(meal, subtitle: str = None) -> dict:
     }
 
 
+def _person_context(ctx: ToolContext) -> str:
+    """Что оценщику полезно знать про этого человека.
+
+    Без этого блока модель считает еду «в вакууме»: не знает ни цели, ни того, что
+    человек не ест сахар. Заметки из памяти влияют на оценку сильнее, чем кажется.
+    """
+    profile = service.get_profile(ctx.db, ctx.subject.id)
+    notes = memory_service.search_notes(ctx.db, ctx.subject.id, limit=8)
+    lines = [
+        "Что известно об этом человеке (учитывай, но не упоминай в ответе):",
+        f"- цель: {profile.goal_label}, суточная норма {profile.daily_kcal} ккал",
+    ]
+    if profile.weight_kg:
+        lines.append(f"- вес: {profile.weight_kg:g} кг")
+    if notes:
+        lines.append("- из памяти: " + "; ".join(note.text for note in notes))
+    return "\n".join(lines)
+
+
+def _describe(text: str, weight_g: float = None, cooking: str = None) -> str:
+    """Слова человека плюс то, что он уточнил отдельными полями."""
+    parts = [(text or "").strip()]
+    if weight_g:
+        parts.append(f"вес порции примерно {int(weight_g)} г")
+    if cooking:
+        parts.append(f"приготовлено: {cooking.strip()}")
+    return ", ".join(part for part in parts if part)
+
+
 @tool(
     name="log_meal",
     module=MODULE,
     title="Записать приём пищи",
     description="""
     Оценить и записать съеденное. Если человек прислал фото — оценка идёт по фото,
-    текст можно передать как уточнение. Если фото нет, передай в text описание
-    своими словами («кофе с молоком и бутерброд»).
+    текст можно передать как уточнение. Если фото нет, передай в text фразу человека
+    целиком («съел тарелку борща со сметаной»), а не одно слово из неё.
+    weight_g и cooking заполняй, только если человек их назвал, — они заметно
+    уточняют оценку.
     Запись создаётся черновиком с пометкой «оценка»: цифры ещё не окончательные,
-    их подтверждает человек. После вызова скажи, что получилось, и предложи поправить.
+    их подтверждает человек. После вызова назови цифры и, если в ответе есть вопрос,
+    задай его одной фразой.
     """,
     parameters={
         "type": "object",
         "properties": {
-            "text": {"type": "string", "description": "Что человек съел, его словами"},
+            "text": {"type": "string", "description": "Что человек съел, его словами, фразой целиком"},
+            "weight_g": {"type": "number",
+                         "description": "Вес или объём порции в граммах, если человек его назвал"},
+            "cooking": {"type": "string",
+                        "description": "Способ приготовления, если назван: жареное, варёное, на пару, "
+                                       "с маслом, без сахара"},
         },
     },
-    auto_from=2,
+    # Ноль, а не два: инструмент и так пишет только черновик, который человек
+    # подтверждает карточкой (confirm_meal). Ещё одно подтверждение поверх этого
+    # означало бы, что оценка не считается вовсе, — и человеку нечего подтверждать.
+    auto_from=0,
 )
-def log_meal(ctx: ToolContext, text: str = None) -> ToolResult:
+def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
+             cooking: str = None) -> ToolResult:
     image = ctx.attachments.get("image")
+    context = _person_context(ctx)
+    described = _describe(text, weight_g, cooking)
 
     if image:
         try:
-            estimate = estimate_from_image(image, hint=text)
+            estimate = estimate_from_image(image, hint=described or None, context=context)
         except LLMUnavailable:
             return ToolResult(
                 summary="Не смог разглядеть блюдо — модель не отвечает. Опишите словами, я запишу.",
@@ -68,21 +111,36 @@ def log_meal(ctx: ToolContext, text: str = None) -> ToolResult:
             )
         image_path = service.save_image(image, ctx.subject.id)
         meal = service.create_draft(ctx.db, ctx.subject.id, estimate, source=SOURCE_PHOTO,
-                                    raw_input=text, image_path=image_path)
+                                    raw_input=described or None, image_path=image_path)
     else:
-        if not (text or "").strip():
+        if not described:
             return ToolResult(summary="Нечего записывать: нет ни фото, ни описания.", ok=False)
-        estimate = safe_estimate_from_text(text)
-        meal = service.create_draft(ctx.db, ctx.subject.id, estimate, source=SOURCE_TEXT, raw_input=text)
+        estimate = safe_estimate_from_text(described, context=context)
+        meal = service.create_draft(ctx.db, ctx.subject.id, estimate,
+                                    source=SOURCE_TEXT, raw_input=described)
 
     bus.publish(MEAL_LOGGED, {"meal_id": meal.id, "user_id": ctx.subject.id})
 
-    hedge = "" if estimate.confidence != "low" else " Уверенности мало, посмотрите цифры."
+    # Всё, из чего сложилась цифра, — в ответ инструмента: иначе агент пересказывает
+    # одно число и человеку нечего поправлять.
+    details = [f"Записал черновиком: {meal.title} — примерно {meal.kcal} ккал "
+               f"(Б {meal.protein} / Ж {meal.fat} / У {meal.carbs})."]
+    if estimate.portion:
+        details.append(f"Считал так: {estimate.portion}.")
+    if estimate.components:
+        details.append("Из чего сложилось: " + ", ".join(estimate.components) + ".")
+    if estimate.note:
+        details.append(estimate.note.rstrip(".") + ".")
+    if estimate.confidence == "low":
+        details.append("Уверенности мало, стоит посмотреть цифры.")
+    details.append(f"Это оценка, ждёт подтверждения (meal_id={meal.id}).")
+    if estimate.question:
+        details.append(f"Спроси у человека: {estimate.question}")
+
     return ToolResult(
-        summary=(f"Записал черновиком: {meal.title} — примерно {meal.kcal} ккал "
-                 f"(Б {meal.protein} / Ж {meal.fat} / У {meal.carbs}). "
-                 f"Это оценка, ждёт подтверждения (meal_id={meal.id}).{hedge}"),
-        data={"meal_id": meal.id, "kcal": meal.kcal, "confidence": estimate.confidence},
+        summary=" ".join(details),
+        data={"meal_id": meal.id, "kcal": meal.kcal, "confidence": estimate.confidence,
+              "question": estimate.question},
         card=_meal_card(meal, subtitle=estimate.portion),
     )
 
@@ -92,9 +150,11 @@ def log_meal(ctx: ToolContext, text: str = None) -> ToolResult:
     module=MODULE,
     title="Подтвердить запись",
     description="""
-    Подтвердить черновик приёма пищи или поправить его цифры. Передавай только те
-    поля, которые человек назвал; остальные останутся как есть. Если цифры изменились,
-    запись помечается как скорректированная вручную.
+    Подтвердить черновик приёма пищи или поправить его. Передавай только те поля,
+    которые человек назвал; остальные останутся как есть.
+    Если человек уточнил вес или способ приготовления (а не сами цифры) — передай
+    weight_g и cooking, и оценка пересчитается сама. Не выдумывай калории вместо него.
+    Если человек назвал цифры — передай их, запись пометится как скорректированная вручную.
     """,
     parameters={
         "type": "object",
@@ -105,25 +165,52 @@ def log_meal(ctx: ToolContext, text: str = None) -> ToolResult:
             "fat": {"type": "integer"},
             "carbs": {"type": "integer"},
             "title": {"type": "string", "description": "Уточнённое название блюда"},
+            "weight_g": {"type": "number",
+                         "description": "Вес порции в граммах, если человек уточнил его — "
+                                        "цифры пересчитаются"},
+            "cooking": {"type": "string",
+                        "description": "Способ приготовления, если человек уточнил его — "
+                                       "цифры пересчитаются"},
         },
         "required": ["meal_id"],
     },
-    auto_from=2,
+    # Этот инструмент сам по себе и есть подтверждение: человек только что сказал
+    # «да» или назвал верную цифру. Спрашивать разрешения на его «да» — абсурд.
+    auto_from=0,
 )
 def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int = None,
-                 fat: int = None, carbs: int = None, title: str = None) -> ToolResult:
+                 fat: int = None, carbs: int = None, title: str = None,
+                 weight_g: float = None, cooking: str = None) -> ToolResult:
     corrections = {"kcal": kcal, "protein": protein, "fat": fat, "carbs": carbs, "title": title}
+    recounted = None
+
+    # Человек ответил на вопрос про вес или готовку, а цифр не назвал — значит их
+    # надо пересчитать. Иначе ответ «было 400 грамм» ничего не меняет, и вопрос,
+    # который ассистент только что задал, оказывается пустой вежливостью.
+    if (weight_g or cooking) and kcal is None:
+        draft = service.get_meal(ctx.db, ctx.subject.id, meal_id)
+        if draft is None:
+            return ToolResult(summary="Такой записи нет.", ok=False)
+        recounted = safe_estimate_from_text(
+            _describe(draft.raw_input or draft.title, weight_g, cooking),
+            context=_person_context(ctx),
+        )
+        if recounted.kcal:
+            corrections.update(kcal=recounted.kcal, protein=recounted.protein,
+                               fat=recounted.fat, carbs=recounted.carbs)
+
     meal = service.confirm_meal(ctx.db, ctx.subject.id, meal_id,
                                 {k: v for k, v in corrections.items() if v is not None})
     if meal is None:
         return ToolResult(summary="Такой записи нет.", ok=False)
 
     bus.publish(MEAL_CONFIRMED, {"meal_id": meal.id, "user_id": ctx.subject.id})
-    return ToolResult(
-        summary=f"Записал: {meal.title} — {meal.kcal} ккал ({meal.status_label}).",
-        data={"meal_id": meal.id},
-        card=_meal_card(meal),
-    )
+
+    summary = (f"Записал: {meal.title} — {meal.kcal} ккал "
+               f"(Б {meal.protein} / Ж {meal.fat} / У {meal.carbs}), {meal.status_label}.")
+    if recounted is not None:
+        summary += f" Пересчитал с уточнением: {recounted.portion or 'по новым данным'}."
+    return ToolResult(summary=summary, data={"meal_id": meal.id}, card=_meal_card(meal))
 
 
 @tool(

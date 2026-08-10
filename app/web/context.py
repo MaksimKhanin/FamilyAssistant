@@ -37,6 +37,8 @@ SETTINGS_NAV = [
     NavItem(slug="profile", label="Профиль", url="/settings/profile", icon="user", group="Настройки"),
     NavItem(slug="llm", label="Модель и знания", url="/settings/model", icon="brain",
             group="Администрирование", head_only=True),
+    NavItem(slug="traces", label="Трейсы агента", url="/settings/traces", icon="pulse",
+            group="Администрирование", head_only=True),
 ]
 
 

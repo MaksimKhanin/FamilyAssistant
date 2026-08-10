@@ -2,7 +2,7 @@
 import httpx
 import pytest
 
-from app.agent.llm import LLMClient, LLMUnavailable
+from app.agent.llm import REASONING_HEADROOM, LLMClient, LLMUnavailable
 from app.core.config import LLMSettings
 
 ANSWER = {"choices": [{"message": {"content": "Здравствуйте."}, "finish_reason": "stop"}]}
@@ -41,7 +41,9 @@ def test_reasoning_is_off_by_default(calls):
     """Ассистент маршрутизирует в инструменты — размышление здесь только тормозит."""
     LLMClient(settings()).chat([{"role": "user", "content": "привет"}])
 
-    assert calls[0]["reasoning_effort"] == "minimal"
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[0]["reasoning"] == {"effort": "none"}
+    assert calls[0]["enable_thinking"] is False
     assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
@@ -49,6 +51,7 @@ def test_reasoning_can_be_raised(calls):
     LLMClient(settings(reasoning="high")).chat([{"role": "user", "content": "привет"}])
 
     assert calls[0]["reasoning_effort"] == "high"
+    assert "enable_thinking" not in calls[0]
     assert "chat_template_kwargs" not in calls[0]
 
 
@@ -68,27 +71,51 @@ def test_extra_body_wins_over_the_preset(calls):
     assert calls[0]["top_p"] == 0.9
 
 
-def test_a_strict_provider_gets_a_clean_retry(calls):
-    """Сервер, не знающий этих полей, отвечает 400 — повторяем без них."""
-    calls.responses.append((400, {"error": "unknown field reasoning_effort"}))
+def test_extra_body_survives_every_rung(calls):
+    """Хозяин дома подобрал поля под свою модель — их нельзя терять при откате."""
+    calls.responses.extend([(400, {"error": "bad"})] * 2)
+    client = LLMClient(settings(extra_body={"top_p": 0.9}))
+
+    client.chat([{"role": "user", "content": "привет"}])
+
+    assert [call["top_p"] for call in calls] == [0.9, 0.9, 0.9]
+    assert "reasoning_effort" not in calls[-1]
+
+
+def test_a_strict_provider_gets_the_next_rung(calls):
+    """OpenAI не знает значения `none`, но знает `minimal` — на 400 пробуем его."""
+    calls.responses.append((400, {"error": "unsupported value: reasoning_effort=none"}))
 
     response = LLMClient(settings()).chat([{"role": "user", "content": "привет"}])
 
     assert len(calls) == 2
-    assert "reasoning_effort" in calls[0]
-    assert "reasoning_effort" not in calls[1]
-    assert "chat_template_kwargs" not in calls[1]
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[1]["reasoning_effort"] == "minimal"
+    assert "enable_thinking" not in calls[1]
+    assert response.content == "Здравствуйте."
+
+
+def test_the_last_rung_is_a_clean_request(calls):
+    """Не понял ни одной формы — уходит чистый запрос, лишь бы ассистент ответил."""
+    calls.responses.extend([(400, {"error": "bad"}), (400, {"error": "bad"})])
+
+    response = LLMClient(settings()).chat([{"role": "user", "content": "привет"}])
+
+    assert len(calls) == 3
+    assert "reasoning_effort" not in calls[2]
+    assert "reasoning" not in calls[2]
+    assert "chat_template_kwargs" not in calls[2]
     assert response.content == "Здравствуйте."
 
 
 def test_a_real_bad_request_is_not_retried_forever(calls):
     """Если и чистый запрос отвергнут — это уже настоящая ошибка."""
-    calls.responses.extend([(400, {"error": "bad"}), (400, {"error": "bad"})])
+    calls.responses.extend([(400, {"error": "bad"})] * 3)
 
     with pytest.raises(LLMUnavailable):
         LLMClient(settings()).chat([{"role": "user", "content": "привет"}])
 
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 def test_nothing_is_retried_when_there_was_nothing_to_strip(calls):
@@ -106,5 +133,35 @@ def test_tuning_reaches_json_helpers_too(calls):
 
     result = LLMClient(settings()).json_completion("система", "овсянка")
 
-    assert calls[0]["reasoning_effort"] == "minimal"
+    assert calls[0]["reasoning_effort"] == "none"
     assert result == {"kcal": 320}
+
+
+def test_the_chat_stays_silent_while_estimates_think(calls):
+    """Две ручки независимы: чат остаётся быстрым, даже если оценке разрешили думать."""
+    client = LLMClient(settings(reasoning="off", reasoning_estimate="high"))
+
+    client.chat([{"role": "user", "content": "привет"}])
+    calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))
+    client.json_completion("система", "овсянка")
+
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[1]["reasoning_effort"] == "high"
+
+
+def test_thinking_gets_its_own_token_budget(calls):
+    """Мысли тратят бюджет ответа: без запаса модель успевает подумать и умолкнуть."""
+    calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))
+    LLMClient(settings(reasoning_estimate="low")).json_completion("система", "овсянка",
+                                                                  max_tokens=600)
+
+    assert calls[0]["max_tokens"] == 600 + REASONING_HEADROOM
+
+
+def test_a_truncated_answer_complains_about_the_limit(calls):
+    """«Модель вернула не JSON» уводит не туда: дело не в модели, а в лимите."""
+    calls.responses.append((200, {"choices": [{"message": {"content": ""},
+                                               "finish_reason": "length"}]}))
+
+    with pytest.raises(LLMUnavailable, match="токен"):
+        LLMClient(settings(reasoning_estimate="low")).json_completion("система", "овсянка")

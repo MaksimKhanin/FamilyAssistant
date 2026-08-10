@@ -13,13 +13,14 @@ Every invocation lands in `action_log`, which is what the «Что агент д
 card shows. Nothing here is module-specific.
 """
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.agent import policy, registry
+from app.agent import policy, registry, tracing
 from app.agent.llm import LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part
 from app.agent.prompts import system_prompt
 from app.agent.registry import ToolContext, ToolResult, ToolSpec
@@ -130,6 +131,11 @@ class Agent:
     ) -> AgentReply:
         """Answer one message from a human, running tools as policy allows."""
         subject = subject or actor
+        with tracing.run(db, actor, subject, channel, text or "(фото)"):
+            return self._respond(db, actor, subject, text, image, image_mime, channel)
+
+    def _respond(self, db: Session, actor: User, subject: User, text: str,
+                 image: bytes, image_mime: str, channel: str) -> AgentReply:
         attachments = {"image": image, "image_mime": image_mime} if image else {}
         ctx = ToolContext(db=db, actor=actor, subject=subject, channel=channel, attachments=attachments)
 
@@ -182,6 +188,7 @@ class Agent:
         except LLMUnavailable:
             reply = AgentReply(text=OFFLINE_REPLY)
             save_message(db, actor, "assistant", reply.text, channel=channel, payload=reply.to_payload())
+            tracing.finish(reply.text)
             return reply
 
         if not answer:
@@ -189,12 +196,14 @@ class Agent:
 
         reply = AgentReply(text=answer, traces=traces, cards=cards)
         save_message(db, actor, "assistant", answer, channel=channel, payload=reply.to_payload())
+        tracing.finish(answer)
         return reply
 
     def _handle_call(self, db: Session, ctx: ToolContext, specs: Dict[str, ToolSpec], call: ToolCall):
         spec = specs.get(call.name)
         if spec is None:
             logger.warning(f"Модель попросила неизвестный или недоступный инструмент: {call.name}")
+            _trace_tool(call.name, call.arguments, {"отказ": "инструмент недоступен"}, status="failed")
             trace = Trace(tool=call.name or "?", title=call.name or "?", arguments=call.arguments,
                           status="failed", summary="Инструмент недоступен")
             return trace, "Такого инструмента нет или он выключен для этого человека.", None
@@ -215,17 +224,31 @@ class Agent:
             db.refresh(pending)
             bus.publish(ACTION_PENDING, {"pending_id": pending.id, "user_id": ctx.subject.id,
                                          "tool": spec.name, "channel": ctx.channel})
+            _trace_tool(spec.name, call.arguments,
+                        {"режим": MODE_ASK, "pending_id": pending.id}, status="awaiting")
             trace = Trace(tool=spec.name, title=spec.title, arguments=call.arguments,
                           status="awaiting", summary="ждёт подтверждения", pending_id=pending.id)
             card = {"type": "confirm", "pending_id": pending.id, "tool": spec.name,
                     "title": spec.title, "arguments": call.arguments}
             return trace, "Действие подготовлено и ждёт подтверждения человека. Не выполняй его повторно.", card
 
+        started = time.monotonic()
         result = registry.execute(spec, ctx, call.arguments)
+        _trace_tool(spec.name, call.arguments,
+                    {"ok": result.ok, "summary": result.summary, "card": result.card},
+                    status="ok" if result.ok else "failed",
+                    duration_ms=int((time.monotonic() - started) * 1000))
         _log_action(db, ctx.subject, spec, call.arguments, result, mode=MODE_AUTO)
         trace = Trace(tool=spec.name, title=spec.title, arguments=call.arguments,
                       status="done" if result.ok else "failed", summary=result.summary)
         return trace, result.summary, result.card
+
+
+def _trace_tool(name: str, arguments: Any, result: Any, status: str, duration_ms: int = 0):
+    """Вызов инструмента — в трейс прогона, если запись включена."""
+    recorder = tracing.current()
+    if recorder is not None:
+        recorder.tool(name or "?", arguments, result, status=status, duration_ms=duration_ms)
 
 
 def _fallback_answer(traces: List[Trace]) -> str:

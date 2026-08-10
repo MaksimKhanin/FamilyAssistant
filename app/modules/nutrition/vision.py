@@ -8,8 +8,8 @@ talk to a vision model.
 Every result is explicitly an estimate — `confidence` is carried all the way to
 the interface so a low-confidence guess can be shown as one.
 """
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 from app.agent.llm import LLMClient, LLMUnavailable, client as default_client, image_part, text_part
 from app.agent.prompts import MEAL_TEXT_SYSTEM, MEAL_VISION_SYSTEM
@@ -31,6 +31,11 @@ class MealEstimate:
     portion: Optional[str] = None
     confidence: str = "medium"
     note: Optional[str] = None
+    #: Из чего сложилась цифра: «борщ ~300 г», «сметана ~20 г». Человеку это
+    #: объясняет оценку лучше любого «уверенность средняя».
+    components: List[str] = field(default_factory=list)
+    #: Один вопрос, ответ на который заметно сдвинет цифры. Пусто — спрашивать нечего.
+    question: Optional[str] = None
 
     @property
     def confidence_label(self) -> str:
@@ -50,6 +55,9 @@ def _coerce(raw: dict, fallback_title: str) -> MealEstimate:
         confidence = "medium"
 
     title = str(raw.get("title") or "").strip() or fallback_title
+    components = [str(item)[:64] for item in (raw.get("components") or [])[:8] if str(item).strip()]
+    question = str(raw.get("question") or "").strip()
+
     return MealEstimate(
         title=title[:128],
         kcal=number("kcal"),
@@ -59,16 +67,20 @@ def _coerce(raw: dict, fallback_title: str) -> MealEstimate:
         portion=(str(raw["portion"])[:128] if raw.get("portion") else None),
         confidence=confidence,
         note=(str(raw["note"])[:255] if raw.get("note") else None),
+        components=components,
+        question=question[:160] or None,
     )
 
 
-def estimate_from_image(image_bytes: bytes, hint: str = None,
+def estimate_from_image(image_bytes: bytes, hint: str = None, context: str = None,
                         llm: LLMClient = None) -> MealEstimate:
     """Estimate a meal from a photo of the plate."""
     llm = llm or default_client
     prompt = "Что на фото и сколько это примерно?"
     if hint:
         prompt += f" Подсказка от человека: {hint}"
+    if context:
+        prompt += f"\n\n{context}"
 
     raw = llm.json_completion(
         MEAL_VISION_SYSTEM,
@@ -78,14 +90,22 @@ def estimate_from_image(image_bytes: bytes, hint: str = None,
     return _coerce(raw, fallback_title="Блюдо с фото")
 
 
-def estimate_from_text(text: str, llm: LLMClient = None) -> MealEstimate:
-    """Estimate a meal from a free-form description («кофе с молоком и бутерброд»)."""
+def estimate_from_text(text: str, context: str = None, llm: LLMClient = None) -> MealEstimate:
+    """Estimate a meal from a free-form description («кофе с молоком и бутерброд»).
+
+    `context` — что известно об этом человеке: цель, норма, заметки из памяти.
+    Аллергия или «ест без сахара» меняют оценку сильнее, чем кажется, а модель
+    сама об этом не спросит.
+    """
     llm = llm or default_client
-    raw = llm.json_completion(MEAL_TEXT_SYSTEM, text.strip())
+    prompt = text.strip()
+    if context:
+        prompt += f"\n\n{context}"
+    raw = llm.json_completion(MEAL_TEXT_SYSTEM, prompt)
     return _coerce(raw, fallback_title=text.strip()[:60] or "Приём пищи")
 
 
-def safe_estimate_from_text(text: str, llm: LLMClient = None) -> MealEstimate:
+def safe_estimate_from_text(text: str, context: str = None, llm: LLMClient = None) -> MealEstimate:
     """Same as `estimate_from_text`, but never raises.
 
     When the model is unreachable the meal is still recorded — as a zero-calorie
@@ -93,7 +113,7 @@ def safe_estimate_from_text(text: str, llm: LLMClient = None) -> MealEstimate:
     cloud endpoint blinked would be worse than an incomplete one.
     """
     try:
-        return estimate_from_text(text, llm=llm)
+        return estimate_from_text(text, context=context, llm=llm)
     except LLMUnavailable:
         logger.warning("Модель недоступна — записываю приём пищи без оценки")
         return MealEstimate(title=text.strip()[:60] or "Приём пищи", kcal=0, protein=0, fat=0, carbs=0,
