@@ -25,7 +25,7 @@ from aiogram.types import (
 
 from app.agent.runtime import agent, approve_action, reject_action
 from app.core.config import settings
-from app.core.db import session_scope
+from app.core.db import create_all, session_scope
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.models import User
@@ -251,6 +251,7 @@ async def main():
         raise SystemExit("TELEGRAM_BOT_TOKEN не задан — боту нечем представиться")
 
     load_modules()
+    create_all()      # бот может выиграть гонку у веб-процесса; create_all идемпотентен
     bus.start()
 
     bot = Bot(token=settings.telegram_token)

@@ -159,6 +159,13 @@ WantedBy=multi-user.target
 
 **Логи.** `docker compose logs -f web scheduler`. Уровень — `LOG_LEVEL`.
 
+**Схема БД.** Таблицы создаёт тот процесс, который поднялся первым: и `web`, и
+`scheduler`, и бот вызывают `create_all()` при старте. Раньше это делал только
+`web`, и планировщик, выиграв гонку, раз в минуту спрашивал несуществующую
+таблицу — база сыпала `relation "scheduled_jobs" does not exist`. Если такое
+всё-таки видите, значит `web` не поднялся: смотрите `docker compose ps` и
+`docker compose logs web`.
+
 **Диск.** Кадры лежат в томе `media`, ротация — по `Camera.retention_days` (14 дней по
 умолчанию), делает `scheduler` ночью в 4:00. Событие в БД переживает свой снимок.
 
