@@ -36,6 +36,8 @@ x-app: &app
     LLM_API_KEY: ${LLM_API_KEY:-}
     LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
     LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
+    LLM_REASONING: ${LLM_REASONING:-off}
+    LLM_EXTRA_BODY: ${LLM_EXTRA_BODY:-}
     LOG_LEVEL: ${LOG_LEVEL:-INFO}
   volumes:
     - media:/media

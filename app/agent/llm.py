@@ -21,6 +21,18 @@ from app.core.logging import get_logger
 logger = get_logger("llm")
 
 
+#: Как попросить модель не «размышлять». Единого стандарта нет, поэтому шлём обе
+#: распространённые формы сразу: `reasoning_effort` понимают OpenAI-подобные
+#: провайдеры, `chat_template_kwargs.enable_thinking` — vLLM/SGLang и Qwen-подобные.
+#: Кто не понял ни одной, ответит 400 — тогда запрос повторяется без них (см. `_post`).
+REASONING_PRESETS = {
+    "off": {"reasoning_effort": "minimal", "chat_template_kwargs": {"enable_thinking": False}},
+    "low": {"reasoning_effort": "low"},
+    "medium": {"reasoning_effort": "medium"},
+    "high": {"reasoning_effort": "high"},
+}
+
+
 class LLMUnavailable(RuntimeError):
     """The model could not be reached or is not configured.
 
@@ -89,15 +101,37 @@ class LLMClient:
         if response_format:
             payload["response_format"] = response_format
 
+        return self._parse(self._post(payload, self._tuning()))
+
+    def _tuning(self) -> Dict[str, Any]:
+        """Поля, управляющие режимом размышления, — их провайдер может и не знать."""
+        tuning = dict(REASONING_PRESETS.get(self.cfg.reasoning, {}))
+        tuning.update(self.cfg.extra_body or {})
+        return tuning
+
+    def _post(self, payload: Dict[str, Any], tuning: Dict[str, Any]) -> dict:
+        """Запрос к модели. На 400 с необязательными полями — повтор без них.
+
+        Управление размышлением у каждого провайдера своё, и строгие серверы
+        отвечают 400 на незнакомое поле. Вместо того чтобы требовать от хозяина
+        дома знать диалект своей модели, пробуем с подсказками и молча
+        откатываемся к чистому запросу.
+        """
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
-
         url = f"{self.cfg.base_url.rstrip('/')}/chat/completions"
+
         try:
-            response = httpx.post(url, json=payload, headers=headers, timeout=self.cfg.request_timeout)
+            response = httpx.post(url, json={**payload, **tuning}, headers=headers,
+                                  timeout=self.cfg.request_timeout)
+            if response.status_code == 400 and tuning:
+                logger.warning(f"Провайдер не принял {sorted(tuning)} — повторяю без них. "
+                               f"Задайте LLM_REASONING= (пусто) или LLM_EXTRA_BODY под свою модель.")
+                response = httpx.post(url, json=payload, headers=headers,
+                                      timeout=self.cfg.request_timeout)
             response.raise_for_status()
-            data = response.json()
+            return response.json()
         except httpx.HTTPStatusError as e:
             body = e.response.text[:400]
             logger.error(f"Модель ответила ошибкой {e.response.status_code}: {body}")
@@ -105,8 +139,6 @@ class LLMClient:
         except (httpx.HTTPError, ValueError) as e:
             logger.error(f"Не удалось обратиться к модели: {e}")
             raise LLMUnavailable("Модель недоступна") from e
-
-        return self._parse(data)
 
     @staticmethod
     def _parse(data: dict) -> LLMResponse:

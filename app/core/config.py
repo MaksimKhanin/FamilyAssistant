@@ -28,6 +28,20 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _json_env(name: str) -> dict:
+    """Объект JSON из переменной окружения. Мусор — не повод не стартовать."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return {}
+    import json
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        print(f"[config] {name} не разобрался как JSON — игнорирую")
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 @dataclass
 class LLMSettings:
     """OpenAI-compatible endpoint — works with OpenAI, Ollama, vLLM, LM Studio, ..."""
@@ -38,6 +52,13 @@ class LLMSettings:
     temperature: float
     max_tokens: int
     request_timeout: float
+    #: Режим размышления модели: off / low / medium / high, либо пусто — не трогать.
+    #: По умолчанию off: ассистент занят маршрутизацией в инструменты и короткими
+    #: ответами, а «думающая» модель на этом добавляет секунды на ровном месте.
+    reasoning: str = "off"
+    #: Произвольные поля запроса для нестандартных провайдеров, JSON из LLM_EXTRA_BODY.
+    #: Перекрывают всё, что подставил пресет.
+    extra_body: dict = field(default_factory=dict)
     #: Офлайн-режим для пробного запуска: вместо модели — разбор ключевых слов.
     #: Включается сам, когда модель не настроена (см. `load_settings`).
     stub: bool = False
@@ -132,6 +153,8 @@ def load_settings() -> Settings:
             temperature=float(os.environ.get("LLM_TEMPERATURE", "0.3")),
             max_tokens=_int("LLM_MAX_TOKENS", 1024),
             request_timeout=float(os.environ.get("LLM_TIMEOUT", "60")),
+            reasoning=os.environ.get("LLM_REASONING", "off").strip().lower(),
+            extra_body=_json_env("LLM_EXTRA_BODY"),
             stub=_flag("LLM_STUB", False),
         ),
     )
