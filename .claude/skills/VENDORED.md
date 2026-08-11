@@ -27,30 +27,73 @@
 
 ## Что скопировано
 
+Плагин везёт **25 скиллов**; здесь лежат **24** — весь набор, кроме `code-review`
+(см. следующий раздел). Список плагина — авторитетный источник: он в
+`.claude-plugin/plugin.json` апстрима, и `skills/in-progress/`, `skills/misc/`,
+`skills/deprecated/` в него не входят, поэтому не входят и сюда.
+
 | Скилл | Роль |
 | --- | --- |
-| `wayfinder` | сама команда `/wayfinder` |
-| `grilling` | вызывается из wayfinder для HITL-тикетов |
-| `domain-modeling` | вызывается из wayfinder вместе с grilling |
-| `research` | резолвит AFK-тикеты типа `research` (сабагентом) |
-| `prototype` | резолвит тикеты типа `prototype` |
+| `ask-matt` | роутер по всему набору: какой скилл под какую ситуацию |
+| `setup-matt-pocock-skills` | преконда: настраивает трекер, метки, раскладку доков |
+| `grill-with-docs` | главный вход: заточить идею интервью, с записью в `CONTEXT.md` и ADR |
+| `grill-me` | то же интервью, но stateless — когда нет рабочего каталога |
+| `grilling` | сам примитив интервью; его крутят внутри wayfinder, triage и прочих |
+| `domain-modeling` | словарь предметной области: `CONTEXT.md` и ADR |
+| `codebase-design` | словарь глубоких модулей: интерфейс, шов, адаптер, рычаг |
+| `wayfinder` | команда `/wayfinder`: карта решений для тумана, который не влезает в сессию |
+| `to-spec` | тред → спека |
+| `to-tickets` | спека → тикеты-трассеры с рёбрами блокировок |
+| `implement` | сборка тикета: гоняет `tdd` внутри, закрывается ревью диффа |
+| `tdd` | red-green-refactor по одному срезу поведения |
+| `triage` | он-рампа: входящие баги и заявки → issues, готовые для агента |
+| `diagnosing-bugs` | он-рампа: тугой баг, мигающий флейк, регрессия |
+| `improve-codebase-architecture` | обзор здоровья кодовой базы, ищет что углубить |
+| `resolving-merge-conflicts` | разбор конфликтов по намерению, ханк за ханком |
+| `prototype` | одноразовая программа под один вопрос дизайна |
+| `research` | фоновый агент читает первоисточники и оставляет цитированный markdown |
+| `handoff` | портируемый markdown между сессиями, каталогами, харнессами |
+| `to-questionnaire` | когда знание не у вас и не в коде, а у другого человека |
+| `wait-what` | пере-подача того, что агент только что сказал, но не донёс |
+| `teach` | разбор концепции за несколько сессий, каталог как рабочее место |
+| `wizard` | интерактивный bash под шаги, которые может сделать только человек |
+| `writing-for-agents` | как писать доки, которые читают агенты |
 
-Сайдкары `agents/openai.yaml` (для других агентных харнессов) не копировались.
-Остальные ~20 скиллов плагина сюда не входят — они приезжают только через
-установку плагина (см. `docs/claude-code-cloud.md`).
+### Чего нет и почему
+
+**`code-review` намеренно пропущен.** У Claude Code есть собственная встроенная
+команда `/code-review`, и одноимённый скилл в `.claude/skills/` её затенит.
+Следствие, которое стоит помнить: `implement` в конце вызывает `/code-review` —
+и попадёт на встроенный. Он делает близкую работу, но это не двухосное
+(Standards + Spec) ревью, задуманное апстримом.
+
+**Сайдкары `agents/openai.yaml`** (для других агентных харнессов) не копировались.
 
 ## Как обновить
 
 ```bash
 git clone --depth 1 https://github.com/mattpocock/skills /tmp/mp-skills
-for s in wayfinder research prototype domain-modeling; do
-  rm -rf .claude/skills/$s && cp -r /tmp/mp-skills/skills/engineering/$s .claude/skills/$s
-done
-rm -rf .claude/skills/grilling && cp -r /tmp/mp-skills/skills/productivity/grilling .claude/skills/grilling
+
+python3 - <<'PY'
+import json, os, shutil
+src, dst = '/tmp/mp-skills', '.claude/skills'
+for p in json.load(open(f'{src}/.claude-plugin/plugin.json'))['skills']:
+    name = os.path.basename(p)
+    if name == 'code-review':      # затенил бы встроенный /code-review
+        continue
+    shutil.rmtree(f'{dst}/{name}', ignore_errors=True)
+    shutil.copytree(os.path.join(src, p), f'{dst}/{name}')
+PY
+
 find .claude/skills -name agents -type d -exec rm -rf {} +
 git -C /tmp/mp-skills rev-parse HEAD   # обновите коммит выше
 ```
 
+Скрипт читает список скиллов из манифеста плагина, поэтому новые скиллы
+апстрима подхватятся сами — руками список вести не нужно.
+
 Апстрим не трогали — файлы скиллов лежат как есть. Локальная адаптация только
 одна и живёт снаружи: `docs/agents/issue-tracker.md` описывает операции трекера
 через GitHub MCP, а не через `gh` CLI (в облачном контейнере `gh` не установлен).
+Скиллы, работающие с issues (`wayfinder`, `triage`, `to-tickets`, `implement`),
+читают операции трекера оттуда, так что правка одного файла покрывает их все.
