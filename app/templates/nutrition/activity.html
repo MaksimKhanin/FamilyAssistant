@@ -9,14 +9,14 @@
       {% for key, label, unit, rate in kinds %}
         <label class="chip">
           <input type="radio" name="kind" value="{{ key }}" data-rate="{{ rate }}" data-unit="{{ unit }}"
-                 {% if loop.first %}checked{% endif %} onchange="recalc()" style="margin-right:4px">
+                 {% if loop.first %}checked{% endif %} onchange="panel.recalc()" style="margin-right:4px">
           {{ label }}
         </label>
       {% endfor %}
     </div>
 
     <input class="field" type="number" name="value" id="activity-value" min="0" step="1"
-           placeholder="Сколько" oninput="recalc()">
+           placeholder="Сколько" oninput="panel.recalc()">
     <p class="muted" id="activity-estimate">≈ 0 ккал</p>
     <p class="tiny">Оценка по простым коэффициентам — точность как у шагомера, не как у лаборатории.</p>
     <button class="btn green" type="submit">Записать</button>
@@ -37,7 +37,7 @@
         <div style="color:var(--ok-dark);font-weight:600">−{{ entry.kcal }}</div>
         {% if can_edit %}
           <form method="post" action="/nutrition/activity/{{ entry.id }}/discard"
-                onsubmit="return confirm('Удалить запись «{{ entry.label }}»?')">
+                hx-confirm="Удалить запись «{{ entry.label }}»?">
             <button class="btn ghost small" type="submit" title="Удалить запись">
               {{ ic.icon("close", 13) }}
             </button>
@@ -50,14 +50,4 @@
   </div>
 </div>
 
-{% endblock %}
-{% block scripts %}
-<script>
-  function recalc() {
-    const selected = document.querySelector('input[name="kind"]:checked');
-    const value = parseFloat(document.getElementById('activity-value').value) || 0;
-    const kcal = Math.round(value * parseFloat(selected.dataset.rate));
-    document.getElementById('activity-estimate').textContent = '≈ ' + kcal + ' ккал';
-  }
-</script>
 {% endblock %}

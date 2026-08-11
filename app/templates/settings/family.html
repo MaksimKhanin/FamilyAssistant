@@ -22,7 +22,7 @@
     <div class="row wrap" style="gap:8px">
       <input class="field" id="invite-link" value="{{ invite_link }}" readonly
              onclick="this.select()" style="flex:1;min-width:240px">
-      <button class="btn" type="button" onclick="copyInvite()">Скопировать</button>
+      <button class="btn" type="button" onclick="panel.copyInviteField()">Скопировать</button>
     </div>
   </div>
 {% endif %}
@@ -91,7 +91,7 @@
           {% endif %}
 
           <form method="post" action="/settings/family/member/{{ member.id }}/invite"
-                onsubmit="return confirm('Выпустить новую ссылку для {{ member.display_name }}? Текущий пароль перестанет работать.')">
+                hx-confirm="Выпустить новую ссылку для {{ member.display_name }}? Текущий пароль перестанет работать.">
             <button class="btn ghost small" type="submit">
               {{ "Сбросить пароль" if member.password_hash else "Выпустить ссылку" }}
             </button>
@@ -105,7 +105,7 @@
 
           {% if row.can_delete %}
             <form method="post" action="/settings/family/member/{{ member.id }}/delete"
-                  onsubmit="return confirm('Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, заметки и переписка с ассистентом. Это необратимо.')">
+                  hx-confirm="Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, заметки и переписка с ассистентом. Это необратимо.">
               <button class="btn ghost small" type="submit" style="color:var(--alarm-text)">Удалить</button>
             </form>
           {% endif %}
@@ -135,14 +135,4 @@
   Пароль человек придумывает сам по ссылке — админ его не видит и не задаёт.
 </p>
 
-{% endblock %}
-{% block scripts %}
-<script>
-  function copyInvite() {
-    const field = document.getElementById('invite-link');
-    field.select();
-    if (navigator.clipboard) navigator.clipboard.writeText(field.value);
-    else document.execCommand('copy');   // http без TLS: clipboard API недоступен
-  }
-</script>
 {% endblock %}

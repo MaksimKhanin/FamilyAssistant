@@ -32,7 +32,7 @@
           <span class="badge ok">заходит сам</span>
         {% elif row.invite_url %}
           <button class="btn ghost small" type="button"
-                  onclick="copyInvite('{{ row.invite_url }}', this)">Скопировать приглашение</button>
+                  onclick="panel.copyInvite('{{ row.invite_url }}', this)">Скопировать приглашение</button>
         {% endif %}
       </div>
     {% endfor %}
@@ -90,15 +90,4 @@
   </div>
 {% endif %}
 
-{% endblock %}
-{% block scripts %}
-<script>
-  function copyInvite(url, button) {
-    const done = () => { button.textContent = 'Ссылка скопирована';
-                         setTimeout(() => button.textContent = 'Скопировать приглашение', 2000); };
-    // clipboard API есть только на HTTPS — на локальном HTTP показываем ссылку как есть
-    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => prompt('Ссылка:', url));
-    else prompt('Ссылка для приглашения:', url);
-  }
-</script>
 {% endblock %}
