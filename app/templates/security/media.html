@@ -23,7 +23,7 @@
 
     {% if exists %}
       <div class="row wrap">
-        <a class="btn ghost small" href="/security/file/{{ item.id }}" download="{{ item.filename }}">Скачать</a>
+        <a class="btn ghost small" hx-boost="false" href="/security/file/{{ item.id }}" download="{{ item.filename }}">Скачать</a>
         <a class="btn ghost small" href="/security/file/{{ item.id }}" target="_blank" rel="noopener">Открыть отдельно</a>
       </div>
     {% endif %}

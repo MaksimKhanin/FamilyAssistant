@@ -5,9 +5,13 @@
   <div class="stack">
     <form class="card stack" method="post" action="/settings/agent/autonomy">
       <div class="card-title">Насколько ассистент самостоятельный</div>
+      {# requestSubmit, а не submit: submit() отправляет форму в обход события
+         submit, и hx-boost такую отправку не перехватывает — экран мигал бы
+         полной перезагрузкой. #}
       <input type="range" name="autonomy" min="0" max="3" step="1" value="{{ autonomy }}"
-             oninput="document.getElementById('autonomy-label').textContent = levels[this.value]"
-             onchange="this.form.submit()" {% if not can_edit %}disabled{% endif %}>
+             data-levels='{{ autonomy_levels|tojson }}'
+             oninput="panel.autonomyLabel(this)"
+             onchange="this.form.requestSubmit()" {% if not can_edit %}disabled{% endif %}>
       <div class="row">
         <span id="autonomy-label" style="font-weight:600">{{ autonomy_levels[autonomy] }}</span>
         <span class="tiny spacer">0 — всё спрашивает · 3 — максимально самостоятельно</span>
@@ -81,9 +85,4 @@
   </div>
 </div>
 
-{% endblock %}
-{% block scripts %}
-<script>
-  const levels = {{ autonomy_levels|tojson }};
-</script>
 {% endblock %}

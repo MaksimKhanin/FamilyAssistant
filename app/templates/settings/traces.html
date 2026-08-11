@@ -26,9 +26,9 @@
                value="{{ trace_settings.keep_runs }}" style="width:96px">
         <button class="btn ghost small" type="submit">Сохранить</button>
       </form>
-      <a class="btn small spacer" href="/settings/traces/export.json{{ export_query }}">Выгрузить JSON</a>
+      <a hx-boost="false" class="btn small spacer" href="/settings/traces/export.json{{ export_query }}">Выгрузить JSON</a>
       <form method="post" action="/settings/traces/clear"
-            onsubmit="return confirm('Стереть все трейсы вместе с промптами?')">
+            hx-confirm="Стереть все трейсы вместе с промптами?">
         <button class="btn ghost small" type="submit">Стереть всё</button>
       </form>
     </div>
@@ -60,7 +60,7 @@
           </div>
           <div class="row" style="gap:6px">
             <a class="btn ghost small" href="/settings/traces?user_id={{ row.user_id }}">Показать</a>
-            <a class="btn ghost small" href="/settings/traces/export.json?user_id={{ row.user_id }}">JSON</a>
+            <a hx-boost="false" class="btn ghost small" href="/settings/traces/export.json?user_id={{ row.user_id }}">JSON</a>
           </div>
         </div>
       {% else %}
@@ -85,7 +85,7 @@
           </div>
           <div class="row" style="gap:6px">
             <a class="btn ghost small" href="/settings/traces?session_id={{ row.session_id }}">Показать</a>
-            <a class="btn ghost small"
+            <a hx-boost="false" class="btn ghost small"
                href="/settings/traces/export.json?session_id={{ row.session_id }}">JSON</a>
           </div>
         </div>
@@ -147,7 +147,7 @@
 
           <div class="row" style="gap:8px">
             <a class="btn ghost small" href="/settings/traces?session_id={{ run.session_id }}">Весь разговор</a>
-            <a class="btn ghost small"
+            <a hx-boost="false" class="btn ghost small"
                href="/settings/traces/export.json?run_id={{ run.run_id }}">JSON прогона</a>
           </div>
         </div>

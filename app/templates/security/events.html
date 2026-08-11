@@ -51,7 +51,11 @@
 
 {% if alert %}
   {% set camera = cameras.get(alert.camera_id) %}
-  <div class="modal-backdrop" onclick="if(event.target===this) location.href='/security/events'">
+  {# Клик мимо карточки закрывает её. Через htmx, а не location.href: последний
+     перезагрузил бы страницу целиком в обход hx-boost. Фильтр отсекает клики по
+     самой карточке — закрывает только клик по подложке. #}
+  <div class="modal-backdrop" hx-get="/security/events" hx-target="body"
+       hx-push-url="true" hx-trigger="click[event.target===this]">
     <div class="modal">
       {% if alert.snapshot_path %}
         <img class="modal-image" src="/security/snapshot/{{ alert.id }}" alt="">
