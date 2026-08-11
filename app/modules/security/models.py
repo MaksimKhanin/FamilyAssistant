@@ -120,6 +120,9 @@ class MediaItem(Base):
     size_bytes = Column(Integer, nullable=True)
 
     is_alert = Column(Boolean, nullable=False, default=False, index=True)
+    #: Склейка чанков за период, а не отдельная двадцатисекундная запись. Такие
+    #: файлы длинные и их единицы в день — в ленте архива они выглядят иначе.
+    is_merged = Column(Boolean, nullable=False, default=False)
     detected_class = Column(String(32), nullable=True)
     confidence = Column(Float, nullable=True)
     area = Column(Integer, nullable=True)

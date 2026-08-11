@@ -71,6 +71,7 @@ async def ingest_media(
     camera: str = Form(...),
     filename: str = Form(...),
     is_alert: bool = Form(False),
+    is_merged: bool = Form(False),
     detected_class: str = Form(None),
     confidence: float = Form(None),
     area: int = Form(None),
@@ -123,7 +124,7 @@ async def ingest_media(
         rel_path=media.relative(dest),
         thumb_rel_path=media.relative(thumb) if thumb else None,
         captured_at=captured_at, size_bytes=size,
-        is_alert=is_alert or bool(detected_class),
+        is_alert=is_alert or bool(detected_class), is_merged=is_merged,
         detected_class=detected_class, confidence=confidence, area=area,
         event_id=event.id if event is not None else None,
     )

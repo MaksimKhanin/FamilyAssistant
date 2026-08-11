@@ -9,6 +9,7 @@
           <img src="/security/thumb/{{ item.id }}" alt="" loading="lazy" onerror="this.remove()">
         {% endif %}
         {% if item.is_video %}<span class="media-mark">▶</span>{% endif %}
+        {% if item.is_merged %}<span class="badge neutral media-tag">склейка</span>{% endif %}
         {% if item.detected_class %}
           <span class="badge alarm media-tag">
             {{ {"person": "человек", "car": "машина", "truck": "грузовик",

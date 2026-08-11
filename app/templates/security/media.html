@@ -35,7 +35,9 @@
       <div class="row"><span class="muted">Когда</span>
         <span class="spacer">{{ item.captured_at|ru_datetime }}</span></div>
       <div class="row"><span class="muted">Тип</span>
-        <span class="spacer">{{ "видео" if item.is_video else "снимок" }}</span></div>
+        <span class="spacer">
+          {%- if item.is_merged %}склейка за период{% elif item.is_video %}видео{% else %}снимок{% endif -%}
+        </span></div>
       {% if item.size_bytes %}
         <div class="row"><span class="muted">Размер</span>
           <span class="spacer">{{ item.size_bytes|filesize }}</span></div>

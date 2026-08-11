@@ -118,6 +118,15 @@ def test_a_clip_from_another_hour_is_left_alone(client, family, db):
     assert db.query(SecurityEvent).one().clip_path is None
 
 
+def test_a_merged_recording_is_marked_as_one(client, family, db):
+    """Склейка за час и чанк на двадцать секунд — разные вещи, и в архиве это видно."""
+    _post(client, filename="merged_20260810_120000_done_post_merged.mp4",
+          payload=b"fake-mp4", is_merged=True)
+
+    item = db.query(MediaItem).one()
+    assert item.is_merged and item.kind == "video"
+
+
 def test_the_same_file_twice_is_stored_once(client, family, db):
     """Рекордер пересканирует папку каждые несколько секунд — дубли неизбежны."""
     first = _post(client, filename=ALERT_NIGHT)

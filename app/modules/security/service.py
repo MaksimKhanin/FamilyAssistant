@@ -240,13 +240,13 @@ def find_media(db: Session, camera_id: int, filename: str) -> Optional[MediaItem
 
 def record_media(db: Session, *, family_id: int, camera: Camera, filename: str, kind: str,
                  rel_path: str, thumb_rel_path: str = None, captured_at: datetime,
-                 size_bytes: int = None, is_alert: bool = False, detected_class: str = None,
-                 confidence: float = None, area: int = None,
+                 size_bytes: int = None, is_alert: bool = False, is_merged: bool = False,
+                 detected_class: str = None, confidence: float = None, area: int = None,
                  event_id: int = None) -> MediaItem:
     item = MediaItem(
         family_id=family_id, camera_id=camera.id, event_id=event_id,
         filename=filename, kind=kind, rel_path=rel_path, thumb_rel_path=thumb_rel_path,
-        captured_at=captured_at, size_bytes=size_bytes, is_alert=is_alert,
+        captured_at=captured_at, size_bytes=size_bytes, is_alert=is_alert, is_merged=is_merged,
         detected_class=detected_class, confidence=confidence, area=area,
     )
     # Файл приехал — значит камера жива, даже если в кадре ничего интересного.
