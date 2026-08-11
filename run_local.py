@@ -205,10 +205,44 @@ def _seed_home(db, family_id: int, security):
     # так в демо видно весь путь — правила, отметка «уведомил семью», push.
     bus.publish(SECURITY_ANOMALY, {"event_id": night.id, "family_id": family_id,
                                    "camera_id": gate.id, "verdict": night.verdict})
-    security.record_event(db, family_id, gate, to_utc(now.replace(hour=9, minute=40)),
-                          detected_class="person", confidence=0.91, area=4800)   # утром — штатно
+    morning = security.record_event(db, family_id, gate, to_utc(now.replace(hour=9, minute=40)),
+                                    detected_class="person", confidence=0.91, area=4800)   # утром — штатно
     security.record_event(db, family_id, yard, to_utc(now.replace(hour=14, minute=5)),
                           detected_class="car", confidence=0.78, area=9000)      # днём — штатно
+
+    _seed_archive(db, family_id, security, {gate: night, yard: None}, extra={gate: morning})
+
+
+def _seed_archive(db, family_id: int, security, alerts: dict, extra: dict):
+    """Немного записей в архиве, чтобы экран не выглядел сломанным на пустой базе.
+
+    Файлов на диске нет — сетка честно покажет фон плитки вместо превью, а страница
+    записи скажет, что файл уже стёрт по сроку хранения. Это ровно то же поведение,
+    что и у настоящего архива после ротации.
+    """
+    from app.core.clock import local_now, to_utc
+
+    now = local_now()
+    for camera, event in alerts.items():
+        for hour in (7, 11, 16, 20):
+            stamp = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            name = f"{stamp:%Y-%m-%d_%H-%M-%S}_{camera.slug}_video_done.mp4"
+            security.record_media(
+                db, family_id=family_id, camera=camera, filename=name, kind="video",
+                rel_path=f"security/{camera.slug}/{stamp:%Y-%m-%d}/{name}",
+                captured_at=to_utc(stamp), size_bytes=18 * 1024 * 1024,
+            )
+        for source in (event, extra.get(camera)):
+            if source is None:
+                continue
+            name = f"{now:%y-%m-%dT-%H-%M-%S}_captured_{source.area}_{source.confidence}_{source.detected_class}_done.jpg"
+            security.record_media(
+                db, family_id=family_id, camera=camera, filename=name, kind="photo",
+                rel_path=f"security/{camera.slug}/{now:%Y-%m-%d}/{name}",
+                captured_at=source.happened_at, size_bytes=240 * 1024, is_alert=True,
+                detected_class=source.detected_class, confidence=source.confidence,
+                area=source.area, event_id=source.id,
+            )
 
 
 # --- запуск ---------------------------------------------------------------

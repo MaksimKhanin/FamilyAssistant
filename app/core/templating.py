@@ -79,6 +79,17 @@ def ru_datetime(value: datetime, now: datetime = None) -> str:
     return f"{ru_date(value)}, {local.strftime('%H:%M')}"
 
 
+def filesize(value: int) -> str:
+    """«340 КБ» / «18,4 МБ» — снимки и видео отличаются на два порядка."""
+    if not value:
+        return ""
+    if value < 1024 * 1024:
+        return f"{round(value / 1024)} КБ"
+    if value < 1024 * 1024 * 1024:
+        return f"{value / 1024 / 1024:.1f}".replace(".", ",") + " МБ"
+    return f"{value / 1024 / 1024 / 1024:.1f}".replace(".", ",") + " ГБ"
+
+
 def weekday_short(value: datetime) -> str:
     local = to_local(value)
     return _WEEKDAYS[local.weekday()][:2] if local else ""
@@ -90,4 +101,5 @@ templates.env.filters["genitive"] = genitive
 templates.env.filters["ru_time"] = ru_time
 templates.env.filters["ru_date"] = ru_date
 templates.env.filters["ru_datetime"] = ru_datetime
+templates.env.filters["filesize"] = filesize
 templates.env.filters["weekday_short"] = weekday_short

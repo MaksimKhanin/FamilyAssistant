@@ -1,0 +1,25 @@
+{# Сетка архива. Ждёт в контексте: items, camera_by_id. #}
+<div class="media-grid">
+  {% for item in items %}
+    {% set camera = camera_by_id.get(item.camera_id) %}
+    <a class="media-card" href="/security/media/{{ item.id }}">
+      <div class="media-thumb">
+        {% if item.thumb_rel_path or not item.is_video %}
+          {# Превью может не сделаться — тогда остаётся фон плитки, а не битая картинка. #}
+          <img src="/security/thumb/{{ item.id }}" alt="" loading="lazy" onerror="this.remove()">
+        {% endif %}
+        {% if item.is_video %}<span class="media-mark">▶</span>{% endif %}
+        {% if item.detected_class %}
+          <span class="badge alarm media-tag">
+            {{ {"person": "человек", "car": "машина", "truck": "грузовик",
+                "bus": "автобус", "motorcycle": "мотоцикл"}.get(item.detected_class, item.detected_class) }}
+          </span>
+        {% endif %}
+      </div>
+      <div class="media-meta">
+        <div class="media-when">{{ item.captured_at|ru_time }}</div>
+        <div class="tiny">{{ camera.label if camera else "—" }} · {{ item.captured_at|ru_date }}</div>
+      </div>
+    </a>
+  {% endfor %}
+</div>

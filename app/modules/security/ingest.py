@@ -1,27 +1,39 @@
-"""Ingest endpoint for the edge vision worker.
+"""Ingest endpoint — единственная дверь, в которую стучится домашний рекордер.
 
-The worker at home does the cheap, constant part (RTSP, motion, YOLO) and only
-uploads frames that already contain something. This endpoint stores the frame,
-applies the household rules, and puts the result on the Event Bus — from there the
-Telegram channel and the agent take over.
+Рекордер дома делает дешёвую постоянную работу (RTSP, движение, YOLO, нарезка
+видео) и присылает сюда готовые файлы: штатные чанки записи и снимки
+срабатываний. Здесь файл кладётся в архив, а если в нём кто-то распознан —
+применяются домашние правила, и результат уходит на шину событий; дальше
+подхватывают Telegram-канал и агент.
+
+Протокол намеренно оставлен таким, каким его говорит рекордер (multipart с
+`file`/`camera`/`filename`, метаданные съёмки — в имени файла), чтобы домашняя
+часть системы не требовала переустановки при переезде сервера.
 """
-from datetime import datetime
+from datetime import timedelta
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core import media
+from app.core.clock import to_local, to_utc, utc_now
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.events import SECURITY_ANOMALY, SECURITY_EVENT_CREATED, bus
 from app.core.logging import get_logger
 from app.core.models import Family
-from app.modules.security import service
+from app.modules.security import filenames, service, thumbnails
 from app.modules.security.models import VERDICT_NORMAL
 
 router = APIRouter(prefix="/api/security", tags=["security-ingest"])
 logger = get_logger("security.ingest")
+
+CHUNK_SIZE = 1024 * 1024
+#: Насколько далеко от начала чанка искать событие, к которому он относится.
+CLIP_WINDOW = timedelta(minutes=5)
 
 
 def _check_api_key(authorization: str = Header(default="")):
@@ -44,51 +56,93 @@ def _resolve_family(db: Session, family_id: Optional[int]) -> int:
     return families[0].id
 
 
-@router.post("/events")
-async def ingest_event(
+async def _stream_to_disk(upload: UploadFile, dest: Path) -> int:
+    """Записать загрузку на диск по кускам — файл видео может быть большим."""
+    size = 0
+    with open(dest, "wb") as out:
+        while chunk := await upload.read(CHUNK_SIZE):
+            out.write(chunk)
+            size += len(chunk)
+    return size
+
+
+@router.post("/media")
+async def ingest_media(
     camera: str = Form(...),
+    filename: str = Form(...),
+    is_alert: bool = Form(False),
     detected_class: str = Form(None),
     confidence: float = Form(None),
     area: int = Form(None),
-    captured_at: str = Form(None),
     family_id: int = Form(None),
-    snapshot: UploadFile = File(None),
+    file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _=Depends(_check_api_key),
 ):
+    try:
+        name = filenames.safe_filename(filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     resolved_family = _resolve_family(db, family_id)
     camera_row = service.get_or_create_camera(db, resolved_family, camera)
 
-    happened_at = _parse_time(captured_at)
-    snapshot_path = None
-    if snapshot is not None and snapshot.filename:
-        data = await snapshot.read()
-        if data:
-            snapshot_path = media.store_bytes(
-                data, "security", camera_row.slug, happened_at.strftime("%Y-%m-%d")
-            )
+    existing = service.find_media(db, camera_row.id, name)
+    if existing is not None:
+        return {"status": "duplicate", "id": existing.id}
 
-    event = service.record_event(
-        db, resolved_family, camera_row, happened_at,
+    # Время в имени — локальное время дома; в базе всё живёт в UTC.
+    local_captured = filenames.parse_captured_at(name)
+    captured_at = to_utc(local_captured) if local_captured else utc_now()
+    kind = filenames.guess_kind(name)
+
+    day = to_local(captured_at).strftime("%Y-%m-%d")
+    dest = media.media_dir("security", camera_row.slug, day) / name
+    size = await _stream_to_disk(file, dest)
+    if not size:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Пустой файл")
+
+    # cv2 декодирует файл синхронно — в event loop такому не место.
+    thumb = await run_in_threadpool(thumbnails.generate, dest, kind)
+
+    # Распознанный объект — повод применить правила и, возможно, разбудить семью.
+    # Штатный чанк видео проходит молча: он нужен архиву, а не ленте.
+    event = None
+    if detected_class:
+        event = service.record_event(
+            db, resolved_family, camera_row, captured_at,
+            detected_class=detected_class, confidence=confidence, area=area,
+            snapshot_path=str(dest),
+        )
+    elif is_alert and kind == filenames.KIND_VIDEO:
+        event = service.attach_clip(db, camera_row.id, captured_at, str(dest), CLIP_WINDOW)
+
+    item = service.record_media(
+        db, family_id=resolved_family, camera=camera_row, filename=name, kind=kind,
+        rel_path=media.relative(dest),
+        thumb_rel_path=media.relative(thumb) if thumb else None,
+        captured_at=captured_at, size_bytes=size,
+        is_alert=is_alert or bool(detected_class),
         detected_class=detected_class, confidence=confidence, area=area,
-        snapshot_path=snapshot_path,
+        event_id=event.id if event is not None else None,
     )
 
-    payload = {"event_id": event.id, "family_id": resolved_family, "camera_id": camera_row.id,
-               "verdict": event.verdict}
-    bus.publish(SECURITY_EVENT_CREATED, payload)
-    if event.verdict != VERDICT_NORMAL:
-        bus.publish(SECURITY_ANOMALY, payload)
+    if event is not None and detected_class:
+        service.adopt_pending_clip(db, event, CLIP_WINDOW)
 
-    logger.info(f"Событие с камеры {camera_row.slug}: {event.verdict} — {event.reason}")
-    return {"status": "stored", "event_id": event.id, "verdict": event.verdict}
+        payload = {"event_id": event.id, "family_id": resolved_family,
+                   "camera_id": camera_row.id, "verdict": event.verdict}
+        bus.publish(SECURITY_EVENT_CREATED, payload)
+        if event.verdict != VERDICT_NORMAL:
+            bus.publish(SECURITY_ANOMALY, payload)
+        logger.info(f"Событие с камеры {camera_row.slug}: {event.verdict} — {event.reason}")
+    else:
+        logger.debug(f"В архив с камеры {camera_row.slug}: {name}")
 
-
-def _parse_time(raw: str) -> datetime:
-    if not raw:
-        return datetime.utcnow()
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
-    except ValueError:
-        logger.warning(f"Не разобрал время съёмки «{raw}», беру текущее")
-        return datetime.utcnow()
+    return {
+        "status": "stored",
+        "id": item.id,
+        "kind": kind,
+        "verdict": event.verdict if event is not None else None,
+    }

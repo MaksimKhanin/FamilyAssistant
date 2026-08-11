@@ -361,6 +361,39 @@ textarea.field { font-size: 13.5px; resize: vertical; }
   width: 100%; height: 130px; border-radius: 12px; object-fit: cover;
   background: linear-gradient(160deg, #4A5A55, #28322F);
 }
+.camera-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.camera-actions button { width: 100%; }
+
+/* ---------- архив ----------
+   Сетка растёт от 150px: на телефоне это два столбца, на ноутбуке — шесть,
+   и ни в одном промежуточном размере не остаётся сиротливой колонки. */
+
+.media-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.media-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  color: inherit; transition: border-color .15s;
+}
+.media-card:hover { border-color: color-mix(in srgb, var(--acc) 45%, transparent); }
+.media-thumb {
+  position: relative; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden;
+  background: linear-gradient(160deg, #4A5A55, #28322F);
+}
+.media-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-mark {
+  position: absolute; left: 8px; bottom: 8px; width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(35, 32, 28, .55); color: #fff; font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.media-tag { position: absolute; top: 8px; right: 8px; }
+.media-meta { padding: 0 4px 2px; }
+.media-when { font-family: var(--font-display); font-size: 15px; line-height: 1.1; }
+
+.media-stage {
+  width: 100%; max-height: 68vh; border-radius: 14px; display: block;
+  background: linear-gradient(160deg, #4A5A55, #28322F); object-fit: contain;
+}
+.media-stage.empty { display: flex; align-items: center; justify-content: center; min-height: 220px; }
 
 /* ---------- chat panel ---------- */
 

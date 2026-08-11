@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row" style="margin-bottom:14px">
+  <a class="btn ghost small" href="/security/archive{% if camera %}?camera={{ camera.slug }}{% endif %}">← В архив</a>
+</div>
+
+<div class="two-col">
+  <div class="card stack">
+    {% if not exists %}
+      <div class="media-stage empty">
+        <p class="muted" style="padding:24px;text-align:center">
+          Файл уже удалён по сроку хранения. Запись о нём осталась.
+        </p>
+      </div>
+    {% elif item.is_video %}
+      <video class="media-stage" controls playsinline preload="metadata"
+             {% if item.thumb_rel_path %}poster="/security/thumb/{{ item.id }}"{% endif %}
+             src="/security/file/{{ item.id }}"></video>
+    {% else %}
+      <img class="media-stage" src="/security/file/{{ item.id }}" alt="">
+    {% endif %}
+
+    {% if exists %}
+      <div class="row wrap">
+        <a class="btn ghost small" href="/security/file/{{ item.id }}" download="{{ item.filename }}">Скачать</a>
+        <a class="btn ghost small" href="/security/file/{{ item.id }}" target="_blank" rel="noopener">Открыть отдельно</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="card stack tight">
+      <div class="card-title">{{ camera.label if camera else "Камера" }}</div>
+      <div class="row"><span class="muted">Когда</span>
+        <span class="spacer">{{ item.captured_at|ru_datetime }}</span></div>
+      <div class="row"><span class="muted">Тип</span>
+        <span class="spacer">{{ "видео" if item.is_video else "снимок" }}</span></div>
+      {% if item.size_bytes %}
+        <div class="row"><span class="muted">Размер</span>
+          <span class="spacer">{{ item.size_bytes|filesize }}</span></div>
+      {% endif %}
+      <div class="divider"></div>
+      <div class="mono" style="word-break:break-all">{{ item.filename }}</div>
+    </div>
+
+    {% if item.detected_class %}
+      <div class="card stack tight">
+        <div class="card-title">Что увидела камера</div>
+        <div class="row wrap" style="gap:8px">
+          <span class="badge alarm">
+            {{ {"person": "человек", "car": "машина", "truck": "грузовик",
+                "bus": "автобус", "motorcycle": "мотоцикл"}.get(item.detected_class, item.detected_class) }}
+          </span>
+          {% if item.confidence %}
+            <span class="badge estimate">уверенность {{ "%.0f"|format(item.confidence * 100) }}%</span>
+          {% endif %}
+        </div>
+        <p class="tiny">Это оценка модели, а не факт.</p>
+      </div>
+    {% endif %}
+
+    {% if event %}
+      <a class="card stack tight action-card" href="/security/events?event_id={{ event.id }}">
+        <div class="card-title">Событие в ленте</div>
+        <div class="row wrap" style="gap:8px">
+          <span class="badge {% if event.verdict == 'anomaly' %}alarm
+                             {%- elif event.verdict == 'check' %}estimate
+                             {%- else %}neutral{% endif %}">{{ event.verdict_label }}</span>
+          {% if event.resolution == "ours" %}<span class="badge ok">свои</span>{% endif %}
+        </div>
+        <p class="muted">{{ event.note or event.reason }}</p>
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

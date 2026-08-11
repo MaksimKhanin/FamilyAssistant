@@ -1,9 +1,9 @@
 """Security module — камеры, фильтрация событий, уведомления о реальных аномалиях.
 
 Family-shared data (scoped by `family_id`): everyone who has the module switched on
-sees the same cameras and the same feed. The heavy lifting happens on the edge
-worker at home; this module receives what it found, decides what deserves the
-family's attention, and says so once.
+sees the same cameras and the same feed. The heavy lifting happens on the recorder
+at home; this module receives what it found, decides what deserves the family's
+attention, and says so once. Всё остальное — штатная запись — молча оседает в архиве.
 """
 from app.core.events import SECURITY_ANOMALY
 from app.core.module import Module, NavItem
@@ -30,6 +30,8 @@ module = Module(
     nav_items=[
         NavItem(slug="events", label="События", url="/security/events", icon="shield",
                 group="Безопасность", badge_key="anomaly_count"),
+        NavItem(slug="archive", label="Архив", url="/security/archive", icon="archive",
+                group="Безопасность"),
         NavItem(slug="cameras", label="Камеры", url="/security/cameras", icon="camera",
                 group="Безопасность"),
     ],

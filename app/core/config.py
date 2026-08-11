@@ -124,6 +124,11 @@ class Settings:
     public_base_url: str
     timezone: str
     media_retention_days: int
+    #: Локальный пульт рекордера, который стоит дома. Адрес приватный (Tailscale /
+    #: WireGuard): наружу он не смотрит, поэтому и токен у него свой, отдельный от
+    #: ingest-ключа — доступ «читать архив» и «включить тревогу» это разные права.
+    control_base_url: str = ""
+    control_api_token: str = ""
     push: PushSettings = field(default_factory=lambda: PushSettings("", "", "mailto:admin@example.com"))
     admin: AdminSettings = field(
         default_factory=lambda: AdminSettings("", "", "", "", "Семья", False))
@@ -142,6 +147,8 @@ def load_settings() -> Settings:
         public_base_url=os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000"),
         timezone=os.environ.get("TIMEZONE", "Europe/Moscow"),
         media_retention_days=_int("MEDIA_RETENTION_DAYS", 14),
+        control_base_url=os.environ.get("CONTROL_BASE_URL", "").strip(),
+        control_api_token=os.environ.get("CONTROL_API_TOKEN", "").strip(),
         admin=AdminSettings(
             username=os.environ.get("ADMIN_USERNAME", "admin").strip(),
             password=os.environ.get("ADMIN_PASSWORD", ""),

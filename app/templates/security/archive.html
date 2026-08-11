@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row wrap" style="gap:8px;margin-bottom:12px">
+  {% for value, label in archive_filters %}
+    <a class="chip {% if active_filter == value %}active{% endif %}"
+       href="/security/archive?only={{ value }}{% if selected_camera %}&camera={{ selected_camera.slug }}{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div class="row wrap" style="gap:8px;margin-bottom:16px">
+  <a class="chip {% if not selected_camera %}active{% endif %}"
+     href="/security/archive{% if active_filter != 'all' %}?only={{ active_filter }}{% endif %}">Все камеры</a>
+  {% for camera in cameras %}
+    <a class="chip {% if selected_camera and selected_camera.id == camera.id %}active{% endif %}"
+       href="/security/archive?camera={{ camera.slug }}{% if active_filter != 'all' %}&only={{ active_filter }}{% endif %}">{{ camera.label }}</a>
+  {% endfor %}
+</div>
+
+{% if items %}
+  {% include "security/_media_grid.html" %}
+
+  <div class="row" style="margin-top:20px">
+    {% if prev_url %}
+      <a class="btn ghost small" href="{{ prev_url }}">← Новее</a>
+    {% endif %}
+    <span class="tiny">Страница {{ page }}</span>
+    {% if next_url %}
+      <a class="btn ghost small spacer" href="{{ next_url }}">Старее →</a>
+    {% endif %}
+  </div>
+{% else %}
+  <div class="card stack">
+    <div class="card-title">
+      {% if selected_camera %}У этой камеры пока пусто{% else %}Архив пока пуст{% endif %}
+    </div>
+    <p class="muted">
+      {% if selected_camera or active_filter != 'all' %}
+        Попробуйте снять фильтры — <a href="/security/archive">показать всё</a>.
+      {% else %}
+        Записи появятся здесь сами, как только домашний рекордер пришлёт первый файл.
+      {% endif %}
+    </p>
+  </div>
+{% endif %}
+
+<p class="tiny" style="margin-top:18px;max-width:70ch">
+  Сейчас в архиве {{ stats.photos|counted("снимок", "снимка", "снимков") }}
+  и {{ stats.videos|counted("ролик", "ролика", "роликов") }}{% if stats.bytes %}, это {{ stats.bytes|filesize }}{% endif %}.
+  Записи удаляются автоматически — каждая камера хранит свой срок, обычно две недели.
+  Событие в ленте остаётся, даже когда его кадр уже стёрт.
+</p>
+
+{% endblock %}

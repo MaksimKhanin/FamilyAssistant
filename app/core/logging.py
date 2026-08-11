@@ -1,4 +1,4 @@
-"""One logging setup for the server, the bot and the edge worker."""
+"""One logging setup for the server: панель, бот и планировщик."""
 import logging
 import os
 import sys

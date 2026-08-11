@@ -67,6 +67,8 @@ sidebar 246px  |  header (sticky)
 | Активность | `nutrition/activity.html` | `/nutrition/activity` |
 | План питания | `nutrition/plan.html` | `/nutrition/plan` |
 | События + карточка тревоги | `security/events.html` | `/security/events` |
+| Архив записей | `security/archive.html` + `security/_media_grid.html` | `/security/archive` |
+| Отдельная запись | `security/media.html` | `/security/media/{id}` |
 | Камеры | `security/cameras.html` | `/security/cameras` |
 | Коннекторы | `settings/connectors.html` | `/settings/connectors` |
 | Агент и инструменты | `settings/agent.html` | `/settings/agent` |

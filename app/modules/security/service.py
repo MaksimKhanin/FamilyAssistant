@@ -6,7 +6,7 @@ is genuinely worth a look, and everything else quietly lands in a log.
 
 The filter is a cascade, cheapest first:
 
-    YOLO на edge  →  человек/машина в кадре вообще есть?   (иначе кадр не доедет сюда)
+    YOLO дома     →  человек/машина в кадре вообще есть?   (иначе кадр не доедет сюда)
     правила       →  время, зона, класс объекта             (детерминированно, мгновенно)
     модель        →  только для спорных случаев             (classify_event, по желанию)
 
@@ -15,17 +15,22 @@ household's «что считать тревогой» is one readable function 
 """
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core import media as media_module
 from app.core.clock import days_ago_start_utc, to_local, utc_now
 from app.core.logging import get_logger
 from app.modules.security.models import (
-    VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL, Camera, SecurityEvent,
+    VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL, Camera, MediaItem, SecurityEvent,
 )
 
 logger = get_logger("security")
+
+#: Сколько файлов на странице архива. Держим кратным сетке, чтобы последний ряд не рвался.
+PAGE_SIZE = 24
 
 #: Классы, из-за которых вообще имеет смысл кого-то беспокоить.
 NOTABLE_CLASSES = ("person",)
@@ -170,6 +175,140 @@ def mark_ours(db: Session, family_id: int, event_id: int) -> Optional[SecurityEv
     event.resolved_at = utc_now()
     db.commit()
     return event
+
+
+def attach_clip(db: Session, camera_id: int, captured_at: datetime, clip_path: str,
+                window: timedelta) -> Optional[SecurityEvent]:
+    """Подклеить видео-чанк к событию, из-за которого он был помечен тревожным.
+
+    Рекордер помечает весь чанк, внутри которого сработала детекция, и присылает
+    его отдельно от снимка — так что связать их можно только по времени.
+    """
+    event = (
+        db.query(SecurityEvent)
+        .filter(SecurityEvent.camera_id == camera_id,
+                SecurityEvent.clip_path.is_(None),
+                SecurityEvent.happened_at >= captured_at - window,
+                SecurityEvent.happened_at <= captured_at + window)
+        .order_by(SecurityEvent.happened_at.desc())
+        .first()
+    )
+    if event is None:
+        return None
+    event.clip_path = clip_path
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def adopt_pending_clip(db: Session, event: SecurityEvent, window: timedelta) -> Optional[MediaItem]:
+    """Найти тревожный ролик, приехавший раньше своего события, и связать их.
+
+    Порядок прибытия не гарантирован: рекордер обходит папку по алфавиту, а имена
+    видео и снимков начинаются по-разному (`2026-...` против `26-...`), так что
+    чанк обычно уезжает первым. Значит связывать надо с обеих сторон, иначе
+    половина тревог остаётся без записи.
+    """
+    clip = (
+        db.query(MediaItem)
+        .filter(MediaItem.camera_id == event.camera_id,
+                MediaItem.kind == "video",
+                MediaItem.is_alert.is_(True),
+                MediaItem.event_id.is_(None),
+                MediaItem.captured_at >= event.happened_at - window,
+                MediaItem.captured_at <= event.happened_at + window)
+        .order_by(MediaItem.captured_at.desc())
+        .first()
+    )
+    if clip is None:
+        return None
+    clip.event_id = event.id
+    event.clip_path = str(media_module.resolve(clip.rel_path))
+    db.commit()
+    return clip
+
+
+# --- media archive --------------------------------------------------------
+
+def find_media(db: Session, camera_id: int, filename: str) -> Optional[MediaItem]:
+    return (
+        db.query(MediaItem)
+        .filter(MediaItem.camera_id == camera_id, MediaItem.filename == filename)
+        .one_or_none()
+    )
+
+
+def record_media(db: Session, *, family_id: int, camera: Camera, filename: str, kind: str,
+                 rel_path: str, thumb_rel_path: str = None, captured_at: datetime,
+                 size_bytes: int = None, is_alert: bool = False, detected_class: str = None,
+                 confidence: float = None, area: int = None,
+                 event_id: int = None) -> MediaItem:
+    item = MediaItem(
+        family_id=family_id, camera_id=camera.id, event_id=event_id,
+        filename=filename, kind=kind, rel_path=rel_path, thumb_rel_path=thumb_rel_path,
+        captured_at=captured_at, size_bytes=size_bytes, is_alert=is_alert,
+        detected_class=detected_class, confidence=confidence, area=area,
+    )
+    # Файл приехал — значит камера жива, даже если в кадре ничего интересного.
+    if camera.last_seen_at is None or camera.last_seen_at < captured_at:
+        camera.last_seen_at = captured_at
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def list_media(db: Session, family_id: int, camera_id: int = None, alerts_only: bool = False,
+               page: int = 1) -> Tuple[List[MediaItem], bool]:
+    """Страница архива. Возвращает (записи, есть ли ещё)."""
+    page = max(1, page)
+    query = db.query(MediaItem).filter(MediaItem.family_id == family_id)
+    if camera_id:
+        query = query.filter(MediaItem.camera_id == camera_id)
+    if alerts_only:
+        query = query.filter(MediaItem.is_alert.is_(True))
+
+    # Берём на одну запись больше, чем показываем: дешевле, чем считать COUNT(*)
+    # по таблице, которая растёт быстрее всех остальных в базе.
+    rows = (
+        query.order_by(MediaItem.captured_at.desc(), MediaItem.id.desc())
+        .offset((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE + 1)
+        .all()
+    )
+    return rows[:PAGE_SIZE], len(rows) > PAGE_SIZE
+
+
+def get_media(db: Session, family_id: int, media_id: int) -> Optional[MediaItem]:
+    item = db.get(MediaItem, media_id)
+    return item if item is not None and item.family_id == family_id else None
+
+
+def latest_media(db: Session, family_id: int, camera_id: int) -> Optional[MediaItem]:
+    """Последний кадр камеры — превью её плитки."""
+    return (
+        db.query(MediaItem)
+        .filter(MediaItem.family_id == family_id, MediaItem.camera_id == camera_id,
+                MediaItem.kind == "photo")
+        .order_by(MediaItem.captured_at.desc())
+        .first()
+    )
+
+
+def media_stats(db: Session, family_id: int) -> dict:
+    """Сколько всего в архиве — одна строка под фильтрами."""
+    rows = (
+        db.query(MediaItem.kind, func.count(MediaItem.id), func.coalesce(func.sum(MediaItem.size_bytes), 0))
+        .filter(MediaItem.family_id == family_id)
+        .group_by(MediaItem.kind)
+        .all()
+    )
+    by_kind = {kind: (count, size) for kind, count, size in rows}
+    return {
+        "photos": by_kind.get("photo", (0, 0))[0],
+        "videos": by_kind.get("video", (0, 0))[0],
+        "bytes": sum(size for _, size in by_kind.values()),
+    }
 
 
 def describe(event: SecurityEvent, camera: Camera = None) -> str:

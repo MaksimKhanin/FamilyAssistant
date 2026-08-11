@@ -4,11 +4,20 @@ Unlike nutrition, this data is not personal: everyone in the household sees the
 same cameras and the same events. Only the metadata lives in the database; the
 frames themselves sit under MEDIA_ROOT and are rotated away after
 `Camera.retention_days` (see retention.py).
+
+Две сущности рядом, и это не дублирование:
+
+    SecurityEvent — «на это стоит посмотреть»: вердикт, причина, реакция семьи.
+    MediaItem     — «что вообще приехало с камеры»: весь архив, включая штатные
+                    чанки видео, которые никого не будят и в ленту не попадают.
+
+Событие ссылается на кадр путём (и переживает его — ротация обнуляет путь, но
+строку не трогает), а запись архива ссылается на событие, если оно у неё есть.
 """
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint,
+    Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
 )
 
 from app.core.db import Base
@@ -81,3 +90,40 @@ class SecurityEvent(Base):
     @property
     def is_anomaly(self) -> bool:
         return self.verdict in (VERDICT_ANOMALY, VERDICT_CHECK)
+
+
+class MediaItem(Base):
+    """Один файл, приехавший с рекордера: чанк видео либо снимок."""
+
+    __tablename__ = "security_media"
+    __table_args__ = (
+        # Рекордер пересканирует папку каждые несколько секунд и вполне может
+        # прислать один и тот же файл дважды — дедуп делаем здесь, а не на вере.
+        UniqueConstraint("camera_id", "filename", name="uq_media_camera_filename"),
+        Index("ix_media_camera_captured", "camera_id", "captured_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    family_id = Column(Integer, ForeignKey("families.id", ondelete="CASCADE"), nullable=False, index=True)
+    camera_id = Column(Integer, ForeignKey("cameras.id", ondelete="CASCADE"), nullable=False, index=True)
+    #: Событие, которое породил этот файл (или к которому он подклеился видео-клипом).
+    event_id = Column(Integer, ForeignKey("security_events.id", ondelete="SET NULL"), nullable=True)
+
+    filename = Column(String(255), nullable=False)
+    kind = Column(String(16), nullable=False)             # photo | video
+    #: Путь относительно MEDIA_ROOT — см. app/core/media.resolve.
+    rel_path = Column(String(512), nullable=False)
+    thumb_rel_path = Column(String(512), nullable=True)
+
+    captured_at = Column(DateTime, nullable=False, index=True)
+    stored_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    size_bytes = Column(Integer, nullable=True)
+
+    is_alert = Column(Boolean, nullable=False, default=False, index=True)
+    detected_class = Column(String(32), nullable=True)
+    confidence = Column(Float, nullable=True)
+    area = Column(Integer, nullable=True)
+
+    @property
+    def is_video(self) -> bool:
+        return self.kind == "video"

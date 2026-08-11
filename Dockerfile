@@ -8,8 +8,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# libglib/libgl — то, чего не хватает opencv-python-headless в slim-образе
+# (превью для архива декодирует jpeg и первый кадр mp4).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends curl libglib2.0-0 libgl1 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

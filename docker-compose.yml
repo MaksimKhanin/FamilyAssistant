@@ -1,5 +1,5 @@
 # Серверная часть семейного ассистента: панель, бот, планировщик, БД и шина событий.
-# Домашний edge-воркер (камеры и YOLO) живёт вне Docker, рядом с камерами — см. docs/deployment.md.
+# Домашний рекордер (камеры, YOLO, запись) живёт вне Docker, рядом с камерами — см. docs/deployment.md.
 #
 #   cp .env.__EXAMPLE__ .env      # секреты + ADMIN_USERNAME / ADMIN_PASSWORD
 #   docker compose up -d --build
@@ -19,6 +19,10 @@ x-app: &app
     MEDIA_ROOT: /media
     SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+    MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-14}
+    CONTROL_BASE_URL: ${CONTROL_BASE_URL:-}
+    CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:-}
+    ENABLED_MODULES: ${ENABLED_MODULES:-nutrition,security,memory}
     COOKIE_SECURE: ${COOKIE_SECURE:-true}
     ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
     ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

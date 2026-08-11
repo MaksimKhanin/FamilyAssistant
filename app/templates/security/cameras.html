@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if notice %}
+  <div class="card tight" style="margin-bottom:16px">
+    <div class="row"><span>{{ notice }}</span>
+      <a class="btn link spacer" href="/security/cameras">Понятно</a></div>
+  </div>
+{% endif %}
+
 <div class="grid auto-260">
   {% for camera in cameras %}
     <div class="card stack">
@@ -26,19 +33,42 @@
           </button>
         </form>
       </div>
+
+      {% if control_ready %}
+        <div class="camera-actions">
+          {% for action, label in [("alarm-on", "Тревога вкл"), ("alarm-off", "Тревога выкл"),
+                                   ("photo", "Снять кадр"), ("record", "Записать")] %}
+            <form method="post" action="/security/control/{{ camera.id }}/{{ action }}">
+              <button class="btn ghost small" type="submit">{{ label }}</button>
+            </form>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div class="row wrap" style="gap:8px">
+        <a class="btn link" href="/security/archive?camera={{ camera.slug }}">Записи этой камеры</a>
+      </div>
       <p class="tiny">
         {{ camera.hint or "Запись хранится " ~ camera.retention_days ~ " дней." }}
+        {% if camera.last_seen_at %} Последний кадр — {{ camera.last_seen_at|ru_datetime }}.{% endif %}
       </p>
     </div>
   {% else %}
     <div class="card stack">
       <div class="card-title">Камер пока нет</div>
       <p class="muted">
-        Камера появится здесь сама, как только домашний воркер пришлёт первое событие.
-        Настройка — в <span class="mono">edge/cameras.yml</span>.
+        Камера появится здесь сама, как только домашний рекордер пришлёт первый файл.
+        Настройка — в <span class="mono">cfg/cfg.local.yml</span> на стороне рекордера.
       </p>
     </div>
   {% endfor %}
 </div>
+
+{% if cameras and not control_ready %}
+  <p class="tiny" style="margin-top:18px;max-width:70ch">
+    Кнопки управления появятся, когда в настройках сервера будет задан адрес пульта рекордера
+    (<span class="mono">CONTROL_BASE_URL</span>). Доступ к нему держат внутри домашней сети.
+  </p>
+{% endif %}
 
 {% endblock %}

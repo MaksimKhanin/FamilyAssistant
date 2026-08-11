@@ -108,45 +108,62 @@ docker compose --profile telegram up -d
 Нужен `TELEGRAM_BOT_TOKEN` от [@BotFather](https://t.me/BotFather). Бот подключается
 к тому же диалогу и тем же инструментам — это просто ещё один транспорт.
 
-## Домашний воркер
+## Домашний рекордер
 
-Ставится **на машине рядом с камерами**: RTSP по интернету гонять незачем, да и YOLO
-должен работать там, где кадры и так есть.
-
-```bash
-pip install -r requirements-edge.txt
-cp edge/cameras.yml.example edge/cameras.yml
-```
-
-В `edge/cameras.yml` — адреса камер (обычно sub-stream: он мельче и дешевле для
-детекции), адрес сервера и тот же `INGEST_API_KEY`. Запуск:
+Живёт в **отдельном репозитории** (YACAID) и ставится **на машине рядом с камерами**:
+RTSP по интернету гонять незачем, да и YOLO должен работать там, где кадры и так есть.
+Он берёт на себя всё тяжёлое — потоки, движение, детекцию, нарезку и склейку видео, —
+а сюда присылает готовые файлы.
 
 ```bash
-python -m edge.main
+pip install -r requirements-recorder.txt
+cp cfg/cfg.yml.__EXAMPLE__ cfg/cfg.yml
+cp cfg/cfg.local.yml.__EXAMPLE__ cfg/cfg.local.yml   # сюда — RTSP-логины и ключи
+python run_recorder.py
 ```
 
-Веса YOLO подтягиваются автоматически при первом запуске. Камера появится в панели
-сама, после первого события.
+В `cfg/cfg.local.yml` (не коммитится) — адреса камер, а также:
 
-### Как воркеру достучаться до сервера
+```yaml
+archive_sync:
+  base_url: https://ваш-сервер            # адрес этой панели
+  api_key:  <тот же INGEST_API_KEY>
+control:
+  host: 127.0.0.1                          # 0.0.0.0, если UI нужен с телефона
+  token: <тот же CONTROL_API_TOKEN>
+```
+
+Веса YOLO и `ffmpeg` нужны на стороне рекордера, серверу они не нужны. Камера
+появится в панели сама, после первого присланного файла — заводить её руками не надо.
+
+Свой веб-интерфейс рекордера (по умолчанию `http://127.0.0.1:8090`) показывает
+состояние камер, бэклог отправки и позволяет менять настройки — это отдельная
+дверь, внутрь домашней сети.
+
+### Как рекордеру достучаться до сервера
 
 Публиковать ingest в интернет необязательно и нежелательно. Варианты, от простого:
 
-* **Приватная сеть** (Tailscale / WireGuard) — воркер видит сервер по внутреннему
+* **Приватная сеть** (Tailscale / WireGuard) — рекордер видит сервер по внутреннему
   адресу, наружу не торчит ничего.
 * **SSH reverse tunnel** — если сервер снаружи, а дом за NAT.
 * **Публичный HTTPS** — тогда обязательно с TLS и длинным `INGEST_API_KEY`.
+
+Обратное направление — пульт. Если задать на сервере `CONTROL_BASE_URL` и
+`CONTROL_API_TOKEN`, на карточках камер появятся кнопки «тревога», «снять кадр»,
+«записать»; панель просто перешлёт их рекордеру. Адрес пульта должен быть
+приватным: за этой дверью управление домом, а не просмотр архива.
 
 ### Автозапуск (systemd)
 
 ```ini
 [Unit]
-Description=Family Assistant edge worker
+Description=YACAID recorder
 After=network-online.target
 
 [Service]
-WorkingDirectory=/opt/FamilyAssistant
-ExecStart=/opt/FamilyAssistant/.venv/bin/python -m edge.main
+WorkingDirectory=/opt/YACAIDv2
+ExecStart=/opt/YACAIDv2/.venv/bin/python run_recorder.py
 Restart=always
 RestartSec=10
 User=family
@@ -166,8 +183,12 @@ WantedBy=multi-user.target
 всё-таки видите, значит `web` не поднялся: смотрите `docker compose ps` и
 `docker compose logs web`.
 
-**Диск.** Кадры лежат в томе `media`, ротация — по `Camera.retention_days` (14 дней по
-умолчанию), делает `scheduler` ночью в 4:00. Событие в БД переживает свой снимок.
+**Диск.** Кадры и видео лежат в томе `media`, ротация — по `Camera.retention_days`
+(14 дней по умолчанию, общий запасной срок — `MEDIA_RETENTION_DAYS`), делает
+`scheduler` ночью в 4:00. Событие в БД переживает свой снимок; записи архива
+удаляются целиком вместе с файлом и превью. Видео занимает на порядок больше
+снимков — если том растёт быстрее, чем хочется, уменьшайте срок хранения у камеры,
+а не длину чанка на рекордере.
 
 **Бэкап.** Важна база: `docker compose exec db pg_dump -U family family_assistant`.
 Кадры — расходный материал, они и так удаляются через две недели.

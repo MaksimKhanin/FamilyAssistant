@@ -55,3 +55,29 @@ def is_inside_media_root(path: str) -> bool:
         return True
     except (ValueError, OSError):
         return False
+
+
+def relative(path) -> str:
+    """Путь внутри MEDIA_ROOT — то, что попадает в базу.
+
+    Архив живёт годами и переезжает вместе с томом, поэтому в базе хранится
+    относительный путь: сменить MEDIA_ROOT можно, не трогая ни одной строки.
+    """
+    return Path(path).resolve().relative_to(Path(settings.media_root).resolve()).as_posix()
+
+
+def resolve(rel_path: str) -> Path:
+    """Относительный путь из базы → файл на диске."""
+    return Path(settings.media_root) / rel_path
+
+
+def prune_empty_dirs(*parts: str) -> None:
+    """Убрать опустевшие каталоги после ротации, не трогая сам MEDIA_ROOT."""
+    root = Path(settings.media_root).resolve()
+    path = Path(settings.media_root).joinpath(*parts).resolve()
+    while path != root and root in path.parents:
+        try:
+            path.rmdir()
+        except OSError:
+            return       # каталог не пуст или недоступен — дальше подниматься незачем
+        path = path.parent
