@@ -3,6 +3,7 @@
 Templates live under app/templates/, each module keeping its own subdirectory
 (templates/nutrition/..., templates/security/...) and extending the shared base.
 """
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -10,7 +11,30 @@ from fastapi.templating import Jinja2Templates
 
 from app.core.clock import local_now, to_local
 
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+_APP_DIR = Path(__file__).resolve().parent.parent
+
+templates = Jinja2Templates(directory=str(_APP_DIR / "templates"))
+
+
+def _asset_version() -> str:
+    """Отпечаток статики, «?v=…» в ссылках на неё.
+
+    Service worker отдаёт статику из кеша и обновляет её в фоне — значит, без
+    версии первое открытие после деплоя получает свежую разметку со вчерашним
+    app.js. Пока разметка от него не зависела, это было безвредно; с переходами
+    через hx-boost — ломает меню и чат до следующего открытия. Версия в URL
+    решает это конструкцией: новая разметка ссылается на адрес, которого в
+    кеше ещё нет.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(p.name for p in (_APP_DIR / "static").glob("*.*")):
+        path = _APP_DIR / "static" / name
+        digest.update(name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+templates.env.globals["asset_v"] = _asset_version()
 
 
 def render(request, name: str, context: dict = None, status_code: int = 200):

@@ -38,6 +38,19 @@ def test_no_scripts_inside_swapped_body(template):
     )
 
 
+def test_static_links_carry_version():
+    """Ссылки на статику несут версию — иначе после деплоя service worker
+    отдаёт свежей разметке вчерашний app.js из кеша, и меню с чатом мертвы
+    до следующего открытия."""
+    for template in [BASE, *swapped_templates(), *(TEMPLATES / n for n in STANDALONE)]:
+        markup = template.read_text(encoding="utf-8")
+        for line in markup.splitlines():
+            if "/static/" in line and (".js" in line or ".css" in line):
+                assert "?v={{ asset_v }}" in line, (
+                    f"{template.name}: ссылка на статику без версии — {line.strip()}"
+                )
+
+
 def test_base_keeps_its_scripts_in_head():
     """В каркасе скрипты допустимы, но только в <head> — он не подменяется."""
     markup = BASE.read_text(encoding="utf-8")
