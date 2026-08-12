@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Прототип: разделы и доски</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* Токены — из app/static/style.css, чтобы прототип ощущался как настоящая панель. */
+:root {
+  --bg: #F1EADF; --surface: #FFFCF6; --surface-input: #FFFDF9; --surface-2: #F7F2E9;
+  --segment-bg: #EFE8DC;
+  --text: #23201C; --text-2: #6E665C; --text-3: #8A8177; --text-4: #A79C8E;
+  --border: rgba(35,32,28,.07); --border-strong: rgba(35,32,28,.14); --border-dashed: rgba(35,32,28,.2);
+  --acc: #2E6E7E; --on-acc: #FFF6EC;
+  --dark: #2E3A33; --dark-text: #EDE7DB; --dark-text-2: rgba(237,231,219,.72);
+  --ok: #5F7A5A; --alarm-text: #9E3B27; --warn-text: #A87516; --warn-bg: rgba(217,154,43,.16);
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-ui: "Manrope", -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: 26px; margin: 0 0 2px; }
+.sub { color: var(--text-2); margin: 0 0 20px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 20px 22px; }
+.card.tight { padding: 16px 18px; border-radius: 16px; }
+.card.dark { background: var(--dark); color: var(--dark-text); border-color: transparent; }
+.card.dark p { color: var(--dark-text-2); }
+.card-title { font-family: var(--font-display); font-size: 14px; margin-bottom: 6px; }
+.muted { color: var(--text-2); }
+.tiny { font-size: 11.5px; color: var(--text-3); }
+.btn { background: var(--acc); color: var(--on-acc); border: 1px solid transparent; border-radius: 11px;
+       padding: 9px 15px; font: inherit; font-size: 13px; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--text-2); border-color: var(--border-strong); }
+.btn.small { padding: 6px 11px; font-size: 11.5px; border-radius: 9px; }
+.field { width: 100%; background: var(--surface-input); border: 1px solid var(--border-strong);
+         border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 13.5px; color: var(--text); }
+textarea.field { resize: vertical; }
+
+/* --- Полоса разделов: закреплённые слева, переполнение схлопывается в «⋯» --- */
+.sections { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; position: relative; }
+.chip { background: var(--segment-bg); border: none; border-radius: 999px; padding: 7px 14px;
+        font: inherit; font-size: 13px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.chip:hover { background: #E7DECE; }
+.chip.active { background: color-mix(in srgb, var(--acc) 12%, transparent); color: var(--acc); font-weight: 600; }
+.chip .pin { opacity: .55; margin-right: 5px; }
+.chip.hidden { display: none; }
+.more { position: relative; }
+.menu { position: absolute; z-index: 30; background: var(--surface); border: 1px solid var(--border-strong);
+        border-radius: 14px; padding: 6px; box-shadow: 0 12px 32px rgba(35,32,28,.14); min-width: 190px; }
+.menu button { display: block; width: 100%; text-align: left; background: none; border: none; font: inherit;
+               font-size: 13px; color: var(--text); padding: 8px 10px; border-radius: 9px; cursor: pointer; }
+.menu button:hover { background: var(--surface-2); }
+.menu button.danger { color: var(--alarm-text); }
+.menu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.menu[hidden] { display: none; }
+
+.cols { display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start; }
+@media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+
+/* --- Список досок раздела --- */
+.boards { display: flex; flex-direction: column; gap: 8px; }
+.board-item { text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+              padding: 12px 14px; font: inherit; cursor: pointer; }
+.board-item:hover { border-color: var(--border-strong); }
+.board-item.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 6%, var(--surface)); }
+.board-item .name { font-weight: 600; font-size: 13.5px; }
+.board-item .meta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.tag { display: inline-block; font-size: 10.5px; border-radius: 999px; padding: 2px 8px;
+       background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); }
+.tag.shared { background: color-mix(in srgb, var(--acc) 10%, transparent); color: var(--acc); border-color: transparent; }
+.tag.ro { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+.dashed { border: 1px dashed var(--border-dashed); background: transparent; color: var(--text-2); }
+
+/* --- Лента доски: мессенджер --- */
+.feed { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; padding-right: 4px; }
+.daysep { text-align: center; font-size: 11px; color: var(--text-4); margin: 14px 0 8px; }
+.entry { padding: 7px 12px; border-radius: 12px; cursor: default; }
+.entry:hover { background: var(--surface-2); }
+.entry.selected { background: color-mix(in srgb, var(--acc) 9%, transparent); }
+.entry .who { font-size: 12px; font-weight: 600; color: var(--acc); }
+.entry .who.assistant { color: var(--ok); }
+.entry .who.gone { color: var(--text-4); font-weight: 500; font-style: italic; }
+.entry .at { font-size: 11px; color: var(--text-4); margin-left: 6px; font-weight: 400; }
+.entry .body { white-space: pre-line; margin-top: 1px; }
+.entry .edited { font-size: 11px; color: var(--text-4); margin-left: 6px; }
+.composer { display: flex; gap: 8px; margin-top: 14px; }
+.composer .field { flex: 1; }
+.readonly-note { margin-top: 14px; padding: 10px 12px; border-radius: 12px; background: var(--warn-bg);
+                 color: var(--warn-text); font-size: 12.5px; }
+.instruction { margin-top: 4px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
+               color: var(--text-2); font-size: 12.5px; }
+.head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.head h2 { font-family: var(--font-display); font-size: 18px; margin: 0; font-weight: 600; }
+.spacer { flex: 1; }
+
+/* --- Модалка --- */
+.overlay { position: fixed; inset: 0; background: rgba(35,32,28,.34); display: flex; align-items: center;
+           justify-content: center; padding: 20px; z-index: 50; }
+.overlay[hidden] { display: none; }
+.modal { background: var(--surface); border-radius: 20px; padding: 22px 24px; width: 440px; max-width: 100%;
+         box-shadow: 0 24px 60px rgba(35,32,28,.22); }
+.modal h3 { font-family: var(--font-display); font-size: 17px; margin: 0 0 12px; font-weight: 600; }
+.modal label { display: block; font-size: 12px; color: var(--text-2); margin: 12px 0 4px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row.end { justify-content: flex-end; margin-top: 18px; }
+.note { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
+.hint { position: fixed; left: 20px; bottom: 16px; font-size: 11.5px; color: var(--text-3);
+        background: var(--bg); padding: 4px 8px; border-radius: 8px; }
+@media (max-width: 820px) { .hint { position: static; margin-top: 20px; padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Знания</h1>
+  <p class="sub">Прототип к тикету #16. Не продакшен: данные выдуманы, ничего не сохраняется.</p>
+
+  <div class="sections" id="sections"></div>
+
+  <div class="cols">
+    <div class="boards" id="boards"></div>
+    <div class="card" id="boardCard"></div>
+  </div>
+</div>
+
+<div class="menu" id="ctxMenu" hidden></div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal">
+    <h3 id="modalTitle">Новая доска</h3>
+    <label>Название</label>
+    <input class="field" id="mName" placeholder="Например: Питание и сон Ани">
+    <label>Инструкция ассистенту — как читать и вести эту доску</label>
+    <textarea class="field" id="mInstr" rows="3"
+      placeholder="Заметки содержат лог питания и сна ребёнка. Если время не указано — бери время отправки записи."></textarea>
+    <p class="note">Инструкцию видят все, у кого есть доступ; менять её может только владелец доски.</p>
+    <label>Доступ</label>
+    <select class="field" id="mShare">
+      <option value="none">Только я</option>
+      <option value="all-view">Вся семья — просмотр</option>
+      <option value="all-edit">Вся семья — редактирование</option>
+      <option value="pick">Выбрать людей…</option>
+    </select>
+    <div class="row end">
+      <button class="btn ghost" onclick="closeModal()">Отмена</button>
+      <button class="btn" onclick="saveBoard()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div class="hint">Правая кнопка (или долгое нажатие) на записи и на разделе — контекстное меню.</div>
+
+<script>
+// ——— Данные прототипа ———————————————————————————————————————————————
+const ME = "Максим";
+
+const state = {
+  sections: [
+    { id: "s1", name: "Здоровье", pinned: true },
+    { id: "s2", name: "Дети" },
+    { id: "s3", name: "Дом и покупки" },
+    { id: "s4", name: "Путешествия" },
+    { id: "s5", name: "Ремонт" },
+    { id: "s6", name: "Книги и фильмы" },
+    { id: "s7", name: "Работа" },
+    { id: "common", name: "Общее", system: true },
+  ],
+  boards: [
+    { id: "b1", section: "s2", name: "Питание и сон Ани", owner: ME, share: "Совуша — редактирование",
+      instruction: "Заметки содержат лог питания и сна ребёнка. Если время не указано — бери время отправки записи.",
+      entries: [
+        { who: "Совуша", at: "11.08.2026 12:30", text: "12-20 170 мл" },
+        { who: "Совуша", at: "11.08.2026 12:30", text: "Итого 900 мл" },
+        { who: "Совуша", at: "11.08.2026 16:20", text: "16-05 170 мл" },
+        { who: ME, at: "11.08.2026 20:04", text: "20.00 - 170 мл" },
+        { who: "Совуша", at: "12.08.2026 04:19", text: "00-00?" },
+        { who: ME, at: "12.08.2026 07:40", text: "5.30 подъем\n7.20 сон\n7.10 100 мл", edited: true },
+      ] },
+    { id: "b2", section: "s2", name: "Садик", owner: ME, share: null, instruction: null,
+      entries: [ { who: ME, at: "10.08.2026 09:12", text: "Список вещей на осень: сменка, форма, панама" } ] },
+    { id: "b3", section: "s1", name: "Память ассистента", owner: ME, share: null, system: true,
+      instruction: null,
+      entries: [
+        { who: null, assistant: true, at: "09.08.2026 19:02", text: "Соня не ест грибы" },
+        { who: null, assistant: true, at: "10.08.2026 08:15", text: "Максим бегает по вторникам и четвергам" },
+      ] },
+    { id: "b4", section: "s1", name: "Анализы и врачи", owner: ME, share: null, instruction: null, entries: [] },
+    // Чужая доска в «Общем» — только просмотр.
+    { id: "b5", section: "common", name: "Аптечка", owner: "Совуша", right: "view",
+      instruction: "Здесь список лекарств дома и сроки годности. Про дозировки не советуй — только читай.",
+      entries: [
+        { who: "Совуша", at: "08.08.2026 14:02", text: "Нурофен детский — до 03.2027" },
+        { who: null, gone: true, at: "01.07.2026 10:30", text: "Термометр в верхнем ящике" },
+      ] },
+    // Чужая доска в «Общем» — можно писать.
+    { id: "b6", section: "common", name: "Продукты", owner: "Совуша", right: "edit", instruction: null,
+      entries: [
+        { who: "Совуша", at: "12.08.2026 08:01", text: "Молоко, хлеб, творог" },
+        { who: ME, at: "12.08.2026 08:20", text: "И батарейки AA" },
+      ] },
+  ],
+  activeSection: "s2",
+  activeBoard: "b1",
+};
+
+// ——— Полоса разделов ————————————————————————————————————————————————
+// Закреплённые впереди, «Общее» последним; всё, что не влезло, уходит в «⋯».
+function orderedSections() {
+  const rest = state.sections.filter(s => !s.system);
+  const pinned = rest.filter(s => s.pinned);
+  const plain = rest.filter(s => !s.pinned);
+  return [...pinned, ...plain, ...state.sections.filter(s => s.system)];
+}
+
+function renderSections() {
+  const host = document.getElementById("sections");
+  host.innerHTML = "";
+  const list = orderedSections();
+
+  list.forEach(s => {
+    const b = document.createElement("button");
+    b.className = "chip" + (s.id === state.activeSection ? " active" : "");
+    b.dataset.id = s.id;
+    b.innerHTML = (s.pinned ? '<span class="pin">📌</span>' : "") + s.name;
+    b.onclick = () => { state.activeSection = s.id; state.activeBoard = null; render(); };
+    b.oncontextmenu = e => { e.preventDefault(); sectionMenu(e, s); };
+    attachLongPress(b, e => sectionMenu(e, s));
+    host.appendChild(b);
+  });
+
+  const add = document.createElement("button");
+  add.className = "chip dashed";
+  add.textContent = "+ раздел";
+  add.onclick = () => alert("Прототип: здесь появится поле для названия нового раздела.");
+  host.appendChild(add);
+
+  const more = document.createElement("div");
+  more.className = "more";
+  more.innerHTML = '<button class="chip" id="moreBtn">⋯</button>';
+  host.appendChild(more);
+
+  collapseOverflow(host, more);
+}
+
+// Схлопывание: прячем хвост, пока полоса не влезет в ширину; спрятанное — в меню «⋯».
+function collapseOverflow(host, more) {
+  const chips = [...host.querySelectorAll(".chip")].filter(c => c.dataset.id);
+  chips.forEach(c => c.classList.remove("hidden"));
+  more.style.display = "none";
+
+  const fits = () => host.scrollWidth <= host.clientWidth;
+  if (fits()) return;
+
+  more.style.display = "";
+  const hidden = [];
+  for (let i = chips.length - 1; i >= 0 && !fits(); i--) {
+    // Активный раздел не прячем никогда — иначе непонятно, где ты находишься.
+    if (chips[i].dataset.id === state.activeSection) continue;
+    chips[i].classList.add("hidden");
+    hidden.unshift(chips[i].dataset.id);
+  }
+
+  document.getElementById("moreBtn").onclick = e => {
+    e.stopPropagation();
+    const items = hidden.map(id => {
+      const s = state.sections.find(x => x.id === id);
+      return { label: s.name, run: () => { state.activeSection = id; state.activeBoard = null; render(); } };
+    });
+    openMenu(e, items);
+  };
+}
+
+function sectionMenu(e, s) {
+  if (s.system) return openMenu(e, [{ label: "«Общее» — служебный раздел, его не меняют", disabled: true }]);
+  openMenu(e, [
+    { label: s.pinned ? "Открепить" : "Закрепить", run: () => { s.pinned = !s.pinned; render(); } },
+    { label: "Переименовать", run: () => alert("Прототип: инлайн-переименование.") },
+    { sep: true },
+    { label: "Удалить раздел", danger: true, run: () => {
+        const shared = state.boards.some(b => b.section === s.id && b.share);
+        alert(shared
+          ? "Нельзя удалить: в разделе есть доска, которой вы поделились. Сначала снимите доступ."
+          : "Прототип: раздел и его доски будут удалены.");
+      } },
+  ]);
+}
+
+// ——— Список досок раздела ————————————————————————————————————————————
+function renderBoards() {
+  const host = document.getElementById("boards");
+  host.innerHTML = "";
+  const inSection = state.boards.filter(b => b.section === state.activeSection);
+
+  inSection.forEach(b => {
+    const el = document.createElement("button");
+    el.className = "board-item" + (b.id === state.activeBoard ? " active" : "");
+    const meta = b.owner !== ME
+      ? `<span class="tag ${b.right === "view" ? "ro" : "shared"}">${b.owner} · ${b.right === "view" ? "просмотр" : "можно писать"}</span>`
+      : (b.share ? `<span class="tag shared">${b.share}</span>` : `<span class="tag">только я</span>`);
+    el.innerHTML = `<div class="name">${b.name}</div><div class="meta">${meta} · ${b.entries.length} запис${plural(b.entries.length)}</div>`;
+    el.onclick = () => { state.activeBoard = b.id; render(); };
+    host.appendChild(el);
+  });
+
+  if (state.activeSection !== "common") {
+    const add = document.createElement("button");
+    add.className = "board-item dashed";
+    add.innerHTML = '<div class="name">+ доска</div><div class="meta">имя, инструкция ассистенту, доступ</div>';
+    add.onclick = openModal;
+    host.appendChild(add);
+  } else if (!inSection.length) {
+    host.innerHTML = '<div class="card tight muted">Сюда попадут доски, которыми с вами поделятся.</div>';
+  }
+}
+
+const plural = n => (n % 10 === 1 && n % 100 !== 11) ? "ь" : ((n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? "и" : "ей");
+
+// ——— Лента доски ——————————————————————————————————————————————————
+function renderBoard() {
+  const host = document.getElementById("boardCard");
+  const b = state.boards.find(x => x.id === state.activeBoard);
+  if (!b) {
+    host.innerHTML = '<div class="card-title">Выберите доску</div><p class="muted">Или заведите новую — слева.</p>';
+    return;
+  }
+
+  const canWrite = b.owner === ME || b.right === "edit";
+  const who = b.owner === ME
+    ? (b.share ? `Ваша доска · доступ: ${b.share}` : "Ваша доска · только вы")
+    : `Доска: ${b.owner} · вам ${b.right === "view" ? "просмотр" : "разрешено писать"}`;
+
+  host.innerHTML = `
+    <div class="head">
+      <div>
+        <h2>${b.name}</h2>
+        <div class="tiny">${who}</div>
+      </div>
+      <div class="spacer"></div>
+      ${b.owner === ME && !b.system ? '<button class="btn ghost small" id="editBoard">Настроить</button>' : ""}
+    </div>
+    ${b.instruction ? `<div class="instruction">🧭 Ассистенту: ${b.instruction}</div>` : ""}
+    <div class="feed" id="feed"></div>
+    ${canWrite
+      ? `<div class="composer"><input class="field" id="newEntry" placeholder="Написать на доску…">
+         <button class="btn" id="send">Записать</button></div>`
+      : `<div class="readonly-note">Только просмотр. Попросите ${b.owner}, если нужно писать сюда.</div>`}
+  `;
+
+  const feed = document.getElementById("feed");
+  let day = null;
+  b.entries.forEach((e, i) => {
+    const d = e.at.slice(0, 10);
+    if (d !== day) {
+      day = d;
+      const sep = document.createElement("div");
+      sep.className = "daysep";
+      sep.textContent = d;
+      feed.appendChild(sep);
+    }
+    const el = document.createElement("div");
+    el.className = "entry";
+    const name = e.assistant ? '<span class="who assistant">Ассистент</span>'
+              : e.gone ? '<span class="who gone">бывший участник</span>'
+              : `<span class="who">${e.who}</span>`;
+    el.innerHTML = `${name}<span class="at">${e.at.slice(11)}</span>${e.edited ? '<span class="edited">изменено</span>' : ""}
+                    <div class="body">${e.text}</div>`;
+    el.oncontextmenu = ev => { ev.preventDefault(); entryMenu(ev, b, e, i, el); };
+    attachLongPress(el, ev => entryMenu(ev, b, e, i, el));
+    feed.appendChild(el);
+  });
+  feed.scrollTop = feed.scrollHeight;
+
+  const send = document.getElementById("send");
+  if (send) {
+    const push = () => {
+      const input = document.getElementById("newEntry");
+      if (!input.value.trim()) return;
+      b.entries.push({ who: ME, at: "12.08.2026 " + new Date().toTimeString().slice(0, 5), text: input.value.trim() });
+      render();
+    };
+    send.onclick = push;
+    document.getElementById("newEntry").onkeydown = ev => { if (ev.key === "Enter") push(); };
+  }
+  const cfg = document.getElementById("editBoard");
+  if (cfg) cfg.onclick = () => openModal(b);
+}
+
+// Меню записи: права из решений карты — свои правит автор, чужие только владелец доски.
+function entryMenu(ev, board, entry, index, el) {
+  const mine = entry.who === ME;
+  const iOwn = board.owner === ME;
+  const items = [];
+
+  if (entry.assistant) {
+    items.push({ label: "Записал ассистент", disabled: true });
+    items.push({ sep: true });
+  }
+  if (mine || iOwn) {
+    items.push({ label: "Изменить", run: () => alert("Прототип: запись станет редактируемой прямо в ленте.") });
+    items.push({ label: "Удалить", danger: true, run: () => { board.entries.splice(index, 1); render(); } });
+  } else {
+    items.push({ label: `Запись ${entry.gone ? "бывшего участника" : entry.who} — можно только читать`, disabled: true });
+  }
+  items.push({ sep: true });
+  items.push({ label: "Копировать текст", run: () => navigator.clipboard?.writeText(entry.text) });
+
+  el.classList.add("selected");
+  openMenu(ev, items, () => el.classList.remove("selected"));
+}
+
+// ——— Контекстное меню и долгое нажатие ————————————————————————————————
+let closeMenuCb = null;
+function openMenu(ev, items, onClose) {
+  const m = document.getElementById("ctxMenu");
+  m.innerHTML = "";
+  items.forEach(it => {
+    if (it.sep) { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); return; }
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    if (it.danger) b.className = "danger";
+    if (it.disabled) { b.disabled = true; b.style.color = "var(--text-4)"; b.style.cursor = "default"; }
+    else b.onclick = () => { closeMenu(); it.run && it.run(); };
+    m.appendChild(b);
+  });
+  m.hidden = false;
+  const x = ev.clientX ?? ev.touches?.[0]?.clientX ?? 40;
+  const y = ev.clientY ?? ev.touches?.[0]?.clientY ?? 40;
+  m.style.left = Math.min(x, innerWidth - m.offsetWidth - 12) + "px";
+  m.style.top = Math.min(y, innerHeight - m.offsetHeight - 12) + "px";
+  closeMenuCb = onClose;
+  setTimeout(() => document.addEventListener("click", closeMenu, { once: true }), 0);
+}
+function closeMenu() {
+  document.getElementById("ctxMenu").hidden = true;
+  if (closeMenuCb) { closeMenuCb(); closeMenuCb = null; }
+}
+
+// Долгое нажатие — 500 мс без заметного движения пальца.
+function attachLongPress(el, handler) {
+  let timer = null, sx = 0, sy = 0;
+  el.addEventListener("touchstart", e => {
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    timer = setTimeout(() => { navigator.vibrate?.(12); handler(e); }, 500);
+  }, { passive: true });
+  el.addEventListener("touchmove", e => {
+    if (Math.abs(e.touches[0].clientX - sx) > 8 || Math.abs(e.touches[0].clientY - sy) > 8) clearTimeout(timer);
+  }, { passive: true });
+  ["touchend", "touchcancel"].forEach(t => el.addEventListener("touchend", () => clearTimeout(timer)));
+}
+
+// ——— Модалка доски ————————————————————————————————————————————————
+let editing = null;
+function openModal(board) {
+  editing = board && board.id ? board : null;
+  document.getElementById("modalTitle").textContent = editing ? "Настроить доску" : "Новая доска";
+  document.getElementById("mName").value = editing ? editing.name : "";
+  document.getElementById("mInstr").value = editing?.instruction || "";
+  document.getElementById("overlay").hidden = false;
+}
+function closeModal() { document.getElementById("overlay").hidden = true; }
+function saveBoard() {
+  const name = document.getElementById("mName").value.trim();
+  const instr = document.getElementById("mInstr").value.trim() || null;
+  const share = document.getElementById("mShare").value;
+  const label = { "none": null, "all-view": "вся семья — просмотр",
+                  "all-edit": "вся семья — редактирование", "pick": "Совуша — редактирование" }[share];
+  if (!name) return;
+  if (editing) { editing.name = name; editing.instruction = instr; editing.share = label; }
+  else {
+    const id = "b" + Date.now();
+    state.boards.push({ id, section: state.activeSection, name, owner: ME, share: label,
+                        instruction: instr, entries: [] });
+    state.activeBoard = id;
+  }
+  closeModal(); render();
+}
+
+function render() { renderSections(); renderBoards(); renderBoard(); }
+render();
+addEventListener("resize", renderSections);
+</script>
+</body>
+</html>
