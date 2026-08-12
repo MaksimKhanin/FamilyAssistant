@@ -3,13 +3,13 @@
 One builder so the shell stays identical across core screens and module screens,
 and so a new module gets the whole chrome for free by contributing NavItems.
 """
-from typing import Dict, List
+from typing import Dict, List, Set
 
 from fastapi import Request
 from sqlalchemy.orm import Session
 
 from app.core import family as family_service
-from app.core.access import is_module_enabled
+from app.core.access import enabled_modules
 from app.core.auth import can_act_as, can_see_figures
 from app.core.module import NavItem
 from app.core.models import User
@@ -54,11 +54,15 @@ def avatar(user: User) -> Dict[str, str]:
     }
 
 
-def build_nav(db: Session, current: User, viewed: User) -> List[dict]:
-    """Sidebar groups, with items of switched-off modules left out."""
+def build_nav(enabled: Set[str], current: User) -> List[dict]:
+    """Sidebar groups, with items of switched-off modules left out.
+
+    `enabled` считается один раз в `screen_context` — навигация строится на
+    каждый переход, и ходить в базу за каждым модулем отдельно было бы дорого.
+    """
     items: List[NavItem] = list(CORE_NAV)
     for module in load_modules():
-        if module.always_on or is_module_enabled(db, viewed.id, module.name):
+        if module.always_on or module.name in enabled:
             items.extend(module.nav_items)
     items.extend(SETTINGS_NAV)
 
@@ -84,15 +88,15 @@ QUICK_NAV = [
 ]
 
 
-def build_quick_nav(db: Session, current: User, viewed: User) -> List[NavItem]:
-    by_slug = {item.slug: item for group in build_nav(db, current, viewed) for item in group["entries"]}
+def build_quick_nav(nav_groups: List[dict]) -> List[NavItem]:
+    by_slug = {item.slug: item for group in nav_groups for item in group["entries"]}
     return [by_slug[slug] for slug, _ in QUICK_NAV if slug in by_slug]
 
 
-def badges(db: Session, viewed: User) -> Dict[str, int]:
+def badges(db: Session, viewed: User, enabled: Set[str]) -> Dict[str, int]:
     """Counters the sidebar shows next to nav items."""
     result: Dict[str, int] = {}
-    if is_module_enabled(db, viewed.id, "security"):
+    if "security" in enabled:
         from app.modules.security import service as security_service
         result["anomaly_count"] = security_service.anomaly_count(db, viewed.family_id, days=1)
     return result
@@ -102,6 +106,11 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
                    title: str, subtitle: str = "") -> dict:
     members = family_service.members(db, viewed.family_id)
     settings_row = family_service.get_settings(db, viewed.family_id)
+
+    # Один запрос на все флаги модулей: навигация, бейджи и сами экраны дальше
+    # смотрят в это множество, а не дёргают is_module_enabled по одному.
+    enabled = set(enabled_modules(db, viewed.id, [m.name for m in load_modules()]))
+    nav_groups = build_nav(enabled, current)
 
     return {
         "request": request,
@@ -115,9 +124,10 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
         "members": members,
         "avatars": [avatar(m) for m in members],
         "viewed_avatar": avatar(viewed),
-        "nav_groups": build_nav(db, current, viewed),
-        "quick_nav": build_quick_nav(db, current, viewed),
-        "badges": badges(db, viewed),
+        "nav_groups": nav_groups,
+        "quick_nav": build_quick_nav(nav_groups),
+        "badges": badges(db, viewed, enabled),
+        "enabled_modules": enabled,
         "active_path": request.url.path,
         "can_edit": can_act_as(current, viewed),
         "can_see_figures": can_see_figures(current, viewed),

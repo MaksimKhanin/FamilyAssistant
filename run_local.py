@@ -86,6 +86,7 @@ def prepare_environment(port: int) -> dict:
     os.environ.setdefault("VAPID_SUBJECT", "mailto:local@example.com")
     os.environ.setdefault("PUBLIC_BASE_URL", f"http://127.0.0.1:{port}")
     os.environ["COOKIE_SECURE"] = "false"          # локально всегда http
+    os.environ.setdefault("DEV_MODE", "1")         # шаблоны и статика — на лету
 
     # С --no-demo база будет пустой, и войти было бы некому: тот же bootstrap
     # из окружения, что и в бою, только с заранее известным паролем.

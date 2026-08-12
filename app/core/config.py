@@ -117,6 +117,10 @@ class Settings:
     database_url: str
     media_root: str
     session_secret: str
+    #: Локальная разработка: шаблоны и статика перечитываются на лету.
+    #: В бою флаг выключен — шаблоны компилируются один раз, версии статики
+    #: считаются один раз на процесс.
+    dev_mode: bool
     cookie_secure: bool
     ingest_api_key: str
     redis_url: str
@@ -140,6 +144,7 @@ def load_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL", "sqlite:///./family_assistant.db"),
         media_root=os.environ.get("MEDIA_ROOT", "./media"),
         session_secret=_require("SESSION_SECRET", "dev-insecure-secret" if _flag("DEV_MODE", False) else None),
+        dev_mode=_flag("DEV_MODE", False),
         cookie_secure=_flag("COOKIE_SECURE", True),
         ingest_api_key=os.environ.get("INGEST_API_KEY", ""),
         redis_url=os.environ.get("REDIS_URL", ""),

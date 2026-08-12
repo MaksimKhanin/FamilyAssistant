@@ -3,14 +3,47 @@
 Templates live under app/templates/, each module keeping its own subdirectory
 (templates/nutrition/..., templates/security/...) and extending the shared base.
 """
+import hashlib
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
+import jinja2
 from fastapi.templating import Jinja2Templates
 
 from app.core.clock import local_now, to_local
+from app.core.config import settings
 
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+# Свой Environment вместо дефолтного: auto_reload вне dev выключен — иначе
+# Jinja делает stat() каждого шаблона на каждый рендер, а рендер у нас —
+# каждый переход между экранами.
+templates = Jinja2Templates(env=jinja2.Environment(
+    loader=jinja2.FileSystemLoader(str(Path(__file__).resolve().parent.parent / "templates")),
+    autoescape=True,
+    auto_reload=settings.dev_mode,
+))
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _hash_static(path: str) -> str:
+    try:
+        return hashlib.md5((_STATIC_DIR / path).read_bytes()).hexdigest()[:8]
+    except OSError:
+        return ""
+
+
+# В dev хэш пересчитывается на каждый рендер, чтобы правка style.css была видна
+# по F5; в бою файлы не меняются без рестарта — хэш считается один раз.
+_static_version = _hash_static if settings.dev_mode else lru_cache(maxsize=None)(_hash_static)
+
+
+def static_url(path: str) -> str:
+    """`/static/style.css?v=<хэш содержимого>` — чтобы отдавать статику с
+    годовым Cache-Control: при изменении файла меняется URL, а не срок кеша.
+    Сборки у проекта нет, поэтому версия — хэш файла, посчитанный процессом."""
+    version = _static_version(path)
+    return f"/static/{path}?v={version}" if version else f"/static/{path}"
 
 
 def render(request, name: str, context: dict = None, status_code: int = 200):
@@ -94,6 +127,8 @@ def weekday_short(value: datetime) -> str:
     local = to_local(value)
     return _WEEKDAYS[local.weekday()][:2] if local else ""
 
+
+templates.env.globals["static_url"] = static_url
 
 templates.env.filters["plural"] = plural
 templates.env.filters["counted"] = counted
