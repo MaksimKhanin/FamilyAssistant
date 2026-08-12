@@ -311,6 +311,10 @@
     if (document.getElementById('push-state')) paintPushCard();
 
     collapseSectionStrip();
+
+    // Лента доски ведёт себя как мессенджер: открывается на свежем.
+    const feed = document.querySelector('[data-feed]');
+    if (feed) feed.scrollTop = feed.scrollHeight;
   }
 
   /* ============================ экран профиля =========================== */
@@ -410,10 +414,103 @@
 
   window.addEventListener('resize', collapseSectionStrip);
 
-  // Меню «⋯» закрывается кликом мимо него — как любое выпадающее меню.
+  // Контекстное меню записи: правая кнопка или долгое нажатие 500 мс с отменой
+  // при сдвиге пальца на 8px (поведение зафиксировано прототипом #16).
+  // Свою запись можно изменить и удалить, любую — скопировать.
+  let menuEntry = null;
+  let swallowClick = false;   // клик, доигрывающий за долгим нажатием, меню не закрывает
+
+  function openEntryMenu(x, y, entry) {
+    const menu = document.querySelector('[data-entry-menu]');
+    if (!menu) return;
+    menuEntry = entry;
+    const editable = entry.hasAttribute('data-editable');
+    menu.querySelector('[data-menu-edit]').hidden = !editable;
+    menu.querySelector('[data-menu-delete]').hidden = !editable;
+    menu.hidden = false;
+    menu.style.left = Math.min(x, innerWidth - menu.offsetWidth - 12) + 'px';
+    menu.style.top = Math.min(y, innerHeight - menu.offsetHeight - 12) + 'px';
+  }
+
+  // Внутри формы правки живут родные меню браузера (вставить, выделить):
+  // на её элементах своё меню не открывается.
+  function entryUnderPress(target) {
+    if (target.closest('[data-entry-edit], textarea, input, button')) return null;
+    return target.closest('[data-entry]');
+  }
+
+  document.addEventListener('contextmenu', e => {
+    const entry = entryUnderPress(e.target);
+    if (!entry) return;
+    e.preventDefault();
+    openEntryMenu(e.clientX, e.clientY, entry);
+  });
+
+  let pressTimer = null, pressX = 0, pressY = 0;
+  document.addEventListener('touchstart', e => {
+    clearTimeout(pressTimer);   // второй палец не должен осиротить первый таймер
+    pressTimer = null;
+    swallowClick = false;
+    const entry = entryUnderPress(e.target);
+    if (!entry) return;
+    pressX = e.touches[0].clientX;
+    pressY = e.touches[0].clientY;
+    pressTimer = setTimeout(() => {
+      if (navigator.vibrate) navigator.vibrate(12);
+      swallowClick = true;
+      openEntryMenu(pressX, pressY, entry);
+    }, 500);
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (pressTimer === null) return;
+    if (Math.abs(e.touches[0].clientX - pressX) > 8 ||
+        Math.abs(e.touches[0].clientY - pressY) > 8) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  }, { passive: true });
+  ['touchend', 'touchcancel'].forEach(type => document.addEventListener(type, () => {
+    clearTimeout(pressTimer);
+    pressTimer = null;
+  }));
+
+  // Пункты меню и «Отмена» правки — делегированием: элементы новые на каждом экране.
+  document.addEventListener('click', e => {
+    if (e.target.closest('[data-menu-edit]') && menuEntry) {
+      menuEntry.querySelector('[data-entry-body]').hidden = true;
+      const form = menuEntry.querySelector('[data-entry-edit]');
+      form.hidden = false;
+      form.querySelector('textarea').focus();
+    } else if (e.target.closest('[data-menu-delete]') && menuEntry) {
+      menuEntry.querySelector('[data-entry-delete]').requestSubmit();
+    } else if (e.target.closest('[data-menu-copy]') && menuEntry) {
+      const text = menuEntry.querySelector('[data-entry-body]').textContent.trim();
+      // http без TLS: clipboard API недоступен — показываем текст как есть,
+      // тот же приём, что у copyInvite.
+      if (navigator.clipboard) navigator.clipboard.writeText(text);
+      else prompt('Скопируйте текст:', text);
+    } else if (e.target.closest('[data-edit-cancel]')) {
+      const entry = e.target.closest('[data-entry]');
+      entry.querySelector('[data-entry-edit]').hidden = true;
+      entry.querySelector('[data-entry-body]').hidden = false;
+    }
+  });
+
+  // Клик, доигрывающий за долгим нажатием, гасится на фазе захвата — до всех
+  // обработчиков: иначе он либо закрыл бы только что открытое меню, либо
+  // нажал бы его пункт. В браузерах, где такого клика нет, флаг снимает
+  // следующий touchstart.
+  document.addEventListener('click', e => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+
+  // Выпадающие меню закрываются кликом мимо них.
   document.addEventListener('click', () => {
-    const menu = document.querySelector('[data-strip-menu]');
-    if (menu) menu.hidden = true;
+    document.querySelectorAll('[data-strip-menu], [data-entry-menu]')
+            .forEach(menu => { menu.hidden = true; });
   });
 
   /* ===================== мелочи отдельных экранов ======================= */

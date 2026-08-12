@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.memory.models import Board, Section
+from app.modules.memory.models import Board, BoardEntry, Section
 
 
 def list_sections(db: Session, user_id: int) -> List[Section]:
@@ -172,5 +172,75 @@ def delete_board(db: Session, user_id: int, board_id: int) -> bool:
     if board is None:
         return False
     db.delete(board)
+    db.commit()
+    return True
+
+
+# --- записи (#27) ---------------------------------------------------------------
+
+#: Лента отдаёт хвост лога: у семьи это годы записей, экрану нужны последние.
+FEED_LIMIT = 500
+
+
+def list_entries(db: Session, user_id: int, board_id: int) -> List[BoardEntry]:
+    """Лента доски по времени, как разговор: старые сверху, свежие внизу."""
+    if get_board(db, user_id, board_id) is None:
+        return []
+    tail = (
+        db.query(BoardEntry)
+        .filter(BoardEntry.board_id == board_id)
+        .order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc())
+        .limit(FEED_LIMIT)
+        .all()
+    )
+    return list(reversed(tail))
+
+
+def add_entry(db: Session, user_id: int, board_id: int, text: str) -> Optional[BoardEntry]:
+    board = get_board(db, user_id, board_id)
+    text = text.strip()
+    if board is None or not text:
+        return None
+    entry = BoardEntry(board_id=board.id, author_id=user_id, text=text)
+    # Запись — и есть активность: по ней сортируются и доски, и полоса разделов.
+    now = datetime.utcnow()
+    board.last_activity_at = now
+    db.get(Section, board.section_id).last_activity_at = now
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def get_entry(db: Session, user_id: int, entry_id: int) -> Optional[BoardEntry]:
+    """Запись, которую этот человек вправе править или удалить.
+
+    Пока доски видит только владелец, право сводится к «запись на моей доске»:
+    владелец правит любые записи своей доски. С шарингом (#28) сюда добавится
+    второй путь — автор записи на доступной ему доске.
+    """
+    entry = db.get(BoardEntry, entry_id)
+    if entry is None or get_board(db, user_id, entry.board_id) is None:
+        return None
+    return entry
+
+
+def edit_entry(db: Session, user_id: int, entry_id: int, text: str) -> Optional[BoardEntry]:
+    """Правка не тихая: у поправленной записи в ленте видна пометка «изменено»."""
+    entry = get_entry(db, user_id, entry_id)
+    text = text.strip()
+    if entry is None or not text:
+        return None
+    entry.text = text
+    entry.edited_at = datetime.utcnow()
+    db.commit()
+    return entry
+
+
+def delete_entry(db: Session, user_id: int, entry_id: int) -> bool:
+    entry = get_entry(db, user_id, entry_id)
+    if entry is None:
+        return False
+    db.delete(entry)
     db.commit()
     return True

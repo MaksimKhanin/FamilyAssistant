@@ -605,3 +605,29 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
   padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
   color: var(--text-2); font-size: 12.5px;
 }
+
+/* ---------- экран знаний: лента записей (тикет #27) ---------- */
+
+/* Лента как разговор: автор и время у каждой записи, подряд идущие записи
+   одного автора не склеиваются — время каждой это данные. */
+.feed { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; padding-right: 4px; }
+.daysep { text-align: center; font-size: 11px; color: var(--text-4); margin: 12px 0 6px; }
+.entry { padding: 7px 12px; border-radius: 12px; }
+.entry:hover { background: var(--surface-2); }
+.entry-author { font-size: 12px; font-weight: 600; color: var(--acc); }
+.entry-author.assistant { color: var(--ok-dark); }
+.entry-author.gone { color: var(--text-4); font-weight: 500; font-style: italic; }
+.entry-at, .entry-edited { font-size: 11px; color: var(--text-4); margin-left: 6px; }
+.entry-body { white-space: pre-line; margin-top: 1px; }
+
+.composer { display: flex; gap: 8px; }
+.composer .field { flex: 1; }
+
+/* Контекстное меню записи: позиционирует app.js по точке нажатия. */
+.entry-menu { position: fixed; margin: 0; min-width: 190px; padding: 6px; }
+.entry-menu button {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  font-size: 13px; padding: 8px 10px; border-radius: 9px; cursor: pointer;
+}
+.entry-menu button:hover { background: var(--surface-2); }
+.entry-menu button.danger { color: var(--alarm-text); }

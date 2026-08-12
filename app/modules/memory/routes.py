@@ -11,9 +11,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user, get_viewed_user
+from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import User
-from app.core.templating import render
+from app.core.templating import render, ru_date
 from app.modules.memory import knowledge, reminders, service
 from app.modules.memory.models import KIND_LABELS
 from app.web.context import screen_context
@@ -81,6 +82,14 @@ def memory_screen(
         active_board = None if board_id is None else next(
             (b for b in boards if b.id == board_id), None)
         context.update(boards=boards, active_board=active_board)
+        if active_board is not None:
+            entries = knowledge.list_entries(db, current.id, active_board.id)
+            context.update(
+                feed=_feed_days(entries),
+                # Обрезанный хвост не выдаётся за целое: над лентой честная пометка.
+                feed_limit=knowledge.FEED_LIMIT if len(entries) >= knowledge.FEED_LIMIT else None,
+                author_names={m.id: m.display_name for m in context["members"]},
+            )
     if active_section is None and not common_active:
         context.update(
             notes=service.list_notes(db, current.id, kind=kind or None),
@@ -179,6 +188,70 @@ def delete_board(
     knowledge.delete_board(db, current.id, board_id)
     target = f"/memory?section={section_id}" if section_id else "/memory"
     return RedirectResponse(target, status_code=303)
+
+
+# --- записи (тикет #27) --------------------------------------------------------
+
+def _feed_days(entries):
+    """Лента с разделителями по дням: нужный день ищут глазами.
+
+    Группировка по дате, а не по подписи: подпись без года («12 августа»)
+    склеила бы соседние записи разных лет.
+    """
+    today = local_now().date()
+    days = []
+    for entry in entries:
+        day = to_local(entry.created_at).date()
+        if not days or days[-1]["day"] != day:
+            label = ("Сегодня" if day == today
+                     else "Вчера" if (today - day).days == 1
+                     else ru_date(entry.created_at))
+            days.append({"day": day, "label": label, "entries": []})
+        days[-1]["entries"].append(entry)
+    return days
+
+
+def _board_url(board) -> str:
+    return f"/memory?section={board.section_id}&board={board.id}" if board else "/memory"
+
+
+@router.post("/entries/add")
+def add_entry(
+    board_id: int = Form(...),
+    text: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    knowledge.add_entry(db, current.id, board_id, text)
+    return RedirectResponse(_board_url(knowledge.get_board(db, current.id, board_id)),
+                            status_code=303)
+
+
+@router.post("/entries/{entry_id}/edit")
+def edit_entry(
+    entry_id: int,
+    text: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    # Доска для возврата берётся до правки: отклонённая правка (пустой текст)
+    # не должна выбрасывать человека с доски на корневой экран.
+    entry = knowledge.get_entry(db, current.id, entry_id)
+    board = knowledge.get_board(db, current.id, entry.board_id) if entry else None
+    knowledge.edit_entry(db, current.id, entry_id, text)
+    return RedirectResponse(_board_url(board), status_code=303)
+
+
+@router.post("/entries/{entry_id}/delete")
+def delete_entry(
+    entry_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    entry = knowledge.get_entry(db, current.id, entry_id)
+    board = knowledge.get_board(db, current.id, entry.board_id) if entry else None
+    knowledge.delete_entry(db, current.id, entry_id)
+    return RedirectResponse(_board_url(board), status_code=303)
 
 
 # --- заметки: живут до переезда на доски (#33) --------------------------------

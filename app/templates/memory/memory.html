@@ -111,7 +111,54 @@
              прочтёт то, что здесь написано. #}
           <div class="board-instruction">🧭 Ассистенту: {{ active_board.instruction }}</div>
         {% endif %}
-        <p class="muted">Лента записей появится здесь следующим шагом.</p>
+
+        {# Лента как разговор: автор и время у каждой записи, разделители по
+           дням, подряд идущие записи одного автора не склеиваются — в логе
+           время каждой записи это данные (тикет #27). Меню записи открывает
+           app.js правой кнопкой или долгим нажатием. #}
+        {% if feed_limit %}
+          <p class="tiny" style="text-align:center">Показаны последние
+            {{ feed_limit|counted("запись", "записи", "записей") }} — более старые есть, но сюда не влезли.</p>
+        {% endif %}
+        <div class="feed" data-feed>
+          {% for day in feed %}
+            <div class="daysep">{{ day.label }}</div>
+            {% for entry in day.entries %}
+              <div class="entry" data-entry data-entry-id="{{ entry.id }}" data-editable>
+                <span class="entry-author{% if entry.by_assistant %} assistant{% elif entry.author_id is none %} gone{% endif %}"
+                  >{%- if entry.by_assistant %}Ассистент{% elif entry.author_id is none %}бывший участник{% else %}{{ author_names.get(entry.author_id, "участник") }}{% endif -%}</span>
+                <span class="entry-at">{{ entry.created_at|ru_time }}</span>
+                {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
+                <div class="entry-body" data-entry-body>{{ entry.text }}</div>
+                <form class="stack" style="gap:8px;margin-top:4px" method="post"
+                      action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
+                  <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>
+                  <div class="row" style="gap:8px">
+                    <button class="btn small" type="submit">Сохранить</button>
+                    <button class="btn ghost small" type="button" data-edit-cancel>Отмена</button>
+                  </div>
+                </form>
+                <form method="post" action="/memory/entries/{{ entry.id }}/delete"
+                      data-entry-delete hidden></form>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p class="muted">Пока пусто — первая запись появится здесь.</p>
+          {% endfor %}
+        </div>
+
+        <form class="composer" method="post" action="/memory/entries/add">
+          <input type="hidden" name="board_id" value="{{ active_board.id }}">
+          <input class="field" name="text" placeholder="Написать на доску…" required autocomplete="off">
+          <button class="btn" type="submit">Записать</button>
+        </form>
+        <p class="tiny">Правая кнопка или долгое нажатие на записи — изменить, удалить, скопировать.</p>
+
+        <div class="pop entry-menu" data-entry-menu hidden>
+          <button type="button" data-menu-edit>Изменить</button>
+          <button type="button" class="danger" data-menu-delete>Удалить</button>
+          <button type="button" data-menu-copy>Копировать текст</button>
+        </div>
       {% elif boards %}
         <div class="card-title">Выберите доску</div>
         <p class="muted">Или заведите новую — рядом со списком.</p>
