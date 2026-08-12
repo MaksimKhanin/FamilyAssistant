@@ -10,13 +10,14 @@
 у экрана и инструментов агента была одна и та же граница.
 """
 from datetime import datetime
-from typing import List, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
 from app.core.models import User
+from app.modules.memory import extraction
 from app.modules.memory.models import (
-    Board, BoardEntry, BoardShare, Section, RIGHT_EDIT, RIGHT_VIEW,
+    Board, BoardEntry, BoardEvent, BoardEventType, BoardShare, Section, RIGHT_EDIT, RIGHT_VIEW,
 )
 
 #: Владелец — не третье право из board_shares, а вычисленное «доска в моём
@@ -293,7 +294,8 @@ def list_entries(db: Session, user_id: int, board_id: int) -> List[BoardEntry]:
     return list(reversed(tail))
 
 
-def add_entry(db: Session, user_id: int, board_id: int, text: str) -> Optional[BoardEntry]:
+def add_entry(db: Session, user_id: int, board_id: int, text: str,
+              llm=None) -> Optional[BoardEntry]:
     grant = board_access(db, user_id, board_id)
     text = text.strip()
     if grant is None or grant.right == RIGHT_VIEW or not text:
@@ -307,6 +309,7 @@ def add_entry(db: Session, user_id: int, board_id: int, text: str) -> Optional[B
     db.add(entry)
     db.commit()
     db.refresh(entry)
+    parse_entry(db, entry, llm=llm)
     return entry
 
 
@@ -330,8 +333,13 @@ def get_entry(db: Session, user_id: int, entry_id: int) -> Optional[BoardEntry]:
     return None
 
 
-def edit_entry(db: Session, user_id: int, entry_id: int, text: str) -> Optional[BoardEntry]:
-    """Правка не тихая: у поправленной записи в ленте видна пометка «изменено»."""
+def edit_entry(db: Session, user_id: int, entry_id: int, text: str,
+               llm=None) -> Optional[BoardEntry]:
+    """Правка не тихая: у поправленной записи в ленте видна пометка «изменено».
+
+    Правка переразбирает величины записи: исправленная опечатка в цифре обязана
+    попасть в статистику, а старый разбор — уйти вместе с прежним текстом.
+    """
     entry = get_entry(db, user_id, entry_id)
     text = text.strip()
     if entry is None or not text:
@@ -339,6 +347,7 @@ def edit_entry(db: Session, user_id: int, entry_id: int, text: str) -> Optional[
     entry.text = text
     entry.edited_at = datetime.utcnow()
     db.commit()
+    parse_entry(db, entry, llm=llm)
     return entry
 
 
@@ -349,6 +358,181 @@ def delete_entry(db: Session, user_id: int, entry_id: int) -> bool:
     db.delete(entry)
     db.commit()
     return True
+
+
+# --- события: словарь типов и разбор записи (#30) --------------------------------
+
+#: Сколько вариантов показывать в плашке уточнения. Больше — уже не тихий
+#: вопрос под записью, а анкета.
+CLARIFY_OPTIONS = 3
+
+TYPE_NAME_LIMIT = 64
+UNIT_LIMIT = 16
+
+
+def list_event_types(db: Session, board_id: int) -> List[BoardEventType]:
+    """Словарь величин доски в порядке заведения — им и разбирают её записи."""
+    return (db.query(BoardEventType)
+            .filter(BoardEventType.board_id == board_id)
+            .order_by(BoardEventType.id)
+            .all())
+
+
+def add_event_type(db: Session, user_id: int, board_id: int, name: str,
+                   unit: str = None) -> Optional[BoardEventType]:
+    """Завести тип величины на доске.
+
+    Заводить его вправе всякий, кто ведёт лог (не только владелец): у
+    допущенного на редактирование иначе не было бы чем ответить на плашку
+    уточнения под собственной записью. Повторное имя ничего не дублирует.
+    """
+    grant = board_access(db, user_id, board_id)
+    name = (name or "").strip()[:TYPE_NAME_LIMIT]
+    if grant is None or grant.right == RIGHT_VIEW or not name:
+        return None
+    existing = next((t for t in list_event_types(db, board_id)
+                     if t.name.lower() == name.lower()), None)
+    if existing is not None:
+        return existing
+    event_type = BoardEventType(board_id=board_id, name=name,
+                                unit=(unit or "").strip()[:UNIT_LIMIT] or None)
+    db.add(event_type)
+    db.commit()
+    db.refresh(event_type)
+    return event_type
+
+
+def parse_entry(db: Session, entry: BoardEntry, llm=None) -> List[BoardEvent]:
+    """Превратить запись в величины — при её создании и при каждой правке.
+
+    Единственная точка разбора: и панель, и `write_entry` ассистента приходят
+    сюда через add_entry/edit_entry, поэтому величины не зависят от пути записи.
+
+    Доска без словаря типов не разбирается вовсе — модель для неё не зовут:
+    тип берётся из словаря, а разбирать не во что.
+
+    Прежние величины уходят только вместе с состоявшимся разбором: если модель
+    не ответила, они остаются на месте — уточнённое человеком не стирается
+    оттого, что модель моргнула. Сама запись к этому моменту уже сохранена, так
+    что человек ждёт здесь только цифру, а не сохранность своих слов.
+    """
+    board = db.get(Board, entry.board_id)
+    types = list_event_types(db, entry.board_id)
+    if board is None or not types:
+        return entry_events(db, entry.id)
+
+    extracted = extraction.safe_extract_events(
+        entry.text, instruction=board.instruction, types=types, at=entry.created_at, llm=llm)
+    if extracted is None:
+        return entry_events(db, entry.id)
+
+    db.query(BoardEvent).filter(BoardEvent.entry_id == entry.id).delete()
+    events = [BoardEvent(entry_id=entry.id, board_id=entry.board_id, kind=e.kind, at=e.at,
+                         value=e.value, unit=e.unit, confidence=e.confidence, raw=e.raw)
+              for e in extracted]
+    db.add_all(events)
+    db.commit()
+    return events
+
+
+def entry_events(db: Session, entry_id: int) -> List[BoardEvent]:
+    return (db.query(BoardEvent)
+            .filter(BoardEvent.entry_id == entry_id)
+            .order_by(BoardEvent.at, BoardEvent.id)
+            .all())
+
+
+def board_events(db: Session, board_id: int, since: datetime = None,
+                 until: datetime = None) -> List[BoardEvent]:
+    rows = db.query(BoardEvent).filter(BoardEvent.board_id == board_id)
+    if since is not None:
+        rows = rows.filter(BoardEvent.at >= since)
+    if until is not None:
+        rows = rows.filter(BoardEvent.at < until)
+    return rows.order_by(BoardEvent.at, BoardEvent.id).all()
+
+
+def event_totals(db: Session, user_id: int, board_id: int, since: datetime = None,
+                 until: datetime = None) -> List[dict]:
+    """Суммы по типам за период — то, из чего потом растут сводка и табло.
+
+    Считает код, а не модель. Неуверенно разобранное в сумму не идёт, пока
+    человек не уточнил: цифра, которой нельзя верить, хуже отсутствующей.
+
+    Сумма идёт по типу вместе с единицей: миллилитры и литры одного типа — две
+    строки, а не одно число, которое неизвестно в чём.
+    """
+    if get_board(db, user_id, board_id) is None:
+        return []
+    totals: dict = {}
+    for event in board_events(db, board_id, since, until):
+        if event.confidence == extraction.LOW:
+            continue
+        row = totals.setdefault((event.kind, event.unit),
+                                {"kind": event.kind, "unit": event.unit,
+                                 "total": 0.0, "count": 0})
+        row["total"] += event.value
+        row["count"] += 1
+    return [totals[key] for key in sorted(totals, key=lambda key: (key[0], key[1] or ""))]
+
+
+def clarifications(db: Session, board_id: int, entry_ids: Sequence[int]) -> dict:
+    """Что ждёт уточнения под показанными записями: величина → чем на неё ответить.
+
+    Варианты — типы словаря доски, разобранный первым: человек отвечает одним
+    нажатием, а свои слова пишет в поле рядом. Спрашивают только про записи,
+    которые сейчас в ленте: за её хвостом плашке всё равно негде показаться.
+    """
+    names = [t.name for t in list_event_types(db, board_id)]
+    if not names or not entry_ids:
+        return {}
+    waiting: dict = {}
+    uncertain = (db.query(BoardEvent)
+                 .filter(BoardEvent.entry_id.in_(list(entry_ids)),
+                         BoardEvent.confidence == extraction.LOW)
+                 .order_by(BoardEvent.at, BoardEvent.id))
+    for event in uncertain:
+        guessed = [n for n in names if n.lower() == event.kind.lower()]
+        options = guessed + [n for n in names if n not in guessed]
+        waiting.setdefault(event.entry_id, []).append({
+            "id": event.id,
+            "raw": event.raw or "",
+            "options": options[:CLARIFY_OPTIONS],
+        })
+    return waiting
+
+
+def event_board(db: Session, user_id: int, event_id: int) -> Optional[int]:
+    """Доска величины глазами смотрящего — чтобы вернуть его на неё после ответа."""
+    event = db.get(BoardEvent, event_id)
+    if event is None or get_board(db, user_id, event.board_id) is None:
+        return None
+    return event.board_id
+
+
+def clarify_event(db: Session, user_id: int, event_id: int, kind: str) -> Optional[BoardEvent]:
+    """Ответ человека на плашку: величина получает тип и идёт в счёт.
+
+    Отвечает тот, кто вправе править саму запись, — автор или владелец доски.
+    Названного типа в словаре нет — он там заводится: человек назвал величину
+    своими словами, и словарь обязан догнать его, а не наоборот.
+    """
+    event = db.get(BoardEvent, event_id)
+    kind = (kind or "").strip()[:TYPE_NAME_LIMIT]
+    if event is None or not kind:
+        return None
+    if get_entry(db, user_id, event.entry_id) is None:
+        return None
+
+    event_type = add_event_type(db, user_id, event.board_id, kind, unit=event.unit)
+    if event_type is None:
+        return None
+    event.kind = event_type.name
+    event.unit = event.unit or event_type.unit
+    # Человек сказал сам — уверенности выше не бывает, величина идёт в сумму.
+    event.confidence = extraction.HIGH
+    db.commit()
+    return event
 
 
 # --- доступ: шаринг и отзыв (#28) -----------------------------------------------
@@ -487,8 +671,8 @@ def assistant_board(db: Session, user_id: int) -> Board:
     return board
 
 
-def add_assistant_entry(db: Session, user_id: int, board_id: int,
-                        text: str) -> Optional[BoardEntry]:
+def add_assistant_entry(db: Session, user_id: int, board_id: int, text: str,
+                        llm=None) -> Optional[BoardEntry]:
     """Запись авторства ассистента (author_id NULL, by_assistant) — только на
     доску, которой владеет человек: по своей инициативе ассистент на
     расшаренные доски не пишет."""
@@ -503,6 +687,7 @@ def add_assistant_entry(db: Session, user_id: int, board_id: int,
     db.add(entry)
     db.commit()
     db.refresh(entry)
+    parse_entry(db, entry, llm=llm)
     return entry
 
 

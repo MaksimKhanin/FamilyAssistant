@@ -639,3 +639,16 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
   padding: 10px 12px; border-radius: 12px; background: var(--warn-bg);
   color: var(--warn-text); font-size: 12.5px;
 }
+
+/* ---------- экран знаний: уточнение величины (тикет #30) ---------- */
+
+/* Тихая плашка под записью: варианты из словаря доски и поле для своих слов.
+   Не модалка и ничего не блокирует — запись уже сохранена, ответить можно
+   когда угодно или не отвечать вовсе. */
+.clarify {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 8px 10px; border-radius: 12px;
+  background: var(--surface-2); border: 1px dashed var(--border-dashed);
+}
+.clarify .tiny { color: var(--text-3); }
+.clarify .field.small { flex: 1; min-width: 120px; font-size: 12px; padding: 5px 9px; }

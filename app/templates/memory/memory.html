@@ -112,6 +112,29 @@
               </form>
             </div>
           </details>
+          {# Словарь величин доски: пока он пуст, записи не разбираются вовсе.
+             Заводит его тот, кто ведёт лог, — иначе на плашку уточнения под
+             своей записью ему нечем было бы ответить (тикет #30). #}
+          {% if board_right != "view" %}
+            <details class="strip-pop">
+              <summary class="btn ghost small">Величины</summary>
+              <div class="pop stack" style="right:0;min-width:280px">
+                {% for event_type in event_types %}
+                  <p class="tiny" style="margin:0">{{ event_type.name }}{% if event_type.unit %} — {{ event_type.unit }}{% endif %}</p>
+                {% else %}
+                  <p class="tiny" style="margin:0">Пока пусто: без величин ассистент
+                    не разбирает записи этой доски на цифры.</p>
+                {% endfor %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/types/add">
+                  <input class="field" name="name" placeholder="кормление" required
+                         maxlength="64" style="flex:1">
+                  <input class="field" name="unit" placeholder="мл" maxlength="16" style="width:80px">
+                  <button class="btn small" type="submit">Добавить</button>
+                </form>
+              </div>
+            </details>
+          {% endif %}
           {# Состав доступа меняет только владелец; «всем» — живое правило (тикет #28). #}
           <details class="strip-pop">
             <summary class="btn ghost small">Доступ</summary>

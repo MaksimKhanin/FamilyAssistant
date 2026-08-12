@@ -6,7 +6,8 @@ schema replacing them — sections → boards → entries, plus per-person share
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+                        UniqueConstraint)
 
 from app.core.db import Base
 
@@ -86,6 +87,51 @@ class BoardEntry(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     #: Правки не тихие: у поправленной записи в ленте видна пометка «изменено».
     edited_at = Column(DateTime, nullable=True)
+
+
+class BoardEventType(Base):
+    """Словарь величин одной доски: «кормление» в мл, «прогулка» в минутах.
+
+    Тип берётся отсюда, а не из головы модели: иначе «кормление», «еда» и
+    «молоко» завелись бы на одной доске вперемешку. Съеденное и потраченное —
+    два разных типа, а не число со знаком.
+    """
+    __tablename__ = "board_event_types"
+    __table_args__ = (UniqueConstraint("board_id", "name", name="uq_board_event_type"),)
+
+    id = Column(Integer, primary_key=True)
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    name = Column(String(64), nullable=False)
+    unit = Column(String(16), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class BoardEvent(Base):
+    """Величина, извлечённая из записи: тип, время, число и единица.
+
+    Живёт ровно столько, сколько живёт её запись: правка записи переразбирает
+    события, удаление — уносит. Разбор происходит один раз, при написании, а не
+    при сборке сводки: цифра за прошлый вторник не должна меняться оттого, что
+    сегодня модель прочла лог иначе (ADR-0002).
+    """
+    __tablename__ = "board_events"
+
+    id = Column(Integer, primary_key=True)
+    entry_id = Column(Integer, ForeignKey("board_entries.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    #: Доска дублируется рядом с записью: статистику считают по доске за период,
+    #: и ходить за этим в записи — лишний join на каждой сводке.
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    kind = Column(String(64), nullable=False)
+    at = Column(DateTime, nullable=False, index=True)
+    value = Column(Float, nullable=False)
+    unit = Column(String(16), nullable=True)
+    #: low — в сумму не идёт, пока человек не уточнил (спека #19).
+    confidence = Column(String(8), nullable=False, default="low")
+    #: Фрагмент записи, из которого взята величина, — им и спрашивают человека.
+    raw = Column(String(255), nullable=True)
 
 
 class BoardShare(Base):

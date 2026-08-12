@@ -125,7 +125,8 @@ def test_create_all_leaves_a_lived_in_database_to_migrations(db, head):
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
-        for table in ("board_shares", "board_entries", "boards", "sections"):
+        for table in ("board_events", "board_event_types", "board_shares", "board_entries",
+                      "boards", "sections"):
             conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
 
     create_all()
@@ -167,3 +168,26 @@ def test_entry_author_survives_his_own_deletion_but_the_board_does_not(tmp_path)
     board = fks["board_id"]
     assert board["referred_table"] == "boards"
     assert board["options"].get("ondelete", "").upper() == "CASCADE"
+
+
+def test_upgrade_creates_the_board_dictionary_and_its_events(tmp_path):
+    """Словарь типов — у доски, события — у записи: величина живёт ровно столько,
+    сколько живёт запись, из которой она взята (тикет #30)."""
+    url = f"sqlite:///{tmp_path}/fresh.db"
+    _upgrade_head(url)
+
+    insp = sa.inspect(sa.create_engine(url))
+    assert {"board_event_types", "board_events"} <= set(insp.get_table_names())
+
+    types = {c["name"] for c in insp.get_columns("board_event_types")}
+    assert {"id", "board_id", "name", "unit"} <= types
+    assert ("board_id", "name") in {tuple(u["column_names"])
+                                    for u in insp.get_unique_constraints("board_event_types")}
+
+    events = {c["name"] for c in insp.get_columns("board_events")}
+    assert {"id", "entry_id", "board_id", "kind", "at", "value", "unit",
+            "confidence", "raw"} <= events
+
+    entry_fk = {fk["constrained_columns"][0]: fk for fk in insp.get_foreign_keys("board_events")}
+    assert entry_fk["entry_id"]["referred_table"] == "board_entries"
+    assert entry_fk["entry_id"]["options"].get("ondelete", "").upper() == "CASCADE"

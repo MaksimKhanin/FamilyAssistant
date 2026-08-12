@@ -40,6 +40,25 @@
         {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
         <div class="entry-body" data-entry-body>{{ entry.text }}</div>
         {% if editable %}
+          {# Плашка уточнения: ассистент разобрал величину неуверенно, и в счёт
+             она не идёт, пока человек не ответил. Тихая и не блокирующая —
+             запись уже сохранена, ответ можно и не давать (тикет #30). #}
+          {% for ask in (clarify or {}).get(entry.id, []) %}
+            <form class="clarify" method="post" data-clarify
+                  action="/memory/events/{{ ask.id }}/clarify">
+              {# Enter в поле отправляет форму первой кнопкой; будь ею вариант,
+                 нажатие Enter подтвердило бы невыбранный тип. Поэтому первой
+                 идёт безымянная: она отправляет ровно то, что человек написал. #}
+              <button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
+              <span class="tiny">Не понял{% if ask.raw %} «{{ ask.raw }}»{% endif %} — что это?</span>
+              {% for option in ask.options %}
+                <button class="btn ghost small" type="submit" name="kind" value="{{ option }}"
+                  >{{ option }}</button>
+              {% endfor %}
+              <input class="field small" name="own" placeholder="свои слова" autocomplete="off">
+              <button class="btn small" type="submit">Уточнить</button>
+            </form>
+          {% endfor %}
           <form class="stack" style="gap:8px;margin-top:4px" method="post"
                 action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
             <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>

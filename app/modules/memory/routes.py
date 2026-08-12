@@ -71,6 +71,10 @@ def _board_view(db: Session, current: User, grant, members) -> dict:
         "audience": knowledge.board_audience(db, current.id, grant.board.id),
         "right_labels": knowledge.RIGHT_LABELS,
         "feed": _feed_days(entries),
+        # Величины, которые ассистент разобрал неуверенно: под их записями
+        # висит тихая плашка уточнения (тикет #30).
+        "clarify": knowledge.clarifications(db, grant.board.id, [e.id for e in entries]),
+        "event_types": knowledge.list_event_types(db, grant.board.id),
         # Обрезанный хвост не выдаётся за целое: над лентой честная пометка.
         "feed_limit": knowledge.FEED_LIMIT if len(entries) >= knowledge.FEED_LIMIT else None,
         "author_names": {m.id: m.display_name for m in members},
@@ -339,6 +343,42 @@ def delete_entry(
     entry = knowledge.get_entry(db, current.id, entry_id)
     board_id = entry.board_id if entry else None
     knowledge.delete_entry(db, current.id, entry_id)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+# --- словарь величин доски (тикет #30) -----------------------------------------
+
+@router.post("/boards/{board_id}/types/add")
+def add_event_type(
+    board_id: int,
+    name: str = Form(...),
+    unit: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Завести тип величины: с него на доске начинается разбор записей."""
+    knowledge.add_event_type(db, current.id, board_id, name, unit)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+# --- уточнение разобранной величины (тикет #30) --------------------------------
+
+@router.post("/events/{event_id}/clarify")
+def clarify_event(
+    event_id: int,
+    kind: str = Form(""),
+    own: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Ответ на плашку: нажатый вариант или свои слова из поля рядом.
+
+    Свои слова важнее нажатой кнопки: человек дописал их, уже видя варианты.
+    """
+    # Доска берётся до ответа: отклонённое уточнение (пустые слова) не должно
+    # выбрасывать человека с доски на корневой экран.
+    board_id = knowledge.event_board(db, current.id, event_id)
+    knowledge.clarify_event(db, current.id, event_id, own.strip() or kind)
     return RedirectResponse(_board_url(db, current, board_id), status_code=303)
 
 
