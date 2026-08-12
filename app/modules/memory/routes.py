@@ -7,11 +7,33 @@ from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render
-from app.modules.memory import service
+from app.modules.memory import reminders, service
 from app.modules.memory.models import KIND_LABELS
 from app.web.context import screen_context
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+reminders_router = APIRouter(prefix="/reminders", tags=["reminders"])
+
+
+@reminders_router.get("", response_class=HTMLResponse)
+def reminders_screen(
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    context = screen_context(
+        request, db, current, viewed,
+        title="Напоминания",
+        subtitle="О чём ассистент напомнит — и о чём уже напомнил",
+    )
+    context.update(
+        active=reminders.list_active(db, viewed.id),
+        fired=reminders.list_fired(db, viewed.id),
+        fired_retention_days=reminders.FIRED_RETENTION_DAYS,
+    )
+    return render(request, "memory/reminders.html", context)
 
 FILTERS = [("", "Всё"), ("task", "Напоминания"), ("pref", "Предпочтения"),
            ("health", "Здоровье"), ("fact", "Наблюдения")]

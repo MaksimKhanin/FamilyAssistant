@@ -135,6 +135,23 @@ def test_create_all_leaves_a_lived_in_database_to_migrations(db, head):
     assert "sections" in sa.inspect(engine).get_table_names()
 
 
+def test_upgrade_creates_the_reminders_table_outside_the_knowledge_tables(tmp_path):
+    """Напоминания — своя таблица вне знаний: каскад от участника, без ссылок на доски."""
+    url = f"sqlite:///{tmp_path}/fresh.db"
+    _upgrade_head(url)
+
+    insp = sa.inspect(sa.create_engine(url))
+    assert "reminders" in insp.get_table_names()
+
+    columns = {c["name"] for c in insp.get_columns("reminders")}
+    assert {"id", "user_id", "text", "remind_at", "reminded_at", "created_at"} <= columns
+
+    fks = insp.get_foreign_keys("reminders")
+    assert len(fks) == 1
+    assert fks[0]["referred_table"] == "users"
+    assert fks[0]["options"].get("ondelete", "").upper() == "CASCADE"
+
+
 def test_entry_author_survives_his_own_deletion_but_the_board_does_not(tmp_path):
     """Внешние ключи по ADR-0004: автор записи — SET NULL, доска — CASCADE."""
     url = f"sqlite:///{tmp_path}/fresh.db"

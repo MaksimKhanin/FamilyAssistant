@@ -6,15 +6,17 @@ no toggle on the onboarding matrix, but its data is still strictly personal
 """
 from app.core.module import Module, NavItem
 from app.modules.memory import models, tools  # noqa: F401  (регистрирует таблицы и инструменты)
-from app.modules.memory.routes import router
+from app.modules.memory.routes import reminders_router, router
 
 module = Module(
     name="memory",
     title="Память и заметки",
     description="Ассистент помнит предпочтения, ограничения и напоминания",
-    routers=[router],
+    routers=[router, reminders_router],
     nav_items=[NavItem(slug="memory", label="Память и заметки", url="/memory",
-                       icon="note", short="Память")],
+                       icon="note", short="Память"),
+               NavItem(slug="reminders", label="Напоминания", url="/reminders",
+                       icon="clock", short="Напомнить")],
     per_user=True,
     always_on=True,
 )

@@ -99,21 +99,28 @@ def run_jobs(db: Session, now: datetime):
 
 
 def run_reminders(db: Session, now: datetime):
+    from app.modules.memory import reminders as reminders_service
     from app.modules.memory import service as memory_service
 
-    for note in memory_service.due_reminders(db, now):
-        user = db.get(User, note.user_id)
+    # Две дороги на время переезда (#24): старые заметки-напоминания живут до
+    # миграции данных (#33), новые напоминания уже в своей таблице. Механика
+    # доставки одна и та же.
+    due = list(memory_service.due_reminders(db, now)) + list(reminders_service.due_reminders(db, now))
+    for reminder in due:
+        user = db.get(User, reminder.user_id)
         if user is None:
             continue
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
-                                    "text": f"Напоминаю: {note.text}", "severity": "attention"})
-        note.reminded_at = now
+                                    "text": f"Напоминаю: {reminder.text}", "severity": "attention"})
+        reminder.reminded_at = now
     db.commit()
 
 
 def run_retention(db: Session):
+    from app.modules.memory import reminders as reminders_service
     from app.modules.security.retention import rotate
     rotate(db)
+    reminders_service.purge_fired(db)
 
 
 def tick(now: datetime = None):

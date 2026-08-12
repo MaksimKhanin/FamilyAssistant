@@ -1,34 +1,13 @@
-"""Agent tools for memory: remember / recall_notes."""
-from datetime import datetime, timedelta
+"""Agent tools for memory: remember / recall_notes / set_reminder."""
+from datetime import datetime
 
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core.events import NOTE_CREATED, bus
-from app.core.templating import ru_date
-from app.modules.memory import service
-from app.modules.memory.models import KIND_LABELS
+from app.core.templating import ru_date, ru_datetime
+from app.modules.memory import reminders, service
+from app.modules.memory.models import KIND_TASK, KIND_LABELS
 
 MODULE = "memory"
-
-#: Rough natural-language deadlines the assistant can turn into an actual time
-#: without pulling in a full date parser. Anything else is kept as free text and
-#: simply resurfaces «когда придётся к слову».
-_RELATIVE = {
-    "сегодня": timedelta(hours=4),
-    "вечером": timedelta(hours=6),
-    "завтра": timedelta(days=1),
-    "послезавтра": timedelta(days=2),
-    "через неделю": timedelta(days=7),
-}
-
-
-def _parse_when(when: str):
-    if not when:
-        return None, None
-    lowered = when.strip().lower()
-    for phrase, delta in _RELATIVE.items():
-        if phrase in lowered:
-            return when.strip(), datetime.utcnow() + delta
-    return when.strip(), None
 
 
 @tool(
@@ -37,35 +16,33 @@ def _parse_when(when: str):
     title="Запомнить",
     description="""
     Сохранить в память факт о человеке или семье: предпочтение, ограничение по
-    здоровью, напоминание или наблюдение. Вызывай, когда человек просит запомнить,
-    или когда в разговоре всплыл устойчивый факт, полезный в будущем
-    (например «Соня не ест грибы»). Формулируй кратко, в третьем лице.
+    здоровью или наблюдение. Вызывай, когда человек просит запомнить, или когда
+    в разговоре всплыл устойчивый факт, полезный в будущем (например «Соня не ест
+    грибы»). Формулируй кратко, в третьем лице. Для напоминаний со сроком этот
+    инструмент не годится — вызывай set_reminder.
     """,
     parameters={
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Короткая формулировка факта"},
-            "kind": {"type": "string", "enum": list(KIND_LABELS),
-                     "description": "pref — предпочтение, health — здоровье, task — напоминание, fact — наблюдение"},
-            "when": {"type": "string",
-                     "description": "Когда напомнить, словами: «завтра», «в пятницу утром». Пусто — если это не напоминание."},
+            # «task» намеренно не предлагается: напоминания заводит только
+            # set_reminder, с валидным абсолютным временем (спека #19).
+            "kind": {"type": "string", "enum": [k for k in KIND_LABELS if k != KIND_TASK],
+                     "description": "pref — предпочтение, health — здоровье, fact — наблюдение"},
         },
         "required": ["text"],
     },
     auto_from=2,
 )
-def remember(ctx: ToolContext, text: str, kind: str = "fact", when: str = None) -> ToolResult:
-    when_text, remind_at = _parse_when(when)
+def remember(ctx: ToolContext, text: str, kind: str = "fact") -> ToolResult:
     note = service.add_note(
         ctx.db, ctx.subject.id, text=text, kind=kind,
         source=f"из разговора {ru_date(datetime.now())}",
-        when_text=when_text, remind_at=remind_at,
     )
     bus.publish(NOTE_CREATED, {"note_id": note.id, "user_id": ctx.subject.id})
 
-    tail = f" Напомню: {when_text}." if when_text else ""
     return ToolResult(
-        summary=f"Запомнил: {note.text}.{tail}",
+        summary=f"Запомнил: {note.text}.",
         data={"note_id": note.id},
         card={
             "type": "memory",
@@ -73,8 +50,53 @@ def remember(ctx: ToolContext, text: str, kind: str = "fact", when: str = None) 
             "kind": note.kind,
             "kind_label": KIND_LABELS.get(note.kind, "заметка"),
             "text": note.text,
-            "when": when_text,
         },
+    )
+
+
+@tool(
+    name="set_reminder",
+    module=MODULE,
+    title="Напомнить",
+    description="""
+    Поставить разовое напоминание на конкретный момент: «напомни завтра в 9
+    позвонить врачу». Требует абсолютного времени — вычисли дату и время из слов
+    человека по текущему моменту из системного промпта («завтра в 9» → конкретная
+    дата). Если человек не назвал время или его нельзя понять однозначно —
+    не вызывай инструмент, а спроси, когда напомнить.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "text": {"type": "string", "description": "О чём напомнить, коротко"},
+            "at": {"type": "string",
+                   "description": "Абсолютное местное время «ГГГГ-ММ-ДД ЧЧ:ММ», например «2026-08-15 09:00»"},
+        },
+        "required": ["text", "at"],
+    },
+    auto_from=2,
+)
+def set_reminder(ctx: ToolContext, text: str, at: str) -> ToolResult:
+    remind_at = reminders.parse_remind_at(at)
+    if remind_at is None:
+        return ToolResult(
+            summary=f"Не разобрал время «{at}» — напоминание не создано. "
+                    f"Переспроси у человека, когда именно напомнить.",
+            ok=False,
+        )
+    error = reminders.validate_remind_at(remind_at)
+    if error:
+        return ToolResult(
+            summary=f"{error} Напоминание не создано — переспроси у человека время.",
+            ok=False,
+        )
+
+    reminder = reminders.add_reminder(ctx.db, ctx.subject.id, text=text, remind_at=remind_at)
+    when = ru_datetime(reminder.remind_at)
+    return ToolResult(
+        summary=f"Напомню ({when}): {reminder.text}",
+        data={"reminder_id": reminder.id},
+        card={"type": "reminder", "text": reminder.text, "when": when},
     )
 
 

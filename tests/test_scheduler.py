@@ -101,3 +101,22 @@ def test_a_future_reminder_waits(db, head, catcher):
     scheduler.run_reminders(db, datetime.utcnow())
 
     assert [m for m in catcher if "Напоминаю" in m["text"]] == []
+
+
+def test_a_due_reminder_from_the_reminders_table_reaches_its_owner_once(db, head, catcher):
+    """Новая таблица напоминаний доставляется той же механикой, что и заметки."""
+    from app.modules.memory.models import Reminder
+
+    db.add(Reminder(user_id=head.id, text="забрать посылку",
+                    remind_at=datetime.utcnow() - timedelta(minutes=1)))
+    db.commit()
+
+    scheduler.run_reminders(db, datetime.utcnow())
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    reminders = [m for m in catcher if "забрать посылку" in m["text"]]
+    assert len(reminders) == 1
+    assert reminders[0]["user_ids"] == [head.id]
+
+    fired = db.query(Reminder).one()
+    assert fired.reminded_at is not None

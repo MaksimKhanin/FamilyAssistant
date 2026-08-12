@@ -64,6 +64,13 @@
           {% if card.when %}<div class="tiny">напомню: {{ card.when }}</div>{% endif %}
           <a class="btn link" href="/memory">Вся память и напоминания →</a>
         </div>
+      {% elif card.type == "reminder" %}
+        <div class="agent-card">
+          <span class="badge task">напоминание</span>
+          <div>{{ card.text }}</div>
+          <div class="tiny">⏱ {{ card.when }}</div>
+          <a class="btn link" href="/reminders">Все напоминания →</a>
+        </div>
       {% elif card.type == "recall" %}
         <div class="agent-card">
           {% for note in card.notes %}

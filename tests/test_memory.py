@@ -21,21 +21,17 @@ def test_remember_stores_a_note_and_returns_a_card(db, head):
     assert result.card["kind_label"] == "предпочтение"
 
 
-def test_relative_deadlines_become_real_reminders(db, head):
-    remember(ctx(db, head), text="позвонить врачу", kind=KIND_TASK, when="завтра")
+def test_remember_no_longer_offers_the_reminder_path(db):
+    """Напоминания заводит только set_reminder — у remember этой дороги больше нет.
 
-    note = service.list_notes(db, head.id)[0]
-    assert note.when_text == "завтра"
-    assert note.remind_at is not None
-    assert note.remind_at > datetime.utcnow()
+    Иначе у модели оставался бы второй, невалидируемый путь: заметка вида «task»
+    с расплывчатым сроком, которая молча не срабатывает (спека #19).
+    """
+    from app.agent import registry
 
-
-def test_vague_deadlines_stay_as_words(db, head):
-    remember(ctx(db, head), text="спросить про школу", kind=KIND_TASK, when="как-нибудь потом")
-
-    note = service.list_notes(db, head.id)[0]
-    assert note.when_text == "как-нибудь потом"
-    assert note.remind_at is None       # напоминать не по чему, всплывёт к слову
+    spec = registry.get("remember")
+    assert "when" not in spec.parameters["properties"]
+    assert KIND_TASK not in spec.parameters["properties"]["kind"]["enum"]
 
 
 def test_recall_only_reaches_its_owners_notes(db, head, member):

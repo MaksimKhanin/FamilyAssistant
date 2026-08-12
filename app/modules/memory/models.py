@@ -95,6 +95,24 @@ class BoardShare(Base):
     right = Column(String(8), nullable=False, default=RIGHT_VIEW)
 
 
+class Reminder(Base):
+    """Разовое напоминание — отдельная способность вне знаний (спека #19).
+
+    Живёт только с валидным абсолютным временем: без времени напоминание не
+    создаётся, ассистент переспрашивает. Сработавшее остаётся помеченным
+    (`reminded_at`) и убирается ретеншеном — руками его не закрывают.
+    """
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    text = Column(Text, nullable=False)
+    remind_at = Column(DateTime, nullable=False, index=True)
+    reminded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Note(Base):
     __tablename__ = "notes"
 
