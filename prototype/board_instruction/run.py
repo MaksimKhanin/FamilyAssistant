@@ -18,9 +18,31 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
 HERE = Path(__file__).parent
+
+
+def load_env() -> None:
+    """Подхватить .env из корня репозитория — конфиг приложения читает только
+    переменные окружения, а за их загрузку отвечают docker-compose / run_local.py,
+    которых при прямом запуске скрипта нет. Уже заданные переменные не трогаем.
+
+    SESSION_SECRET конфиг требует всегда, хотя прототипу сессии не нужны —
+    затыкаем выброской, если в .env его нет.
+    """
+    import os
+
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    os.environ.setdefault("SESSION_SECRET", "prototype-throwaway")
 FIXTURE = (HERE / "fixture.txt").read_text(encoding="utf-8")
 
 NOW = "суббота, 11.08.2026, 21:00"
@@ -86,6 +108,7 @@ def main() -> None:
 
     # Импорт здесь, а не наверху: сборку промптов можно смотреть и без
     # установленных зависимостей приложения.
+    load_env()
     from app.agent.llm import LLMClient, LLMUnavailable
 
     client = LLMClient()
