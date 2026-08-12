@@ -1,13 +1,50 @@
-"""Agent tools for memory: remember / recall_notes / set_reminder."""
-from datetime import datetime
+"""Agent tools for knowledge boards and reminders (tickets #24, #29).
+
+Полномочия ассистента равны полномочиям человека, который с ним говорит:
+все инструменты знаний ходят к доскам через `ctx.actor`, а не `ctx.subject` —
+экран знаний и доступ ассистента исключены из режима «от лица» (ADR-0005),
+иначе глава семьи получал бы чужие доски руками ассистента.
+"""
+from datetime import datetime, timedelta
 
 from app.agent.registry import ToolContext, ToolResult, tool
-from app.core.events import NOTE_CREATED, bus
-from app.core.templating import ru_date, ru_datetime
-from app.modules.memory import reminders, service
-from app.modules.memory.models import KIND_TASK, KIND_LABELS
+from app.core.templating import ru_datetime
+from app.modules.memory import knowledge, reminders
+from app.modules.memory.models import RIGHT_VIEW
 
 MODULE = "memory"
+
+
+def _ambiguous(kind: str, matches) -> ToolResult:
+    names = ", ".join(f"«{g.board.name}»" for g in matches)
+    return ToolResult(
+        summary=f"Название {kind} неоднозначно, подходят: {names}. "
+                f"Переспроси у человека, какая имеется в виду.",
+        ok=False,
+    )
+
+
+def _resolve_board(ctx: ToolContext, name: str):
+    """Доска по имени — или готовый ToolResult с отказом вместо догадки."""
+    matches = knowledge.find_boards_by_name(ctx.db, ctx.actor.id, name)
+    if not matches:
+        available = ", ".join(f"«{g.board.name}»"
+                              for g in knowledge.board_grants(ctx.db, ctx.actor.id))
+        return None, ToolResult(
+            summary=f"Доски «{name}» не нашёл. Доступные доски: {available or 'пока нет'}.",
+            ok=False,
+        )
+    if len(matches) > 1:
+        return None, _ambiguous("доски", matches)
+    return matches[0], None
+
+
+def _author_label(entry, names: dict) -> str:
+    if entry.by_assistant:
+        return "Ассистент"
+    if entry.author_id is None:
+        return "бывший участник"
+    return names.get(entry.author_id, "участник")
 
 
 @tool(
@@ -15,42 +52,38 @@ MODULE = "memory"
     module=MODULE,
     title="Запомнить",
     description="""
-    Сохранить в память факт о человеке или семье: предпочтение, ограничение по
-    здоровью или наблюдение. Вызывай, когда человек просит запомнить, или когда
-    в разговоре всплыл устойчивый факт, полезный в будущем (например «Соня не ест
-    грибы»). Формулируй кратко, в третьем лице. Для напоминаний со сроком этот
-    инструмент не годится — вызывай set_reminder.
+    Записать себе на личную доску «Память ассистента» устойчивый факт о человеке
+    или семье: предпочтение, ограничение по здоровью, наблюдение («Соня не ест
+    грибы»). Вызывай, когда человек просит запомнить или когда факт пригодится
+    в будущем. Формулируй кратко, в третьем лице. Для напоминаний со сроком —
+    set_reminder; для записи на конкретную доску по просьбе человека — write_entry.
     """,
     parameters={
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "Короткая формулировка факта"},
-            # «task» намеренно не предлагается: напоминания заводит только
-            # set_reminder, с валидным абсолютным временем (спека #19).
-            "kind": {"type": "string", "enum": [k for k in KIND_LABELS if k != KIND_TASK],
-                     "description": "pref — предпочтение, health — здоровье, fact — наблюдение"},
         },
         "required": ["text"],
     },
     auto_from=2,
 )
-def remember(ctx: ToolContext, text: str, kind: str = "fact") -> ToolResult:
-    note = service.add_note(
-        ctx.db, ctx.subject.id, text=text, kind=kind,
-        source=f"из разговора {ru_date(datetime.now())}",
-    )
-    bus.publish(NOTE_CREATED, {"note_id": note.id, "user_id": ctx.subject.id})
+def remember(ctx: ToolContext, text: str) -> ToolResult:
+    if not text.strip():
+        # До заведения доски: пустая формулировка не повод оставить за собой
+        # пустую «Память ассистента» на экране знаний.
+        return ToolResult(summary="Пустую формулировку не запомнить.", ok=False)
+    # Доска заводится лениво при первом запоминании (спека #19).
+    board = knowledge.assistant_board(ctx.db, ctx.actor.id)
+    entry = knowledge.add_assistant_entry(ctx.db, ctx.actor.id, board.id, text)
+    if entry is None:
+        return ToolResult(summary="Пустую формулировку не запомнить.", ok=False)
 
+    grant = knowledge.board_access(ctx.db, ctx.actor.id, board.id)
     return ToolResult(
-        summary=f"Запомнил: {note.text}.",
-        data={"note_id": note.id},
-        card={
-            "type": "memory",
-            "note_id": note.id,
-            "kind": note.kind,
-            "kind_label": KIND_LABELS.get(note.kind, "заметка"),
-            "text": note.text,
-        },
+        summary=f"Запомнил: {entry.text}.",
+        data={"entry_id": entry.id, "board_id": board.id},
+        card={"type": "board", "board": board.name, "text": entry.text,
+              "url": knowledge.board_url(grant)},
     )
 
 
@@ -101,69 +134,207 @@ def set_reminder(ctx: ToolContext, text: str, at: str) -> ToolResult:
 
 
 @tool(
-    name="recall_notes",
+    name="read_board",
+    module=MODULE,
+    title="Прочитать доску",
+    description="""
+    Прочитать содержимое одной доски знаний вместе с её инструкцией: «что было
+    за ночь», «покажи лог кормлений». Параметр board — название доски из списка
+    в системном промпте. query сужает до записей с подстрокой, period — до
+    записей за последние N дней.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "board": {"type": "string", "description": "Название доски"},
+            "query": {"type": "string", "description": "Подстрока для отбора записей"},
+            "period": {"type": "integer", "description": "Сколько последних дней показать"},
+        },
+        "required": ["board"],
+    },
+    read_only=True,
+)
+def read_board(ctx: ToolContext, board: str, query: str = None, period: int = None) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+
+    entries = knowledge.list_entries(ctx.db, ctx.actor.id, grant.board.id)
+    if period:
+        floor = datetime.utcnow() - timedelta(days=period)
+        entries = [e for e in entries if e.created_at >= floor]
+    if query:
+        lowered = query.strip().lower()
+        entries = [e for e in entries if lowered in e.text.lower()]
+    entries = entries[-100:]   # хвост: контекст модели не резиновый
+
+    names = {m.id: m.display_name for m in ctx.actor.family.members} if ctx.actor.family else {}
+    lines = [f"#{e.id} [{_author_label(e, names)}] {ru_datetime(e.created_at)}: {e.text}"
+             for e in entries]
+    instruction = (f"Инструкция доски: {grant.board.instruction}\n"
+                   if grant.board.instruction else "")
+    body = "\n".join(lines) if lines else "Записей нет."
+    return ToolResult(
+        summary=f"Доска «{grant.board.name}».\n{instruction}{body}",
+        data={"board_id": grant.board.id,
+              "entries": [{"id": e.id, "text": e.text} for e in entries]},
+    )
+
+
+@tool(
+    name="recall",
     module=MODULE,
     title="Вспомнить",
     description="""
-    Найти в памяти, что известно о человеке или семье. Вызывай перед советами о еде,
-    планами и покупками, а также когда человек спрашивает «что ты помнишь».
-    Параметр query — ключевое слово; без него вернутся последние и закреплённые заметки.
+    Найти по всем доступным доскам знаний, что известно о человеке или семье:
+    перед советами о еде, планами и покупками, и когда человек спрашивает
+    «что ты помнишь». query — ключевое слово; в выдаче указана доска, откуда факт.
     """,
     parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Ключевое слово для поиска"},
-            "kind": {"type": "string", "enum": list(KIND_LABELS)},
         },
+        "required": ["query"],
     },
     read_only=True,
 )
-def recall_notes(ctx: ToolContext, query: str = None, kind: str = None) -> ToolResult:
-    notes = service.search_notes(ctx.db, ctx.subject.id, query=query, kind=kind)
-    if not notes:
-        return ToolResult(summary="В памяти пока ничего подходящего нет.",
-                          data={"notes": []})
+def recall(ctx: ToolContext, query: str) -> ToolResult:
+    hits = knowledge.search_entries(ctx.db, ctx.actor.id, query)
+    if not hits:
+        return ToolResult(summary="На досках пока ничего подходящего нет.",
+                          data={"hits": []})
 
-    # Номер в строке — чтобы на «забудь про грибы» было чем сослаться на заметку.
-    lines = [f"- #{n.id} [{KIND_LABELS.get(n.kind, n.kind)}] {n.text}" for n in notes]
+    # Номер в строке — чтобы на «забудь про грибы» было чем сослаться на запись.
+    lines = [f"- #{e.id} (доска «{b.name}») {e.text}" for e, b in hits]
     return ToolResult(
-        summary="Из памяти:\n" + "\n".join(lines),
-        data={"notes": [{"id": n.id, "text": n.text, "kind": n.kind} for n in notes]},
+        summary="Нашёл на досках:\n" + "\n".join(lines),
+        data={"hits": [{"id": e.id, "text": e.text, "board": b.name} for e, b in hits]},
         card={
-            "type": "recall",
-            "notes": [{"id": n.id, "text": n.text, "kind": n.kind,
-                       "kind_label": KIND_LABELS.get(n.kind, "заметка"), "pinned": n.pinned}
-                      for n in notes[:4]],
+            "type": "board-recall",
+            "hits": [{"board": b.name, "text": e.text} for e, b in hits[:4]],
         },
     )
 
 
 @tool(
-    name="forget_note",
+    name="write_entry",
     module=MODULE,
-    title="Забыть заметку",
+    title="Записать на доску",
     description="""
-    Убрать из памяти заметку или напоминание: «забудь, что я говорил про грибы»,
-    «отмени напоминание про врача». Номер заметки бери из recall_notes; если его нет,
-    сначала вызови recall_notes и найди нужную.
-    Формулировку, которую человек перестал разделять, лучше забыть, а не переписывать
-    поверх: память — не журнал правок.
+    Добавить запись в ленту доски по просьбе человека: «запиши в кормления:
+    170 мл в 2:50». Параметр board — название доски из системного промпта.
+    Пиши на доски только по явной просьбе; для собственных наблюдений — remember.
+    Если название доски неоднозначно, инструмент вернёт варианты — переспроси.
     """,
     parameters={
         "type": "object",
         "properties": {
-            "note_id": {"type": "integer", "description": "Номер заметки из recall_notes"},
+            "board": {"type": "string", "description": "Название доски"},
+            "text": {"type": "string", "description": "Текст записи — слова человека, не пересказ"},
         },
-        "required": ["note_id"],
+        "required": ["board", "text"],
+    },
+    auto_from=2,
+)
+def write_entry(ctx: ToolContext, board: str, text: str) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+    if grant.right == RIGHT_VIEW:
+        return ToolResult(
+            summary=f"На доске «{grant.board.name}» у этого человека только просмотр — "
+                    f"писать туда нельзя.",
+            ok=False,
+        )
+
+    entry = knowledge.add_entry(ctx.db, ctx.actor.id, grant.board.id, text)
+    if entry is None:
+        return ToolResult(summary="Пустую запись не сохранить.", ok=False)
+    return ToolResult(
+        summary=f"Записал на доску «{grant.board.name}»: {entry.text}",
+        data={"entry_id": entry.id, "board_id": grant.board.id},
+        card={"type": "board", "board": grant.board.name, "text": entry.text,
+              "url": knowledge.board_url(grant)},
+    )
+
+
+@tool(
+    name="create_board",
+    module=MODULE,
+    title="Завести доску",
+    description="""
+    Завести новую доску в разделе человека: «заведи мне доску под показания
+    счётчиков». section — название существующего раздела; instruction — как
+    читать и вести доску (предложи её сам из слов человека). Удалять и
+    переименовывать доски и разделы ты не умеешь — это делается руками в панели.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "section": {"type": "string", "description": "Название раздела"},
+            "name": {"type": "string", "description": "Название новой доски"},
+            "instruction": {"type": "string",
+                            "description": "Инструкция ассистенту: как читать и вести доску"},
+        },
+        "required": ["section", "name"],
+    },
+    # Новая сущность в знаниях человека — по умолчанию спрашиваем.
+    auto_from=3,
+)
+def create_board(ctx: ToolContext, section: str, name: str, instruction: str = None) -> ToolResult:
+    sections = knowledge.find_sections_by_name(ctx.db, ctx.actor.id, section)
+    if not sections:
+        available = ", ".join(f"«{s.name}»"
+                              for s in knowledge.list_sections(ctx.db, ctx.actor.id))
+        return ToolResult(
+            summary=f"Раздела «{section}» нет. Разделы этого человека: "
+                    f"{available or 'пока нет — их заводят в панели'}.",
+            ok=False,
+        )
+    if len(sections) > 1:
+        names = ", ".join(f"«{s.name}»" for s in sections)
+        return ToolResult(summary=f"Название раздела неоднозначно, подходят: {names}. "
+                                  f"Переспроси у человека.", ok=False)
+
+    board = knowledge.create_board(ctx.db, ctx.actor.id, sections[0].id, name, instruction)
+    if board is None:
+        return ToolResult(summary="Доску с пустым названием не завести.", ok=False)
+    grant = knowledge.board_access(ctx.db, ctx.actor.id, board.id)
+    return ToolResult(
+        summary=f"Завёл доску «{board.name}» в разделе «{sections[0].name}».",
+        data={"board_id": board.id},
+        card={"type": "board", "board": board.name,
+              "text": board.instruction or "без инструкции",
+              "url": knowledge.board_url(grant)},
+    )
+
+
+@tool(
+    name="forget",
+    module=MODULE,
+    title="Забыть",
+    description="""
+    Удалить свою запись с доски «Память ассистента»: «забудь, что я говорил про
+    грибы». Номер записи бери из recall или read_board; если его нет — сначала
+    найди. Чужие записи — записи людей — ты не удаляешь и не правишь никогда.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "entry_id": {"type": "integer", "description": "Номер записи из recall"},
+        },
+        "required": ["entry_id"],
     },
     # Как и удаление еды: необратимо, поэтому спрашиваем на всех уровнях, кроме максимального.
     auto_from=3,
 )
-def forget_note(ctx: ToolContext, note_id: int) -> ToolResult:
-    note = service.get_note(ctx.db, ctx.subject.id, note_id)
-    if note is None:
-        return ToolResult(summary="Такой заметки нет — возможно, её уже забыли.", ok=False)
-
-    text = note.text
-    service.forget(ctx.db, ctx.subject.id, note.id)
-    return ToolResult(summary=f"Забыл: {text}.", data={"note_id": note_id})
+def forget(ctx: ToolContext, entry_id: int) -> ToolResult:
+    removed = knowledge.delete_assistant_entry(ctx.db, ctx.actor.id, entry_id)
+    if not removed:
+        return ToolResult(
+            summary="Эту запись удалить нельзя: либо её нет, либо она написана "
+                    "человеком — чужие записи ассистент не трогает.",
+            ok=False,
+        )
+    return ToolResult(summary="Забыл — запись удалена.", data={"entry_id": entry_id})

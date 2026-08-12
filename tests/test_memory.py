@@ -1,44 +1,7 @@
-"""Memory: notes are personal, and reminders resurface on time."""
+"""Старые заметки: сервис жив до переезда на доски (#33), экран пока на месте."""
 from datetime import datetime, timedelta
 
-from app.agent.registry import ToolContext
 from app.modules.memory import service
-from app.modules.memory.models import KIND_PREF, KIND_TASK
-from app.modules.memory.tools import recall_notes, remember
-
-
-def ctx(db, user) -> ToolContext:
-    return ToolContext(db=db, actor=user, subject=user)
-
-
-def test_remember_stores_a_note_and_returns_a_card(db, head):
-    result = remember(ctx(db, head), text="Соня не ест грибы", kind=KIND_PREF)
-
-    assert result.ok
-    note = service.list_notes(db, head.id)[0]
-    assert note.text == "Соня не ест грибы"
-    assert result.card["type"] == "memory"
-    assert result.card["kind_label"] == "предпочтение"
-
-
-def test_remember_no_longer_offers_the_reminder_path(db):
-    """Напоминания заводит только set_reminder — у remember этой дороги больше нет.
-
-    Иначе у модели оставался бы второй, невалидируемый путь: заметка вида «task»
-    с расплывчатым сроком, которая молча не срабатывает (спека #19).
-    """
-    from app.agent import registry
-
-    spec = registry.get("remember")
-    assert "when" not in spec.parameters["properties"]
-    assert KIND_TASK not in spec.parameters["properties"]["kind"]["enum"]
-
-
-def test_recall_only_reaches_its_owners_notes(db, head, member):
-    remember(ctx(db, head), text="Марина любит зелёный чай", kind=KIND_PREF)
-
-    assert "зелёный чай" in recall_notes(ctx(db, head), query="чай").summary
-    assert recall_notes(ctx(db, member), query="чай").data["notes"] == []
 
 
 def test_due_reminders_are_picked_up_once(db, head):

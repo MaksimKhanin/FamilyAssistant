@@ -21,7 +21,7 @@ RULES = [
                   "на обед", "на ужин")),
     ("log_activity", ("шаг", "прошёл", "прошел", "тренировк", "пробежал", "велосипед", "прогулял")),
     ("get_nutrition_stats", ("сколько сегодня", "статистик", "баланс", "калори", "норм")),
-    ("recall_notes", ("что ты помнишь", "что помнишь", "вспомни", "из памяти", "память")),
+    ("recall", ("что ты помнишь", "что помнишь", "вспомни", "из памяти", "память")),
     ("get_security_log", ("дом", "камер", "ночью", "событ", "тревог", "калитк")),
     ("suggest_meal_plan", ("план", "идеи", "что приготовить", "предложи")),
 ]
@@ -52,8 +52,7 @@ def _pick_tool(text: str, available: set) -> Optional[str]:
 def _arguments_for(name: str, text: str) -> Dict[str, Any]:
     if name == "remember":
         cleaned = re.sub(r"^\s*(запомни|запомнить|не забудь|напомни)[,:]?\s*", "", text, flags=re.I)
-        kind = "task" if any(w in text.lower() for w in ("напомни", "не забудь")) else "pref"
-        return {"text": cleaned.strip() or text.strip(), "kind": kind}
+        return {"text": cleaned.strip() or text.strip()}
 
     if name == "log_meal":
         return {"text": text.strip()}
@@ -69,8 +68,12 @@ def _arguments_for(name: str, text: str) -> Dict[str, Any]:
         period = "week" if "недел" in lowered else "month" if "месяц" in lowered else "day"
         return {"period": period}
 
-    if name == "recall_notes":
-        return {}
+    if name == "recall":
+        # Голое «что ты помнишь?» превращается в пустой запрос — recall на него
+        # отвечает свежими записями, а не поиском фразы-триггера.
+        cleaned = re.sub(r"^\s*(что ты помнишь|что помнишь|вспомни)( про| о| об)?[,:]?\s*",
+                         "", text, flags=re.I).strip(" ?")
+        return {"query": cleaned}
 
     if name == "get_security_log":
         lowered = text.lower()

@@ -409,6 +409,144 @@ def revoke_share(db: Session, user_id: int, board_id: int, member_id: int) -> bo
     return True
 
 
+# --- инструменты агента (#29) ----------------------------------------------------
+
+#: Личная доска ассистента: сюда он складывает то, что запомнил из разговора.
+ASSISTANT_BOARD_NAME = "Память ассистента"
+ASSISTANT_SECTION_NAME = "Личное"
+ASSISTANT_BOARD_INSTRUCTION = ("Сюда ассистент складывает то, что запомнил из "
+                               "разговоров: предпочтения, ограничения, наблюдения.")
+
+
+def find_boards_by_name(db: Session, user_id: int, name: str) -> List[BoardGrant]:
+    """Доска по имени среди доступных: точное совпадение без регистра, иначе
+    вхождение. Несколько совпадений — повод переспросить, а не угадывать."""
+    grants = board_grants(db, user_id)
+    lowered = name.strip().lower()
+    if not lowered:
+        return []
+    exact = [g for g in grants if g.board.name.lower() == lowered]
+    if exact:
+        return exact
+    return [g for g in grants if lowered in g.board.name.lower()]
+
+
+def find_sections_by_name(db: Session, user_id: int, name: str) -> List[Section]:
+    lowered = name.strip().lower()
+    if not lowered:
+        return []
+    sections = list_sections(db, user_id)
+    exact = [s for s in sections if s.name.lower() == lowered]
+    if exact:
+        return exact
+    return [s for s in sections if lowered in s.name.lower()]
+
+
+def search_entries(db: Session, user_id: int, query: str, limit: int = 8):
+    """Поиск подстрокой по всем доступным доскам; выдача помнит, с какой доски
+    факт, — иначе он теряет контекст. Поиск не дотягивается до чужого:
+    границу держит board_grants. Пустой запрос — просто свежие записи:
+    «что ты помнишь» без ключевого слова тоже законный вопрос."""
+    boards = {g.board.id: g.board for g in board_grants(db, user_id)}
+    if not boards:
+        return []
+    rows = db.query(BoardEntry).filter(BoardEntry.board_id.in_(boards))
+    needle = (query or "").strip()
+    if needle:
+        # % и _ в запросе — буквы, а не метасимволы LIKE: «100%» не должен
+        # находить «1000 шагов».
+        escaped = (needle.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_"))
+        rows = rows.filter(BoardEntry.text.ilike(f"%{escaped}%", escape="\\"))
+    rows = (rows.order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc())
+            .limit(limit)
+            .all())
+    return [(entry, boards[entry.board_id]) for entry in rows]
+
+
+def assistant_board(db: Session, user_id: int) -> Board:
+    """Доска «Память ассистента» — заводится лениво при первом запоминании,
+    вместе с разделом «Личное», если его ещё нет."""
+    board = (db.query(Board)
+             .join(Section, Board.section_id == Section.id)
+             .filter(Section.user_id == user_id, Board.name == ASSISTANT_BOARD_NAME)
+             .first())
+    if board is not None:
+        return board
+    section = (db.query(Section)
+               .filter(Section.user_id == user_id, Section.name == ASSISTANT_SECTION_NAME)
+               .first())
+    if section is None:
+        section = Section(user_id=user_id, name=ASSISTANT_SECTION_NAME)
+        db.add(section)
+        db.flush()
+    board = Board(section_id=section.id, name=ASSISTANT_BOARD_NAME,
+                  instruction=ASSISTANT_BOARD_INSTRUCTION)
+    db.add(board)
+    db.commit()
+    db.refresh(board)
+    return board
+
+
+def add_assistant_entry(db: Session, user_id: int, board_id: int,
+                        text: str) -> Optional[BoardEntry]:
+    """Запись авторства ассистента (author_id NULL, by_assistant) — только на
+    доску, которой владеет человек: по своей инициативе ассистент на
+    расшаренные доски не пишет."""
+    board = _own_board(db, user_id, board_id)
+    text = text.strip()
+    if board is None or not text:
+        return None
+    entry = BoardEntry(board_id=board.id, author_id=None, by_assistant=True, text=text)
+    now = datetime.utcnow()
+    board.last_activity_at = now
+    db.get(Section, board.section_id).last_activity_at = now
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def delete_assistant_entry(db: Session, user_id: int, entry_id: int) -> bool:
+    """Ассистент удаляет только свои записи: необратимое действие в общем
+    документе остаётся за человеком."""
+    entry = db.get(BoardEntry, entry_id)
+    if entry is None or not entry.by_assistant:
+        return False
+    if _own_board(db, user_id, entry.board_id) is None:
+        return False
+    db.delete(entry)
+    db.commit()
+    return True
+
+
+def boards_prompt(db: Session, user_id: int) -> str:
+    """Названия и инструкции доступных досок — для системного промпта.
+
+    По одному названию модель не понимает, что доска значит; содержимое при
+    этом в контекст не кладётся — только инструментом read_board (спека #19).
+    """
+    grants = board_grants(db, user_id)
+    if not grants:
+        return ""
+    owners = board_owner_names(db, grants)
+    lines = []
+    for grant in sorted(grants, key=lambda g: (g.board.last_activity_at, g.board.id),
+                        reverse=True):
+        where = ("своя" if grant.right == RIGHT_OWNER
+                 else f"{owners[grant.board.id]}, {RIGHT_LABELS[grant.right]}")
+        instruction = f" — {grant.board.instruction}" if grant.board.instruction else ""
+        lines.append(f"- «{grant.board.name}» ({where}){instruction}")
+    return "Доски знаний, доступные этому человеку:\n" + "\n".join(lines) + "\n"
+
+
+def board_url(grant: BoardGrant) -> str:
+    """Адрес доски глазами получившего грант: своя — в своём разделе,
+    расшаренная — в «Общем»."""
+    if grant.right == RIGHT_OWNER:
+        return f"/memory?section={grant.board.section_id}&board={grant.board.id}"
+    return f"/memory?section=common&board={grant.board.id}"
+
+
 def board_audience(db: Session, user_id: int, board_id: int) -> Optional[dict]:
     """Состав доступа к доске — его видит любой допущенный: понятно, кто
     прочтёт то, что ты пишешь."""

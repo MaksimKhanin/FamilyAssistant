@@ -64,6 +64,22 @@
           {% if card.when %}<div class="tiny">напомню: {{ card.when }}</div>{% endif %}
           <a class="btn link" href="/memory">Вся память и напоминания →</a>
         </div>
+      {% elif card.type == "board" %}
+        <div class="agent-card">
+          <span class="badge fact">{{ card.board }}</span>
+          <div>{{ card.text }}</div>
+          <a class="btn link" href="{{ card.url or '/memory' }}">Открыть доску →</a>
+        </div>
+      {% elif card.type == "board-recall" %}
+        <div class="agent-card">
+          {% for hit in card.hits %}
+            <div class="row" style="gap:8px;align-items:flex-start">
+              <span class="badge fact">{{ hit.board }}</span>
+              <span>{{ hit.text }}</span>
+            </div>
+          {% endfor %}
+          <a class="btn link" href="/memory">Все знания →</a>
+        </div>
       {% elif card.type == "reminder" %}
         <div class="agent-card">
           <span class="badge task">напоминание</span>

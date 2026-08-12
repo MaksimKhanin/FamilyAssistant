@@ -301,11 +301,7 @@ def _board_url(db: Session, current: User, board_id: int) -> str:
     """Адрес доски глазами смотрящего: своя открывается в своём разделе,
     расшаренная — в «Общем»."""
     grant = knowledge.board_access(db, current.id, board_id) if board_id else None
-    if grant is None:
-        return "/memory"
-    if grant.right == knowledge.RIGHT_OWNER:
-        return f"/memory?section={grant.board.section_id}&board={grant.board.id}"
-    return f"/memory?section=common&board={grant.board.id}"
+    return knowledge.board_url(grant) if grant is not None else "/memory"
 
 
 @router.post("/entries/add")
