@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts
+# Миграции — чтобы `alembic upgrade head` работал прямо из контейнера.
+COPY alembic.ini .
+COPY migrations ./migrations
 
 EXPOSE 8000
 

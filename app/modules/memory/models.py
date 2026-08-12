@@ -1,7 +1,12 @@
-"""Notes the assistant keeps about a person — personal, scoped by user_id."""
+"""Knowledge a person keeps with the assistant — personal, scoped by user_id.
+
+Two generations side by side: the old flat notes (below) and the knowledge
+schema replacing them — sections → boards → entries, plus per-person shares
+(spec #19). Notes stay until the data migration moves them onto boards.
+"""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.core.db import Base
 
@@ -17,6 +22,77 @@ KIND_LABELS = {
     KIND_TASK: "напоминание",
     KIND_FACT: "наблюдение",
 }
+
+
+# --- знания: разделы → доски → записи (спека #19) ---
+
+#: Права доступа к чужой доске (см. board_shares.right).
+RIGHT_VIEW = "view"    # просмотр
+RIGHT_EDIT = "edit"    # редактирование: свои записи; чужие правит только владелец
+
+
+class Section(Base):
+    """Раздел — личная рубрика знаний. Чужих разделов не видит никто."""
+    __tablename__ = "sections"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    name = Column(String(128), nullable=False)
+    pinned = Column(Boolean, nullable=False, default=False)
+    #: Денормализованное время последней записи на досках раздела — по нему
+    #: сортируется полоса разделов (закреплённые, затем по свежести).
+    last_activity_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class Board(Base):
+    """Доска — лента записей с инструкцией ассистенту.
+
+    Владелец не дублируется: вычисляется через раздел (`section.user_id`), чтобы
+    перенос доски между разделами не мог разъехаться с правами.
+    """
+    __tablename__ = "boards"
+
+    id = Column(Integer, primary_key=True)
+    section_id = Column(Integer, ForeignKey("sections.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    name = Column(String(128), nullable=False)
+    #: Как ассистенту читать и вести содержимое: «19.50 170 — время и миллилитры».
+    instruction = Column(Text, nullable=True)
+    last_activity_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class BoardEntry(Base):
+    """Запись в ленте доски. Принадлежит документу, а не автору (ADR-0004).
+
+    Три вида авторства различаются парой полей, потому что `author_id = NULL`
+    занят ушедшим участником: (id, false) — человек, (NULL, true) — ассистент,
+    (NULL, false) — «бывший участник».
+    """
+    __tablename__ = "board_entries"
+
+    id = Column(Integer, primary_key=True)
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    by_assistant = Column(Boolean, nullable=False, default=False)
+
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    #: Правки не тихие: у поправленной записи в ленте видна пометка «изменено».
+    edited_at = Column(DateTime, nullable=True)
+
+
+class BoardShare(Base):
+    """Поимённый доступ к доске: просмотр или редактирование."""
+    __tablename__ = "board_shares"
+    __table_args__ = (UniqueConstraint("board_id", "user_id", name="uq_board_share"),)
+
+    id = Column(Integer, primary_key=True)
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    right = Column(String(8), nullable=False, default=RIGHT_VIEW)
 
 
 class Note(Base):

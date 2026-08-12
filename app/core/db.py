@@ -5,8 +5,9 @@ level by always scoping module tables on `user_id` (personal data) or `family_id
 (shared data such as cameras). See docs/module-contract.md.
 """
 from contextlib import contextmanager
+from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -58,9 +59,34 @@ def session_scope():
 
 
 def create_all():
-    """Create tables for everything imported so far.
+    """Deploy an empty database; a live one is left to Alembic.
 
     Module models must already be imported (app.modules.load_modules does that)
     or their tables will be missing from the metadata.
+
+    На живой базе ничего не делает: схему меняет только `alembic upgrade head`
+    (см. docs/deployment.md). Если бы create_all продолжал досоздавать таблицы
+    на живой базе, каждый сервис, поднятый до прогона миграций, убегал бы вперёд
+    них — и каждой будущей миграции пришлось бы защищаться от «таблица уже есть».
     """
+    if "users" in inspect(engine).get_table_names():
+        return
     Base.metadata.create_all(bind=engine)
+    _stamp_migrations_head()
+
+
+def _stamp_migrations_head():
+    """Пометить свежесозданную базу головой миграций.
+
+    База, только что созданная из моделей, по построению совпадает с головой:
+    autogenerate-миграции — это дифф тех же моделей. Без штампа последующий
+    `alembic upgrade head` начал бы с baseline и споткнулся о существующие таблицы.
+    """
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    script = ScriptDirectory.from_config(config)
+    with engine.begin() as connection:
+        MigrationContext.configure(connection).stamp(script, script.get_current_head())
