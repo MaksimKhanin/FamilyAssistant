@@ -309,6 +309,8 @@
     });
 
     if (document.getElementById('push-state')) paintPushCard();
+
+    collapseSectionStrip();
   }
 
   /* ============================ экран профиля =========================== */
@@ -364,6 +366,55 @@
                    not_configured: 'На сервере не заданы ключи VAPID.' }[result.status];
     document.getElementById('push-devices').textContent = text || 'Не получилось отправить.';
   }
+
+  /* ============================ экран знаний ============================ */
+
+  // Полоса разделов: всё, что не влезло по ширине, уходит в меню «⋯».
+  // Активный раздел не прячется никогда — иначе непонятно, где ты находишься.
+  // Без JavaScript полоса просто переносится на новые строки (style.css).
+  function collapseSectionStrip() {
+    const strip = document.querySelector('[data-section-strip]');
+    if (!strip) return;
+    const more = strip.querySelector('[data-strip-more]');
+    const menu = strip.querySelector('[data-strip-menu]');
+    // Меню чистится до сбора полос: иначе повторный прогон (resize) собрал бы
+    // и собственные клоны из меню и плодил бы дубликаты.
+    menu.hidden = true;
+    menu.innerHTML = '';
+    const chips = [...strip.querySelectorAll('[data-strip-item]')];
+
+    chips.forEach(chip => { chip.hidden = false; });
+    more.hidden = true;
+    strip.classList.add('nowrap');
+
+    const fits = () => strip.scrollWidth <= strip.clientWidth;
+    if (fits()) return;
+
+    more.hidden = false;
+    for (let i = chips.length - 1; i >= 0 && !fits(); i--) {
+      if (chips[i].hasAttribute('data-strip-active')) continue;
+      chips[i].hidden = true;
+      const clone = chips[i].cloneNode(true);
+      clone.hidden = false;
+      menu.prepend(clone);
+    }
+    // Клоны появились после разбора страницы — иначе переход по ним
+    // перезагружал бы документ вместо подмены тела (ADR-0001).
+    htmx.process(menu);
+
+    strip.querySelector('[data-strip-more-btn]').onclick = event => {
+      event.stopPropagation();
+      menu.hidden = !menu.hidden;
+    };
+  }
+
+  window.addEventListener('resize', collapseSectionStrip);
+
+  // Меню «⋯» закрывается кликом мимо него — как любое выпадающее меню.
+  document.addEventListener('click', () => {
+    const menu = document.querySelector('[data-strip-menu]');
+    if (menu) menu.hidden = true;
+  });
 
   /* ===================== мелочи отдельных экранов ======================= */
 

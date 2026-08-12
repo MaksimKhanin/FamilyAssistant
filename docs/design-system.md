@@ -61,7 +61,7 @@ sidebar 246px  |  header (sticky)
 |---|---|---|
 | Главная | `dashboard.html` | `/` |
 | Панель чата | `partials/chat_panel.html`, `chat_messages.html` | `/chat/panel` |
-| Память и заметки | `memory/memory.html` | `/memory` |
+| Знания (бывш. «Память и заметки») | `memory/memory.html` | `/memory` |
 | Приём пищи (ввод → оценка → сохранено) | `nutrition/meal.html` | `/nutrition/meal` |
 | Статистика | `nutrition/stats.html` | `/nutrition/stats` |
 | Активность | `nutrition/activity.html` | `/nutrition/activity` |

@@ -1,21 +1,83 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="row wrap" style="gap:8px;margin-bottom:16px">
-  {% for value, label in filters %}
-    <a class="chip {% if active_filter == value %}active{% endif %}"
-       href="/memory{% if value %}?kind={{ value }}{% endif %}">{{ label }}</a>
+{# Полоса разделов: закреплённые впереди, дальше по свежести, «Общее» в конце.
+   Что не влезло по ширине, app.js прячет в «⋯»; активный раздел помечен
+   data-strip-active и не прячется никогда (тикет #25, прототип #16). #}
+<div class="section-strip" data-section-strip>
+  {% for section in sections %}
+    <a class="chip {% if active_section and active_section.id == section.id %}active{% endif %}"
+       data-strip-item
+       {% if active_section and active_section.id == section.id %}data-strip-active{% endif %}
+       href="/memory?section={{ section.id }}"
+      >{% if section.pinned %}<span class="pin">📌</span>{% endif %}{{ section.name }}</a>
   {% endfor %}
+  <a class="chip {% if common_active %}active{% endif %}"
+     data-strip-item {% if common_active %}data-strip-active{% endif %}
+     href="/memory?section=common">Общее</a>
+  <details class="strip-pop">
+    <summary class="chip dashed">+ раздел</summary>
+    <form class="pop stack" method="post" action="/memory/sections/add">
+      <input class="field" name="name" placeholder="Например: Ремонт" required maxlength="128">
+      <button class="btn small" type="submit">Завести раздел</button>
+    </form>
+  </details>
+  <div class="strip-pop" data-strip-more hidden>
+    <button class="chip" type="button" data-strip-more-btn aria-label="Ещё разделы">⋯</button>
+    <div class="pop stack" data-strip-menu hidden></div>
+  </div>
 </div>
 
-<div class="two-col">
-  <div class="stack">
-    {% for note in notes %}
-      <div class="card tight stack" style="gap:8px">
-        <div class="row wrap" style="gap:8px">
-          <span class="badge {{ note.kind }}">{{ kind_labels.get(note.kind, "заметка") }}</span>
-          <span class="tiny">{{ note.source }}</span>
-          {% if editable %}
+{% if active_section %}
+  <div class="row wrap" style="gap:8px;margin-bottom:16px">
+    <form method="post" action="/memory/sections/{{ active_section.id }}/pin">
+      <button class="btn ghost small" type="submit">
+        {{ "Открепить" if active_section.pinned else "Закрепить" }}
+      </button>
+    </form>
+    <details class="strip-pop">
+      <summary class="btn ghost small">Переименовать</summary>
+      <form class="pop stack" method="post" action="/memory/sections/{{ active_section.id }}/rename">
+        <input class="field" name="name" value="{{ active_section.name }}" required maxlength="128">
+        <button class="btn small" type="submit">Сохранить</button>
+      </form>
+    </details>
+    <details class="strip-pop">
+      <summary class="btn ghost small" style="color:var(--alarm-text)">Удалить</summary>
+      <div class="pop stack">
+        <p class="tiny" style="margin:0">Раздел «{{ active_section.name }}» и его доски будут удалены.</p>
+        <form method="post" action="/memory/sections/{{ active_section.id }}/delete">
+          <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить раздел</button>
+        </form>
+      </div>
+    </details>
+  </div>
+  <div class="card stack">
+    <div class="card-title">В разделе «{{ active_section.name }}» пока пусто</div>
+    <p class="muted">Здесь появятся доски — ленты записей с инструкцией ассистенту.</p>
+  </div>
+
+{% elif common_active %}
+  <div class="card stack">
+    <div class="card-title">«Общее» пока пустое</div>
+    <p class="muted">Сюда попадут доски, которыми с вами поделятся другие участники семьи.</p>
+  </div>
+
+{% else %}
+  <div class="row wrap" style="gap:8px;margin-bottom:16px">
+    {% for value, label in filters %}
+      <a class="chip {% if active_filter == value %}active{% endif %}"
+         href="/memory{% if value %}?kind={{ value }}{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="two-col">
+    <div class="stack">
+      {% for note in notes %}
+        <div class="card tight stack" style="gap:8px">
+          <div class="row wrap" style="gap:8px">
+            <span class="badge {{ note.kind }}">{{ kind_labels.get(note.kind, "заметка") }}</span>
+            <span class="tiny">{{ note.source }}</span>
             <span class="spacer"></span>
             <form method="post" action="/memory/{{ note.id }}/pin">
               <button class="btn link small" type="submit">{{ "Закреплено" if note.pinned else "Закрепить" }}</button>
@@ -23,23 +85,21 @@
             <form method="post" action="/memory/{{ note.id }}/forget">
               <button class="btn link small" type="submit" style="color:var(--alarm-text)">Забыть</button>
             </form>
-          {% endif %}
+          </div>
+          <div>{{ note.text }}</div>
+          <div class="tiny">
+            {% if note.when_text %}⏱ напомню: {{ note.when_text }}{% else %}когда придётся к слову{% endif %}
+          </div>
         </div>
-        <div>{{ note.text }}</div>
-        <div class="tiny">
-          {% if note.when_text %}⏱ напомню: {{ note.when_text }}{% else %}когда придётся к слову{% endif %}
+      {% else %}
+        <div class="card stack">
+          <div class="card-title">Память пока пустая</div>
+          <p class="muted">Скажите ассистенту «запомни…» — или добавьте заметку справа.</p>
         </div>
-      </div>
-    {% else %}
-      <div class="card stack">
-        <div class="card-title">Память пока пустая</div>
-        <p class="muted">Скажите ассистенту «запомни…» — или добавьте заметку справа.</p>
-      </div>
-    {% endfor %}
-  </div>
+      {% endfor %}
+    </div>
 
-  <div class="stack">
-    {% if editable %}
+    <div class="stack">
       <form class="card stack" method="post" action="/memory/add">
         <div class="card-title">Добавить в память</div>
         <textarea class="field" name="text" rows="3" placeholder="Например: Соня не ест грибы"></textarea>
@@ -50,20 +110,20 @@
         </select>
         <button class="btn" type="submit">Добавить в память</button>
       </form>
-    {% endif %}
 
-    <div class="card dark stack">
-      <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
-      <p>
-        Ассистент запоминает то, что всплывает в разговоре, и возвращается к этому,
-        когда приходится к слову. Ничего из этого не видят другие члены семьи.
-      </p>
-      <p class="tiny" style="color:var(--dark-text-2)">
-        {{ counters.total|counted("заметка", "заметки", "заметок") }} в памяти ·
-        {{ counters.waiting }} {{ counters.waiting|plural("ждёт", "ждут", "ждут") }} напоминания
-      </p>
+      <div class="card dark stack">
+        <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
+        <p>
+          Ассистент запоминает то, что всплывает в разговоре, и возвращается к этому,
+          когда приходится к слову. Ничего из этого не видят другие члены семьи.
+        </p>
+        <p class="tiny" style="color:var(--dark-text-2)">
+          {{ counters.total|counted("заметка", "заметки", "заметок") }} в памяти ·
+          {{ counters.waiting }} {{ counters.waiting|plural("ждёт", "ждут", "ждут") }} напоминания
+        </p>
+      </div>
     </div>
   </div>
-</div>
+{% endif %}
 
 {% endblock %}

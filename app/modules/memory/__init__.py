@@ -10,11 +10,11 @@ from app.modules.memory.routes import reminders_router, router
 
 module = Module(
     name="memory",
-    title="Память и заметки",
+    title="Знания",
     description="Ассистент помнит предпочтения, ограничения и напоминания",
     routers=[router, reminders_router],
-    nav_items=[NavItem(slug="memory", label="Память и заметки", url="/memory",
-                       icon="note", short="Память"),
+    nav_items=[NavItem(slug="memory", label="Знания", url="/memory",
+                       icon="note", short="Знания"),
                NavItem(slug="reminders", label="Напоминания", url="/reminders",
                        icon="clock", short="Напомнить")],
     per_user=True,

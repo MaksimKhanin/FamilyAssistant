@@ -552,3 +552,29 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
   ::view-transition-new(*) { animation: none !important; }
   #nav-progress.on::after { animation: none; width: 100%; }
 }
+
+/* ---------- экран знаний: полоса разделов (тикет #25) ---------- */
+
+/* Без JavaScript полоса просто переносится на новые строки; app.js переводит её
+   в одну строку и прячет не влезшее в меню «⋯» — активный раздел не прячется
+   никогда. */
+.section-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.section-strip.nowrap { flex-wrap: nowrap; }
+.section-strip .chip { white-space: nowrap; flex: none; }
+.section-strip .chip .pin { opacity: .55; }
+.chip.dashed { border: 1px dashed var(--border-dashed); background: transparent; }
+/* .chip задаёт display и перебивает браузерное [hidden] — возвращаем его силу */
+.chip[hidden] { display: none; }
+
+/* Всплывашки полосы: форма нового раздела, меню «⋯», действия раздела.
+   <details> раскрывается и закрывается без единой строчки кода. */
+.strip-pop { position: relative; flex: none; }
+.strip-pop summary { list-style: none; cursor: pointer; user-select: none; }
+.strip-pop summary::-webkit-details-marker { display: none; }
+.pop {
+  position: absolute; z-index: 30; margin-top: 6px; min-width: 220px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px;
+  padding: 12px; box-shadow: 0 12px 32px rgba(35, 32, 28, .14);
+}
+.pop[hidden] { display: none; }
+.pop .chip { display: flex; }
