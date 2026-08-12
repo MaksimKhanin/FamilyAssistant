@@ -11,15 +11,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Ассистент">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ static_url('icons/apple-touch-icon.png') }}">
+  <link rel="icon" href="{{ static_url('icons/favicon-32.png') }}" sizes="32x32">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="{{ static_url('style.css') }}">
+  <script src="{{ static_url('htmx.min.js') }}" defer></script>
+  <script src="{{ static_url('app.js') }}" defer></script>
   <style>:root { --acc: {{ accent }}; }</style>
 </head>
 {# hx-boost: переход подменяет тело документа вместо перезагрузки страницы.

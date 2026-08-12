@@ -13,7 +13,7 @@ from app.core.auth import get_current_user, get_viewed_user
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render
-from app.modules.security import control, service
+from app.modules.security import control, service, thumbnails
 from app.modules.security.models import Camera
 from app.web.context import screen_context
 
@@ -23,6 +23,13 @@ FILTERS = [("all", "Всё"), ("anomaly", "Только аномалии"), ("no
 ARCHIVE_FILTERS = [("all", "Всё"), ("alerts", "Только срабатывания")]
 
 STREAM_CHUNK = 256 * 1024
+
+#: Файлы с камер иммутабельны: ретенция их удаляет, но никогда не перезаписывает.
+#: Поэтому браузеру можно неделю не переспрашивать — иначе каждая картинка в
+#: сетке на каждый визит гоняет запрос с авторизацией и несколькими SELECT.
+#: `private` — файлы за авторизацией, общим кешам их хранить нельзя. Кеш
+#: неизменяемых файлов не спорит с ADR-0003: тот про устаревшие данные экранов.
+MEDIA_CACHE = {"Cache-Control": "private, max-age=604800"}
 
 
 def _serve(path: Path, media_type: str, request: Request) -> Response:
@@ -35,7 +42,8 @@ def _serve(path: Path, media_type: str, request: Request) -> Response:
     size = path.stat().st_size
     raw = request.headers.get("range", "")
     if not raw.startswith("bytes="):
-        return FileResponse(path, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+        return FileResponse(path, media_type=media_type,
+                            headers={"Accept-Ranges": "bytes", **MEDIA_CACHE})
 
     start_text, _, end_text = raw[len("bytes="):].partition("-")
     try:
@@ -66,6 +74,7 @@ def _serve(path: Path, media_type: str, request: Request) -> Response:
         "Content-Range": f"bytes {start}-{end}/{size}",
         "Content-Length": str(end - start + 1),
         "Accept-Ranges": "bytes",
+        **MEDIA_CACHE,
     })
 
 
@@ -293,6 +302,7 @@ async def camera_control(
 @router.get("/snapshot/{event_id}")
 def snapshot(
     event_id: int,
+    thumb: bool = False,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -303,7 +313,16 @@ def snapshot(
     event = service.get_event(db, viewed.family_id, event_id)
     if event is None or not event.snapshot_path or not media.is_inside_media_root(event.snapshot_path):
         raise HTTPException(status_code=404)
-    return FileResponse(event.snapshot_path, media_type="image/jpeg")
+
+    path = Path(event.snapshot_path)
+    if thumb:
+        # Лента показывает превью, полный кадр открывает только карточка события.
+        # Превью может не сделаться (см. thumbnails.generate) — тогда честнее
+        # отдать оригинал, чем дырку в ленте.
+        thumb_path = thumbnails.thumbnail_path_for(path)
+        if thumb_path.exists() and media.is_inside_media_root(str(thumb_path)):
+            path = thumb_path
+    return FileResponse(path, media_type="image/jpeg", headers=MEDIA_CACHE)
 
 
 @router.get("/camera-preview/{camera_id}")

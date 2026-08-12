@@ -4,7 +4,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.core import family as family_service
-from app.core.access import is_module_enabled
+from app.core.access import access_matrix
 from app.core.auth import can_see_figures, get_current_user, get_viewed_user
 from app.core.clock import local_now
 from app.core.db import get_db
@@ -35,8 +35,8 @@ def dashboard(
     context = screen_context(request, db, current, viewed,
                              title="Главная", subtitle="Спокойный обзор дня — питание и дом")
 
-    nutrition_on = is_module_enabled(db, viewed.id, "nutrition")
-    security_on = is_module_enabled(db, viewed.id, "security")
+    nutrition_on = "nutrition" in context["enabled_modules"]
+    security_on = "security" in context["enabled_modules"]
 
     day = None
     profile = None
@@ -88,10 +88,14 @@ def _family_strip(db: Session, current: User, viewed: User):
     """
     from app.modules.nutrition import service as nutrition_service
 
+    # Флаги модулей всей семьи одним запросом — вместо двух на каждого участника.
+    matrix = access_matrix(db, viewed.family_id, ["nutrition", "security"])
+
     rows = []
     for member in family_service.members(db, viewed.family_id):
-        nutrition_on = is_module_enabled(db, member.id, "nutrition")
-        security_on = is_module_enabled(db, member.id, "security")
+        flags = matrix.get(member.id, {})
+        nutrition_on = flags.get("nutrition", True)
+        security_on = flags.get("security", True)
         last_meal = None
         progress = 0
         if nutrition_on:

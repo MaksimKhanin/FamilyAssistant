@@ -5,12 +5,16 @@
  * стили, скрипт и иконки, чтобы приложение открывалось мгновенно.
  */
 
-const CACHE = 'family-assistant-v1';
+const CACHE = 'family-assistant-v2';
 const SHELL = [
   '/static/style.css',
   '/static/app.js',
   '/static/htmx.min.js',
   '/static/icons/icon-192.png',
+  '/static/fonts/manrope-cyrillic.woff2',
+  '/static/fonts/manrope-latin.woff2',
+  '/static/fonts/playfair-display-cyrillic.woff2',
+  '/static/fonts/playfair-display-latin.woff2',
 ];
 
 self.addEventListener('install', event => {
@@ -32,11 +36,13 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !url.pathname.startsWith('/static/')) return;
 
-  // Оболочка: отдаём из кеша, но обновляем в фоне.
+  // Оболочка: отдаём из кеша, но обновляем в фоне. ignoreSearch — потому что
+  // ссылки несут версию в query (?v=хэш), а кеш хранит файл по чистому пути.
   event.respondWith(
-    caches.match(request).then(cached => {
+    caches.match(request, { ignoreSearch: true }).then(cached => {
       const network = fetch(request).then(response => {
-        if (response.ok) caches.open(CACHE).then(cache => cache.put(request, response.clone()));
+        // Кладём по чистому пути, без ?v= — иначе копилась бы копия на каждую версию.
+        if (response.ok) caches.open(CACHE).then(cache => cache.put(url.origin + url.pathname, response.clone()));
         return response;
       }).catch(() => cached);
       return cached || network;

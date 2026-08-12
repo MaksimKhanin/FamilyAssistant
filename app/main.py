@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -55,14 +56,33 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Семейный ассистент", docs_url=None, redoc_url=None, lifespan=lifespan)
 
+# Экран — это целый HTML-документ (ADR-0001), и по мобильной сети он летает
+# только сжатым. Медиа с камер middleware не трогает сам: jpeg, video/* и
+# 206-ответы (перемотка видео) в его списке исключений.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 
 @app.exception_handler(NotAuthenticatedException)
 def not_authenticated_handler(request: Request, exc: NotAuthenticatedException):
     return RedirectResponse("/login", status_code=303)
 
 
+class CachedStaticFiles(StaticFiles):
+    """Статика с годовым кешем.
+
+    Ссылки на неё идут через `static_url` (см. core/templating.py) и несут хэш
+    содержимого в query: файл поменялся — поменялся URL, поэтому браузеру можно
+    не переспрашивать вовсе. Без этого каждый холодный старт PWA шёл на сервер
+    за каждым файлом.
+    """
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 static_dir = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+app.mount("/static", CachedStaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(routes_auth.router)
 app.include_router(routes_invite.router)

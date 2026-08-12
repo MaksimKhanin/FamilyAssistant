@@ -14,7 +14,8 @@
     <a class="event {% if event.verdict == 'anomaly' %}anomaly{% elif event.verdict == 'check' %}check{% endif %}"
        href="/security/events?only={{ active_filter }}&event_id={{ event.id }}">
       {% if event.snapshot_path %}
-        <img class="event-preview" src="/security/snapshot/{{ event.id }}" alt="">
+        <img class="event-preview" src="/security/snapshot/{{ event.id }}?thumb=1"
+             loading="lazy" decoding="async" alt="">
       {% else %}
         <div class="event-preview"></div>
       {% endif %}
