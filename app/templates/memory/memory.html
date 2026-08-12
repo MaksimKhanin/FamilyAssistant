@@ -52,9 +52,75 @@
       </div>
     </details>
   </div>
-  <div class="card stack">
-    <div class="card-title">В разделе «{{ active_section.name }}» пока пусто</div>
-    <p class="muted">Здесь появятся доски — ленты записей с инструкцией ассистенту.</p>
+  {# Список досок раздела рядом с выбранной; на узком экране колонки складываются
+     в одну (тикет #26). Лента записей придёт следующим шагом (#27). #}
+  <div class="board-cols">
+    <div class="stack" style="gap:8px">
+      {% for board in boards %}
+        <a class="board-item {% if active_board and active_board.id == board.id %}active{% endif %}"
+           href="/memory?section={{ active_section.id }}&board={{ board.id }}">
+          <div class="name">{{ board.name }}</div>
+          <div class="meta">{{ "с инструкцией ассистенту" if board.instruction else "без инструкции" }}</div>
+        </a>
+      {% endfor %}
+      <details class="board-add">
+        <summary class="board-item dashed">
+          <div class="name">+ доска</div>
+          <div class="meta">имя и инструкция ассистенту</div>
+        </summary>
+        <form class="card tight stack" method="post" action="/memory/boards/add">
+          <input type="hidden" name="section_id" value="{{ active_section.id }}">
+          <input class="field" name="name" placeholder="Например: Питание и сон Ани" required maxlength="128">
+          <textarea class="field" name="instruction" rows="3"
+                    placeholder="Как читать и вести эту доску. Например: 19.50 170 — время и миллилитры; если время не указано — бери время записи."></textarea>
+          <button class="btn small" type="submit">Завести доску</button>
+        </form>
+      </details>
+    </div>
+
+    <div class="card stack">
+      {% if active_board %}
+        <div class="row wrap" style="gap:8px">
+          <div class="card-title" style="margin:0">{{ active_board.name }}</div>
+          <span class="spacer"></span>
+          <details class="strip-pop">
+            <summary class="btn ghost small">Настроить</summary>
+            <div class="pop stack" style="right:0;min-width:280px">
+              <form class="stack" method="post" action="/memory/boards/{{ active_board.id }}/update">
+                <input class="field" name="name" value="{{ active_board.name }}" required maxlength="128">
+                <textarea class="field" name="instruction" rows="3"
+                          placeholder="Инструкция ассистенту">{{ active_board.instruction or "" }}</textarea>
+                {% if sections|length > 1 %}
+                  <select class="field" name="section_id">
+                    {% for section in sections %}
+                      <option value="{{ section.id }}"
+                              {% if section.id == active_section.id %}selected{% endif %}>{{ section.name }}</option>
+                    {% endfor %}
+                  </select>
+                {% endif %}
+                <button class="btn small" type="submit">Сохранить</button>
+              </form>
+              <form method="post" action="/memory/boards/{{ active_board.id }}/delete">
+                <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить доску</button>
+              </form>
+            </div>
+          </details>
+        </div>
+        {% if active_board.instruction %}
+          {# Инструкция висит в шапке постоянно: человек видит, как ассистент
+             прочтёт то, что здесь написано. #}
+          <div class="board-instruction">🧭 Ассистенту: {{ active_board.instruction }}</div>
+        {% endif %}
+        <p class="muted">Лента записей появится здесь следующим шагом.</p>
+      {% elif boards %}
+        <div class="card-title">Выберите доску</div>
+        <p class="muted">Или заведите новую — рядом со списком.</p>
+      {% else %}
+        <div class="card-title">В разделе «{{ active_section.name }}» пока пусто</div>
+        <p class="muted">Доска — лента записей с инструкцией ассистенту: как читать
+          и вести её содержимое. Заведите первую.</p>
+      {% endif %}
+    </div>
   </div>
 
 {% elif common_active %}

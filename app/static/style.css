@@ -578,3 +578,30 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 }
 .pop[hidden] { display: none; }
 .pop .chip { display: flex; }
+
+/* ---------- экран знаний: доски раздела (тикет #26) ---------- */
+
+/* Список досок рядом с выбранной; на узком экране колонки складываются в одну. */
+.board-cols { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .board-cols { grid-template-columns: 1fr; } }
+
+.board-item {
+  display: block; text-align: left; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
+  font: inherit; color: var(--text); cursor: pointer; text-decoration: none;
+}
+.board-item:hover { border-color: var(--border-strong); }
+.board-item.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 6%, var(--surface)); }
+.board-item .name { font-weight: 600; font-size: 13.5px; }
+.board-item .meta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.board-item.dashed { border: 1px dashed var(--border-dashed); background: transparent; color: var(--text-2); }
+
+.board-add summary { list-style: none; cursor: pointer; }
+.board-add summary::-webkit-details-marker { display: none; }
+
+/* Инструкция доски в шапке — постоянно, чтобы было видно, как ассистент
+   прочтёт написанное. */
+.board-instruction {
+  padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
+  color: var(--text-2); font-size: 12.5px;
+}

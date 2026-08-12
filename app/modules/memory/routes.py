@@ -46,10 +46,17 @@ FILTERS = [("", "Всё"), ("task", "Напоминания"), ("pref", "Пре�
            ("health", "Здоровье"), ("fact", "Наблюдения")]
 
 
+def _decimal_id(raw: str):
+    """isdecimal, а не isdigit: isdigit пропускает «²», на котором падает int();
+    потолок отсекает числа, не влезающие в INTEGER на боевой базе."""
+    return int(raw) if raw.isdecimal() and len(raw) <= 9 else None
+
+
 @router.get("", response_class=HTMLResponse)
 def memory_screen(
     request: Request,
     section: str = "",
+    board: str = "",
     kind: str = "",
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
@@ -60,17 +67,20 @@ def memory_screen(
         title="Знания",
         subtitle="Ваши разделы — и то, что ассистент держит в голове",
     )
-    active_section = None
-    # isdecimal, а не isdigit: isdigit пропускает «²», на котором падает int();
-    # потолок отсекает числа, не влезающие в INTEGER на боевой базе.
-    if section.isdecimal() and len(section) <= 9:
-        active_section = knowledge.get_section(db, current.id, int(section))
+    section_id = _decimal_id(section)
+    active_section = None if section_id is None else knowledge.get_section(db, current.id, section_id)
     common_active = section == "common"
     context.update(
         sections=knowledge.list_sections(db, current.id),
         active_section=active_section,
         common_active=common_active,
     )
+    if active_section is not None:
+        boards = knowledge.list_boards(db, current.id, active_section.id)
+        board_id = _decimal_id(board)
+        active_board = None if board_id is None else next(
+            (b for b in boards if b.id == board_id), None)
+        context.update(boards=boards, active_board=active_board)
     if active_section is None and not common_active:
         context.update(
             notes=service.list_notes(db, current.id, kind=kind or None),
@@ -124,6 +134,51 @@ def delete_section(
 ):
     knowledge.delete_section(db, current.id, section_id)
     return RedirectResponse("/memory", status_code=303)
+
+
+# --- доски (тикет #26) --------------------------------------------------------
+
+@router.post("/boards/add")
+def add_board(
+    section_id: int = Form(...),
+    name: str = Form(...),
+    instruction: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    board = knowledge.create_board(db, current.id, section_id, name, instruction)
+    target = (f"/memory?section={section_id}&board={board.id}" if board
+              else f"/memory?section={section_id}")
+    return RedirectResponse(target, status_code=303)
+
+
+@router.post("/boards/{board_id}/update")
+def update_board(
+    board_id: int,
+    name: str = Form(...),
+    instruction: str = Form(""),
+    section_id: int = Form(None),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    board = knowledge.update_board(db, current.id, board_id, name, instruction,
+                                   section_id=section_id)
+    target = (f"/memory?section={board.section_id}&board={board.id}" if board
+              else "/memory")
+    return RedirectResponse(target, status_code=303)
+
+
+@router.post("/boards/{board_id}/delete")
+def delete_board(
+    board_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    board = knowledge.get_board(db, current.id, board_id)
+    section_id = board.section_id if board else None
+    knowledge.delete_board(db, current.id, board_id)
+    target = f"/memory?section={section_id}" if section_id else "/memory"
+    return RedirectResponse(target, status_code=303)
 
 
 # --- заметки: живут до переезда на доски (#33) --------------------------------
