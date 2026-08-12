@@ -6,8 +6,8 @@ schema replacing them — sections → boards → entries, plus per-person share
 """
 from datetime import datetime
 
-from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
-                        UniqueConstraint)
+from sqlalchemy import (Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String,
+                        Text, UniqueConstraint)
 
 from app.core.db import Base
 
@@ -132,6 +132,54 @@ class BoardEvent(Base):
     confidence = Column(String(8), nullable=False, default="low")
     #: Фрагмент записи, из которого взята величина, — им и спрашивают человека.
     raw = Column(String(255), nullable=True)
+
+
+class BoardStatsTask(Base):
+    """Регулярная цифра по доске: что считать, в какую сводку и кому.
+
+    Задачу ставит любой, кому доска доступна, — вопрос к общему логу не зависит
+    от владельца. А вот рассылку результата всем допущенным включает только
+    владелец: слать семье уведомления, ни с кем не согласовав, нельзя.
+
+    Считает по задаче код (`kind` — тип из словаря доски), формулирует фразу
+    модель по `request` — словам человека, которыми он задачу и поставил.
+    """
+    __tablename__ = "board_stats_tasks"
+
+    id = Column(Integer, primary_key=True)
+    board_id = Column(Integer, ForeignKey("boards.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    #: Слова человека: «каждое утро — сколько малыш съел за сутки».
+    request = Column(Text, nullable=False)
+    kind = Column(String(64), nullable=False)
+    #: В какую из существующих сводок приходит результат: своего расписания у
+    #: задачи нет — второй поток уведомлений семье не нужен.
+    digest_kind = Column(String(32), nullable=False, default="morning_digest")
+    share_all = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class BoardStatsPoint(Base):
+    """Точка ряда: день и посчитанное за него число.
+
+    Ряд копится сам собой, прогон за прогоном, и живёт ровно столько, сколько
+    живёт его задача. Из него потом растёт табло — экран одного показателя.
+    """
+    __tablename__ = "board_stats_points"
+    __table_args__ = (UniqueConstraint("task_id", "day", name="uq_board_stats_point"),)
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("board_stats_tasks.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+
+    #: День прогона календарём семьи, а не гринвичским: ряд читают глазами
+    #: человека. Это день, когда задача назвала число, а не непременно те сутки,
+    #: за которые оно посчитано, — утренняя цифра «за сутки» захватывает ночь.
+    day = Column(Date, nullable=False, index=True)
+    value = Column(Float, nullable=False)
+    unit = Column(String(16), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class BoardShare(Base):

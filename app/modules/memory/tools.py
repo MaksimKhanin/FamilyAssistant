@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core.templating import ru_datetime
-from app.modules.memory import knowledge, reminders
+from app.modules.memory import knowledge, reminders, stats
 from app.modules.memory.models import RIGHT_VIEW
 
 MODULE = "memory"
@@ -306,6 +306,108 @@ def create_board(ctx: ToolContext, section: str, name: str, instruction: str = N
         data={"board_id": board.id},
         card={"type": "board", "board": board.name,
               "text": board.instruction or "без инструкции",
+              "url": knowledge.board_url(grant)},
+    )
+
+
+#: Сводки, в которые может приехать регулярная цифра, — те же, что уже есть у
+#: семьи: «где скажу» и как эта сводка называется.
+DIGEST_LABELS = {
+    "morning_digest": ("в утренней сводке", "утренняя сводка"),
+    "evening_summary": ("в вечернем итоге", "вечерний итог"),
+    "weekly_review": ("в разборе недели", "разбор недели"),
+}
+
+
+@tool(
+    name="track_board",
+    module=MODULE,
+    title="Считать по доске",
+    description="""
+    Поставить по доске регулярную задачу статистики: «каждое утро говори, сколько
+    малыш съел за сутки». Числа посчитает код по событиям доски — ты только
+    передаёшь просьбу человека его словами (request) и тип величины из словаря
+    доски (kind). Не знаешь типов доски — вызови инструмент без kind: он вернёт
+    словарь, и тогда переспроси, что именно считать. digest — в какую из
+    существующих сводок это приезжает; своего расписания у задачи нет.
+    for_all — рассылать результат всем допущенным, и это можно только владельцу
+    доски: без явной просьбы владельца не включай.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "board": {"type": "string", "description": "Название доски"},
+            "request": {"type": "string",
+                        "description": "Что считать — словами человека, а не пересказом"},
+            "kind": {"type": "string", "description": "Тип величины из словаря доски"},
+            "digest": {"type": "string",
+                       "enum": ["morning_digest", "evening_summary", "weekly_review"],
+                       "description": "В какую сводку: утреннюю, вечернюю или недельную"},
+            "for_all": {"type": "boolean",
+                        "description": "Рассылать всем допущенным — только по просьбе владельца доски"},
+        },
+        "required": ["board", "request"],
+    },
+    # Регулярная цифра в сводке — новая привычка ассистента, а не разовый ответ:
+    # по умолчанию спрашиваем, как и при заведении доски.
+    auto_from=3,
+)
+def track_board(ctx: ToolContext, board: str, request: str, kind: str = None,
+                digest: str = None, for_all: bool = False) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+
+    types = knowledge.list_event_types(ctx.db, grant.board.id)
+    if not types:
+        return ToolResult(
+            summary=f"У доски «{grant.board.name}» нет словаря величин — считать не по чему. "
+                    f"Скажи человеку, что типы величин заводятся на самой доске в панели.",
+            ok=False,
+        )
+    known = ", ".join(f"«{t.name}»" + (f" ({t.unit})" if t.unit else "") for t in types)
+    # Тип не назван, а величина у доски одна — переспрашивать не о чем.
+    kind = (kind or "").strip() or (types[0].name if len(types) == 1 else "")
+    if not kind or kind.lower() not in {t.name.lower() for t in types}:
+        return ToolResult(
+            summary=f"Словарь величин доски «{grant.board.name}»: {known}. "
+                    f"Переспроси у человека, что из этого считать.",
+            ok=False,
+        )
+
+    try:
+        task = stats.create_task(ctx.db, ctx.actor.id, grant.board.id, request=request,
+                                 kind=kind, digest_kind=digest or stats.DEFAULT_DIGEST,
+                                 for_all=bool(for_all))
+    except stats.NotTheOwner:
+        return ToolResult(
+            summary=f"Рассылать результат всем допущенным может только владелец доски "
+                    f"«{grant.board.name}». Поставь задачу без рассылки или передай "
+                    f"просьбу владельцу.",
+            ok=False,
+        )
+    except stats.TooManyTasks:
+        return ToolResult(
+            summary=f"На доске «{grant.board.name}» уже пять задач статистики — больше "
+                    f"не заводится, чтобы сводка не стала отчётом. Скажи человеку, что "
+                    f"сначала надо снять лишнюю.",
+            ok=False,
+        )
+    if task is None:
+        return ToolResult(summary="Задачу с пустой просьбой не поставить.", ok=False)
+
+    where, named = DIGEST_LABELS.get(task.digest_kind, DIGEST_LABELS[stats.DEFAULT_DIGEST])
+    audience = " Результат увидят все допущенные к доске." if task.share_all else ""
+    # Своего расписания у задачи нет: выключенная сводка — это молчание, и
+    # обещать человеку ежеутреннюю цифру, не сказав об этом, нельзя.
+    silent = ("" if stats.digest_is_on(ctx.db, ctx.actor.id, task.digest_kind)
+              else f" Предупреди человека: {named} у него сейчас выключена, и цифра "
+                   f"начнёт приходить, когда он включит её в настройках.")
+    return ToolResult(
+        summary=f"Буду считать «{task.kind}» по доске «{grant.board.name}» и говорить "
+                f"{where}: {task.request}.{audience}{silent}",
+        data={"task_id": task.id, "board_id": grant.board.id},
+        card={"type": "board", "board": grant.board.name, "text": task.request,
               "url": knowledge.board_url(grant)},
     )
 

@@ -6,10 +6,10 @@
 from app.agent.llm import LLMResponse
 from app.agent.registry import ToolContext
 from app.agent.runtime import Agent
-from app.modules.memory import knowledge
+from app.modules.memory import knowledge, stats
 from app.modules.memory.models import BoardEntry, RIGHT_EDIT, RIGHT_VIEW, Section
 from app.modules.memory.tools import (create_board, forget, read_board, recall,
-                                      remember, write_entry)
+                                      remember, track_board, write_entry)
 from tests.conftest import FakeLLM
 
 
@@ -213,6 +213,148 @@ def test_create_board_refuses_an_unknown_section(db, head):
 
     assert not result.ok
     assert "Гараж" in result.summary
+
+
+# --- track_board: регулярная цифра по доске словами ---------------------------------
+
+def _counted_board(db, user, **kwargs):
+    """Доска со словарём величин: без словаря считать не по чему."""
+    board = _board(db, user, **kwargs)
+    knowledge.add_event_type(db, user.id, board.id, "кормление", "мл")
+    return board
+
+
+def test_track_board_sets_the_task_in_the_persons_own_words(db, head):
+    board = _counted_board(db, head)
+
+    result = track_board(ctx(db, head), board="Кормления", kind="кормление",
+                         request="каждое утро — сколько малыш съел за сутки")
+
+    assert result.ok
+    task = stats.list_tasks(db, board.id)[0]
+    assert task.request == "каждое утро — сколько малыш съел за сутки"
+    assert task.kind == "кормление"
+    assert task.digest_kind == "morning_digest"
+
+
+def test_track_board_takes_the_only_kind_of_the_board_without_asking(db, head):
+    board = _counted_board(db, head)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки")
+
+    assert result.ok
+    assert stats.list_tasks(db, board.id)[0].kind == "кормление"
+
+
+def test_track_board_asks_instead_of_guessing_an_unknown_kind(db, head):
+    """«Кормление», «еда» и «молоко» не заводятся вперемешку — тип берётся из словаря."""
+    board = _counted_board(db, head)
+    knowledge.add_event_type(db, head.id, board.id, "срыгивание", "мл")
+
+    result = track_board(ctx(db, head), board="Кормления", kind="еда",
+                         request="сколько съел")
+
+    assert not result.ok
+    assert "кормление" in result.summary and "срыгивание" in result.summary
+    assert stats.list_tasks(db, board.id) == []
+
+
+def test_track_board_says_what_to_do_with_a_board_without_a_dictionary(db, head):
+    board = _board(db, head, board_name="Мысли", instruction=None)
+
+    result = track_board(ctx(db, head), board="Мысли", request="сколько мыслей")
+
+    assert not result.ok
+    assert "словар" in result.summary.lower()
+    assert stats.list_tasks(db, board.id) == []
+
+
+def test_track_board_works_on_a_board_shared_with_this_person(db, head, member):
+    """Вопрос к общему логу не зависит от владельца доски."""
+    board = _counted_board(db, member)
+    knowledge.share_board(db, member.id, board.id, head.id, RIGHT_VIEW)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки")
+
+    assert result.ok
+    assert stats.list_tasks(db, board.id)[0].author_id == head.id
+
+
+def test_track_board_does_not_start_a_broadcast_on_a_board_that_is_not_yours(db, head, member):
+    """Рассылку всем допущенным включает только владелец доски."""
+    board = _counted_board(db, member)
+    knowledge.share_board(db, member.id, board.id, head.id, RIGHT_EDIT)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки",
+                         for_all=True)
+
+    assert not result.ok
+    assert "владелец" in result.summary
+    assert stats.list_tasks(db, board.id) == []
+
+
+def test_track_board_broadcasts_when_the_owner_asks_for_it(db, head):
+    board = _counted_board(db, head)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки",
+                         for_all=True)
+
+    assert result.ok
+    assert stats.list_tasks(db, board.id)[0].share_all
+
+
+def test_track_board_refuses_the_sixth_task_on_a_board(db, head):
+    board = _counted_board(db, head)
+    for number in range(stats.MAX_TASKS_PER_BOARD):
+        track_board(ctx(db, head), board="Кормления", request=f"вопрос {number}")
+
+    result = track_board(ctx(db, head), board="Кормления", request="лишний вопрос")
+
+    assert not result.ok
+    assert "пять" in result.summary
+    assert len(stats.list_tasks(db, board.id)) == stats.MAX_TASKS_PER_BOARD
+
+
+def test_track_board_does_not_reach_a_strangers_board(db, head, member):
+    board = _counted_board(db, member)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки")
+
+    assert not result.ok
+    assert stats.list_tasks(db, board.id) == []
+
+
+def test_track_board_warns_that_the_digest_itself_is_switched_off(db, head):
+    """Своего расписания у задачи нет: молчащая сводка — молчащая цифра."""
+    _counted_board(db, head)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки")
+
+    assert result.ok
+    assert "выключена" in result.summary
+
+
+def test_track_board_says_nothing_about_a_digest_that_is_on(db, head):
+    from app.core.models import ScheduledJob
+
+    _counted_board(db, head)
+    db.add(ScheduledJob(user_id=head.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.commit()
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за сутки")
+
+    assert result.ok
+    assert "выключена" not in result.summary
+
+
+def test_track_board_puts_the_weekly_question_into_the_weekly_review(db, head):
+    board = _counted_board(db, head)
+
+    result = track_board(ctx(db, head), board="Кормления", request="сколько за неделю",
+                         digest="weekly_review")
+
+    assert result.ok
+    assert stats.list_tasks(db, board.id)[0].digest_kind == "weekly_review"
 
 
 # --- системный промпт --------------------------------------------------------------

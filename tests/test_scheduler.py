@@ -80,6 +80,34 @@ def test_a_job_does_not_fire_twice_in_the_same_minute(db, head, catcher):
     assert len(catcher) == 1
 
 
+def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, head, catcher,
+                                                                      monkeypatch):
+    """Задача статистики не заводит своего расписания (тикет #31).
+
+    Второй поток уведомлений семье не нужен: цифра едет той же утренней сводкой,
+    что и всё остальное.
+    """
+    from app.modules.memory import knowledge, stats
+    from tests.conftest import FakeLLM
+
+    section = knowledge.create_section(db, head.id, "Малыш")
+    board = knowledge.create_board(db, head.id, section.id, "Кормления")
+    knowledge.add_event_type(db, head.id, board.id, "кормление", "мл")
+    knowledge.add_entry(db, head.id, board.id, "02:50 170", llm=FakeLLM([
+        {"events": [{"kind": "кормление", "value": 170, "unit": "мл", "confidence": "high"}]}]))
+    stats.create_task(db, head.id, board.id, request="сколько малыш съел за сутки",
+                      kind="кормление")
+    monkeypatch.setattr(stats, "default_client",
+                        FakeLLM([{"text": "За сутки малыш съел 170 мл."}]))
+
+    db.add(ScheduledJob(user_id=head.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.commit()
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+
+    assert catcher, "утренняя сводка не ушла"
+    assert "За сутки малыш съел 170 мл." in catcher[-1]["text"]
+
+
 # --- напоминания ----------------------------------------------------------
 
 def test_a_due_reminder_reaches_its_owner_once(db, head, catcher):

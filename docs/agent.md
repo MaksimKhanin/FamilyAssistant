@@ -41,8 +41,11 @@ reply = agent.respond(db, user, "съел суп и салат", image=None, cha
 | Инструмент | `auto_from` | Почему так |
 |---|---|---|
 | `get_nutrition_stats`, `recall`, `read_board`, `get_security_log` | 0 | чтение, спрашивать не о чем |
+| `log_meal`, `confirm_meal` | 0 | черновик и человеческое «да» к нему: подтверждение поверх подтверждения — абсурд |
 | `suggest_meal_plan`, `classify_event` | 1 | тратит модель, но ничего не меняет |
-| `log_meal`, `confirm_meal`, `log_activity`, `remember` | 2 | пишет в личные данные |
+| `log_activity`, `remember`, `set_reminder`, `write_entry` | 2 | пишет в личные данные |
+| `create_board`, `track_board` | 3 | заводит то, что останется жить: доску, регулярную цифру в сводке |
+| `delete_meal`, `delete_activity`, `forget` | 3 | необратимо |
 | `notify_family` | 3 | пишет всей семье — по умолчанию всегда спросит |
 
 Ползунок по умолчанию стоит на 1 («спрашивает про важное»), так что новый человек

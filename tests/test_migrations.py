@@ -191,3 +191,35 @@ def test_upgrade_creates_the_board_dictionary_and_its_events(tmp_path):
     entry_fk = {fk["constrained_columns"][0]: fk for fk in insp.get_foreign_keys("board_events")}
     assert entry_fk["entry_id"]["referred_table"] == "board_entries"
     assert entry_fk["entry_id"]["options"].get("ondelete", "").upper() == "CASCADE"
+
+
+def test_upgrade_creates_the_stats_tasks_and_their_series(tmp_path):
+    """Задача статистики каскадится от доски, ряд — от задачи (тикет #31).
+
+    Показатель не переживает лог, по которому считался, а витрина — того, что
+    показывает: и то, и другое держится на внешних ключах, а не на уборке руками.
+    """
+    url = f"sqlite:///{tmp_path}/fresh.db"
+    _upgrade_head(url)
+
+    insp = sa.inspect(sa.create_engine(url))
+    assert {"board_stats_tasks", "board_stats_points"} <= set(insp.get_table_names())
+
+    tasks = {c["name"] for c in insp.get_columns("board_stats_tasks")}
+    assert {"id", "board_id", "author_id", "request", "kind", "digest_kind",
+            "share_all", "created_at"} <= tasks
+
+    task_fks = {fk["constrained_columns"][0]: fk for fk in insp.get_foreign_keys("board_stats_tasks")}
+    assert task_fks["board_id"]["referred_table"] == "boards"
+    assert task_fks["board_id"]["options"].get("ondelete", "").upper() == "CASCADE"
+    assert task_fks["author_id"]["referred_table"] == "users"
+
+    points = {c["name"] for c in insp.get_columns("board_stats_points")}
+    assert {"id", "task_id", "day", "value", "unit"} <= points
+    # День в ряду один: прогон дописывает точку, а не плодит их.
+    assert ("task_id", "day") in {tuple(u["column_names"])
+                                  for u in insp.get_unique_constraints("board_stats_points")}
+
+    point_fk = insp.get_foreign_keys("board_stats_points")[0]
+    assert point_fk["referred_table"] == "board_stats_tasks"
+    assert point_fk["options"].get("ondelete", "").upper() == "CASCADE"

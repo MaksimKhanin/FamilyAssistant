@@ -51,6 +51,7 @@ def _digest_text(db: Session, user: User, kind: str) -> str:
     """Compose a job's message from the tools the person actually has switched on."""
     from app.agent.runtime import run_tool_directly
     from app.core.access import is_module_enabled
+    from app.modules.memory import stats
 
     parts = []
     if kind in ("morning_digest", "weekly_review") and is_module_enabled(db, user.id, "security"):
@@ -65,6 +66,22 @@ def _digest_text(db: Session, user: User, kind: str) -> str:
         result = run_tool_directly(db, user, "get_nutrition_stats", {"period": period}, mode="schedule")
         if result.ok:
             parts.append(result.summary)
+
+    # Регулярная статистика досок: своего расписания у задачи нет — она цепляется
+    # к этой же сводке (тикет #31). Знания всегда включены, спрашивать не о чем.
+    #
+    # Своя защита от падения, потому что этот кусок — единственный в сводке, что
+    # идёт не через `registry.execute` с его перехватом: сводка одного человека,
+    # рухнув, унесла бы сводки всех, чья задача в этой минуте ещё не разослана,
+    # — а `_due` требует точного попадания в минуту, и до завтра они не вернутся.
+    # Здесь же и единственный поход к модели за формулировкой: он платный по
+    # времени, поэтому задач у доски не больше пяти.
+    try:
+        parts.extend(stats.digest_parts(db, user, kind))
+    except Exception:
+        logger.exception(f"Статистика досок для {user.display_name} не собралась — "
+                         f"остальная сводка уходит без неё")
+        db.rollback()
 
     if not parts:
         return ""
