@@ -1,20 +1,41 @@
-"""Сервис знаний: разделы → доски → записи (спека #19).
+"""Сервис знаний: разделы → доски → записи → доступ (спека #19).
 
-Пока здесь живут разделы (#25) и доски (#26). Единая точка разрешения доступа
-к доскам — «какие доски видит этот участник и с каким правом» — появится
-вместе с шарингом (#28); до него доска видна только владельцу её раздела,
-и ходить к доскам мимо этих функций нельзя уже сейчас.
+Весь инвариант приватности сводится к одной точке — `board_grants`: «какие
+доски видит этот участник и с каким правом». Через неё обязаны ходить и
+экраны, и инструменты агента; второго пути к доскам в коде нет. Прецедент
+принципа — `can_see_figures` в app/core/auth.py.
 
 Раздел строго личный: каждая функция принимает `user_id` смотрящего и не
-отдаёт и не трогает чужого. Проверка владельца здесь, а не в маршрутах,
-чтобы у экрана и будущих инструментов агента была одна и та же граница.
+отдаёт и не трогает чужого. Проверка прав здесь, а не в маршрутах, чтобы
+у экрана и инструментов агента была одна и та же граница.
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.memory.models import Board, BoardEntry, Section
+from app.core.models import User
+from app.modules.memory.models import (
+    Board, BoardEntry, BoardShare, Section, RIGHT_EDIT, RIGHT_VIEW,
+)
+
+#: Владелец — не третье право из board_shares, а вычисленное «доска в моём
+#: разделе»: только он правит инструкцию, чужие записи и состав доступа.
+RIGHT_OWNER = "owner"
+
+RIGHT_LABELS = {RIGHT_VIEW: "просмотр", RIGHT_EDIT: "редактирование"}
+
+
+class ActiveShares(Exception):
+    """Удаление блокируется: есть доска с активным доступом.
+
+    Отзыв доступа должен быть осознанным шагом, а не побочным эффектом сноса.
+    """
+
+
+class BoardGrant(NamedTuple):
+    board: Board
+    right: str   # RIGHT_OWNER / RIGHT_EDIT / RIGHT_VIEW
 
 
 def list_sections(db: Session, user_id: int) -> List[Section]:
@@ -70,15 +91,81 @@ def toggle_pin(db: Session, user_id: int, section_id: int) -> Optional[Section]:
 def delete_section(db: Session, user_id: int, section_id: int) -> bool:
     """Удаление раздела — каскад: раздел → доски → записи.
 
-    Блокировка «в разделе есть доска с активным доступом» появится вместе с
-    шарингом (#28); до него любой свой раздел удаляется свободно.
+    Раздел с расшаренной доской не удаляется (ActiveShares): нельзя снести
+    людям то, чем они пользуются, побочным эффектом.
     """
     section = get_section(db, user_id, section_id)
     if section is None:
         return False
+    boards = db.query(Board).filter(Board.section_id == section.id).all()
+    if any(_has_active_access(db, board) for board in boards):
+        raise ActiveShares()
     db.delete(section)
     db.commit()
     return True
+
+
+# --- разрешение доступа: единственная точка (#28) -------------------------------
+
+def board_grants(db: Session, user_id: int) -> List[BoardGrant]:
+    """Какие доски видит этот участник и с каким правом.
+
+    Три источника: свои (через раздел), расшаренные поимённо (board_shares)
+    и расшаренные «всем» в семье владельца — живое правило, а не снимок.
+    Когда поимённое право и «всем» расходятся, действует более широкое.
+    """
+    me = db.get(User, user_id)
+    if me is None:
+        return []
+    grants: dict = {}
+    own = (db.query(Board)
+           .join(Section, Board.section_id == Section.id)
+           .filter(Section.user_id == user_id))
+    for board in own:
+        grants[board.id] = BoardGrant(board, RIGHT_OWNER)
+    named = (db.query(Board, BoardShare.right)
+             .join(BoardShare, BoardShare.board_id == Board.id)
+             .filter(BoardShare.user_id == user_id))
+    for board, right in named:
+        if board.id not in grants:
+            grants[board.id] = BoardGrant(board, right)
+    family_wide = (db.query(Board)
+                   .join(Section, Board.section_id == Section.id)
+                   .join(User, Section.user_id == User.id)
+                   .filter(Board.share_all.is_(True),
+                           User.family_id == me.family_id,
+                           Section.user_id != user_id))
+    for board in family_wide:
+        current = grants.get(board.id)
+        wider = current is None or (current.right == RIGHT_VIEW
+                                    and board.share_all_right == RIGHT_EDIT)
+        if wider:
+            grants[board.id] = BoardGrant(board, board.share_all_right or RIGHT_VIEW)
+    return list(grants.values())
+
+
+def board_access(db: Session, user_id: int, board_id: int) -> Optional[BoardGrant]:
+    """Право этого участника на одну доску — из той же единственной точки."""
+    return next((g for g in board_grants(db, user_id) if g.board.id == board_id), None)
+
+
+def shared_boards(db: Session, user_id: int) -> List[BoardGrant]:
+    """«Общее»: расшаренные на меня доски по свежести. Строки в базе у него нет —
+    это отображение грантов."""
+    shared = [g for g in board_grants(db, user_id) if g.right != RIGHT_OWNER]
+    return sorted(shared, key=lambda g: (g.board.last_activity_at, g.board.id), reverse=True)
+
+
+def board_owner_names(db: Session, grants: List[BoardGrant]) -> dict:
+    """Имена владельцев для списка грантов — одним запросом, не по доске за раз."""
+    section_ids = {g.board.section_id for g in grants}
+    if not section_ids:
+        return {}
+    rows = (db.query(Section.id, User.display_name)
+            .join(User, Section.user_id == User.id)
+            .filter(Section.id.in_(section_ids)))
+    names = dict(rows)
+    return {g.board.id: names.get(g.board.section_id, "бывший участник") for g in grants}
 
 
 # --- доски (#26) --------------------------------------------------------------
@@ -87,19 +174,21 @@ def list_boards(db: Session, user_id: int, section_id: int) -> List[Board]:
     """Доски раздела по свежести. Чужой раздел отдаёт пустоту, а не ошибку."""
     if get_section(db, user_id, section_id) is None:
         return []
-    return (
-        db.query(Board)
-        .filter(Board.section_id == section_id)
-        .order_by(Board.last_activity_at.desc(), Board.id.desc())
-        .all()
-    )
+    boards = [g.board for g in board_grants(db, user_id)
+              if g.board.section_id == section_id]
+    return sorted(boards, key=lambda b: (b.last_activity_at, b.id), reverse=True)
 
 
 def get_board(db: Session, user_id: int, board_id: int) -> Optional[Board]:
-    board = db.get(Board, board_id)
-    if board is None or get_section(db, user_id, board.section_id) is None:
-        return None
-    return board
+    """Доска, которую этому участнику можно хотя бы читать."""
+    grant = board_access(db, user_id, board_id)
+    return grant.board if grant is not None else None
+
+
+def _own_board(db: Session, user_id: int, board_id: int) -> Optional[Board]:
+    """Доска, которой этот участник владеет: инструкция, перенос, доступ, снос."""
+    grant = board_access(db, user_id, board_id)
+    return grant.board if grant is not None and grant.right == RIGHT_OWNER else None
 
 
 def create_board(db: Session, user_id: int, section_id: int, name: str,
@@ -123,9 +212,9 @@ def update_board(db: Session, user_id: int, board_id: int, name: str,
                  section_id: Optional[int] = None) -> Optional[Board]:
     """Имя, инструкция ассистенту и, если передан `section_id`, перенос в другой
     свой раздел — одной транзакцией: невалидный перенос отменяет и правку,
-    частичного сохранения не бывает. Инструкцию правит только владелец доски —
-    до шаринга (#28) сюда и не попасть никому, кроме него."""
-    board = get_board(db, user_id, board_id)
+    частичного сохранения не бывает. Всё это — только владельцу доски:
+    инструкция меняет поведение ассистента для всех допущенных."""
+    board = _own_board(db, user_id, board_id)
     name = name.strip()[:NAME_LIMIT]
     if board is None or not name:
         return None
@@ -143,7 +232,7 @@ def update_board(db: Session, user_id: int, board_id: int, name: str,
 def move_board(db: Session, user_id: int, board_id: int,
                target_section_id: int) -> Optional[Board]:
     """Перенос доски между своими разделами: перекладка тем без переписывания записей."""
-    board = get_board(db, user_id, board_id)
+    board = _own_board(db, user_id, board_id)
     target = get_section(db, user_id, target_section_id)
     if board is None or target is None:
         return None
@@ -166,11 +255,19 @@ def _relocate(db: Session, board: Board, target: Section) -> None:
     source.last_activity_at = max(rest) if rest else source.created_at
 
 
+def _has_active_access(db: Session, board: Board) -> bool:
+    return bool(board.share_all) or bool(
+        db.query(BoardShare.id).filter(BoardShare.board_id == board.id).first())
+
+
 def delete_board(db: Session, user_id: int, board_id: int) -> bool:
-    """Каскад доска → записи; блокировка при активном доступе появится в #28."""
-    board = get_board(db, user_id, board_id)
+    """Каскад доска → записи. Доска с активным доступом не удаляется:
+    сначала осознанный отзыв, потом снос (ActiveShares)."""
+    board = _own_board(db, user_id, board_id)
     if board is None:
         return False
+    if _has_active_access(db, board):
+        raise ActiveShares()
     db.delete(board)
     db.commit()
     return True
@@ -197,10 +294,11 @@ def list_entries(db: Session, user_id: int, board_id: int) -> List[BoardEntry]:
 
 
 def add_entry(db: Session, user_id: int, board_id: int, text: str) -> Optional[BoardEntry]:
-    board = get_board(db, user_id, board_id)
+    grant = board_access(db, user_id, board_id)
     text = text.strip()
-    if board is None or not text:
+    if grant is None or grant.right == RIGHT_VIEW or not text:
         return None
+    board = grant.board
     entry = BoardEntry(board_id=board.id, author_id=user_id, text=text)
     # Запись — и есть активность: по ней сортируются и доски, и полоса разделов.
     now = datetime.utcnow()
@@ -215,14 +313,21 @@ def add_entry(db: Session, user_id: int, board_id: int, text: str) -> Optional[B
 def get_entry(db: Session, user_id: int, entry_id: int) -> Optional[BoardEntry]:
     """Запись, которую этот человек вправе править или удалить.
 
-    Пока доски видит только владелец, право сводится к «запись на моей доске»:
-    владелец правит любые записи своей доски. С шарингом (#28) сюда добавится
-    второй путь — автор записи на доступной ему доске.
+    Два пути: владелец доски — любые записи своей доски; допущенный на
+    редактирование — только свои. Допущенному на просмотр запись не отдаётся
+    вовсе, даже собственная давняя: его полномочия — читать и копировать.
     """
     entry = db.get(BoardEntry, entry_id)
-    if entry is None or get_board(db, user_id, entry.board_id) is None:
+    if entry is None:
         return None
-    return entry
+    grant = board_access(db, user_id, entry.board_id)
+    if grant is None:
+        return None
+    if grant.right == RIGHT_OWNER:
+        return entry
+    if grant.right == RIGHT_EDIT and entry.author_id == user_id:
+        return entry
+    return None
 
 
 def edit_entry(db: Session, user_id: int, entry_id: int, text: str) -> Optional[BoardEntry]:
@@ -244,3 +349,81 @@ def delete_entry(db: Session, user_id: int, entry_id: int) -> bool:
     db.delete(entry)
     db.commit()
     return True
+
+
+# --- доступ: шаринг и отзыв (#28) -----------------------------------------------
+
+def share_board(db: Session, user_id: int, board_id: int, member_id: int,
+                right: str) -> bool:
+    """Поделиться доской с конкретным участником семьи — на просмотр или
+    редактирование. Повторный шаринг тому же человеку меняет право."""
+    board = _own_board(db, user_id, board_id)
+    if board is None or right not in RIGHT_LABELS or member_id == user_id:
+        return False
+    owner = db.get(User, user_id)
+    target = db.get(User, member_id)
+    if target is None or target.family_id != owner.family_id:
+        return False
+    existing = (db.query(BoardShare)
+                .filter(BoardShare.board_id == board.id, BoardShare.user_id == member_id)
+                .one_or_none())
+    if existing is not None:
+        existing.right = right
+    else:
+        db.add(BoardShare(board_id=board.id, user_id=member_id, right=right))
+    db.commit()
+    return True
+
+
+def share_board_with_all(db: Session, user_id: int, board_id: int, right: str) -> bool:
+    """«Всем» — живое правило на доске: новый человек в семье получит её сам."""
+    board = _own_board(db, user_id, board_id)
+    if board is None or right not in RIGHT_LABELS:
+        return False
+    board.share_all = True
+    board.share_all_right = right
+    db.commit()
+    return True
+
+
+def stop_sharing_with_all(db: Session, user_id: int, board_id: int) -> bool:
+    board = _own_board(db, user_id, board_id)
+    if board is None:
+        return False
+    board.share_all = False
+    board.share_all_right = None
+    db.commit()
+    return True
+
+
+def revoke_share(db: Session, user_id: int, board_id: int, member_id: int) -> bool:
+    """Отзыв тихий: доска просто исчезает из «Общего», записи остаются на ней —
+    запись принадлежит документу, а не автору."""
+    board = _own_board(db, user_id, board_id)
+    if board is None:
+        return False
+    (db.query(BoardShare)
+     .filter(BoardShare.board_id == board.id, BoardShare.user_id == member_id)
+     .delete())
+    db.commit()
+    return True
+
+
+def board_audience(db: Session, user_id: int, board_id: int) -> Optional[dict]:
+    """Состав доступа к доске — его видит любой допущенный: понятно, кто
+    прочтёт то, что ты пишешь."""
+    grant = board_access(db, user_id, board_id)
+    if grant is None:
+        return None
+    board = grant.board
+    section = db.get(Section, board.section_id)
+    shares = (db.query(User, BoardShare.right)
+              .join(BoardShare, BoardShare.user_id == User.id)
+              .filter(BoardShare.board_id == board.id)
+              .order_by(User.display_name)
+              .all())
+    return {
+        "owner": db.get(User, section.user_id),
+        "shares": [(user, right) for user, right in shares],
+        "all_right": board.share_all_right if board.share_all else None,
+    }

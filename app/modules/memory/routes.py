@@ -53,12 +53,37 @@ def _decimal_id(raw: str):
     return int(raw) if raw.isdecimal() and len(raw) <= 9 else None
 
 
+#: Объяснения заблокированных действий — по коду из query-параметра, чтобы
+#: редирект после POST оставался обычным путём панели.
+NOTICES = {
+    "board-shared": "Нельзя удалить: доской пользуются другие. Сначала отзовите доступ.",
+    "section-shared": "Нельзя удалить раздел: в нём есть доска с активным доступом. "
+                      "Сначала отзовите доступ.",
+}
+
+
+def _board_view(db: Session, current: User, grant, members) -> dict:
+    """Всё, что нужно карточке доски: лента, право смотрящего, состав доступа."""
+    entries = knowledge.list_entries(db, current.id, grant.board.id)
+    return {
+        "active_board": grant.board,
+        "board_right": grant.right,
+        "audience": knowledge.board_audience(db, current.id, grant.board.id),
+        "right_labels": knowledge.RIGHT_LABELS,
+        "feed": _feed_days(entries),
+        # Обрезанный хвост не выдаётся за целое: над лентой честная пометка.
+        "feed_limit": knowledge.FEED_LIMIT if len(entries) >= knowledge.FEED_LIMIT else None,
+        "author_names": {m.id: m.display_name for m in members},
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 def memory_screen(
     request: Request,
     section: str = "",
     board: str = "",
     kind: str = "",
+    notice: str = "",
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -71,26 +96,31 @@ def memory_screen(
     section_id = _decimal_id(section)
     active_section = None if section_id is None else knowledge.get_section(db, current.id, section_id)
     common_active = section == "common"
+    board_id = _decimal_id(board)
     context.update(
         sections=knowledge.list_sections(db, current.id),
         active_section=active_section,
         common_active=common_active,
+        notice_text=NOTICES.get(notice),
     )
     if active_section is not None:
         boards = knowledge.list_boards(db, current.id, active_section.id)
-        board_id = _decimal_id(board)
         active_board = None if board_id is None else next(
             (b for b in boards if b.id == board_id), None)
         context.update(boards=boards, active_board=active_board)
         if active_board is not None:
-            entries = knowledge.list_entries(db, current.id, active_board.id)
-            context.update(
-                feed=_feed_days(entries),
-                # Обрезанный хвост не выдаётся за целое: над лентой честная пометка.
-                feed_limit=knowledge.FEED_LIMIT if len(entries) >= knowledge.FEED_LIMIT else None,
-                author_names={m.id: m.display_name for m in context["members"]},
-            )
-    if active_section is None and not common_active:
+            grant = knowledge.board_access(db, current.id, active_board.id)
+            context.update(_board_view(db, current, grant, context["members"]))
+    elif common_active:
+        shared = knowledge.shared_boards(db, current.id)
+        active_grant = None if board_id is None else next(
+            (g for g in shared if g.board.id == board_id), None)
+        context.update(shared_grants=shared,
+                       shared_owners=knowledge.board_owner_names(db, shared),
+                       right_labels=knowledge.RIGHT_LABELS)
+        if active_grant is not None:
+            context.update(_board_view(db, current, active_grant, context["members"]))
+    else:
         context.update(
             notes=service.list_notes(db, current.id, kind=kind or None),
             counters=service.counters(db, current.id),
@@ -141,7 +171,11 @@ def delete_section(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    knowledge.delete_section(db, current.id, section_id)
+    try:
+        knowledge.delete_section(db, current.id, section_id)
+    except knowledge.ActiveShares:
+        return RedirectResponse(f"/memory?section={section_id}&notice=section-shared",
+                                status_code=303)
     return RedirectResponse("/memory", status_code=303)
 
 
@@ -183,11 +217,63 @@ def delete_board(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    board = knowledge.get_board(db, current.id, board_id)
-    section_id = board.section_id if board else None
-    knowledge.delete_board(db, current.id, board_id)
-    target = f"/memory?section={section_id}" if section_id else "/memory"
-    return RedirectResponse(target, status_code=303)
+    grant = knowledge.board_access(db, current.id, board_id)
+    try:
+        deleted = knowledge.delete_board(db, current.id, board_id)
+    except knowledge.ActiveShares:
+        return RedirectResponse(
+            f"/memory?section={grant.board.section_id}&board={board_id}&notice=board-shared",
+            status_code=303)
+    if deleted:
+        return RedirectResponse(f"/memory?section={grant.board.section_id}", status_code=303)
+    # Не владелец (или доски нет): удаление не прошло — назад к доске её глазами.
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+# --- доступ (тикет #28) ---------------------------------------------------------
+
+@router.post("/boards/{board_id}/share")
+def share_board(
+    board_id: int,
+    member_id: int = Form(...),
+    right: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    knowledge.share_board(db, current.id, board_id, member_id, right)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+@router.post("/boards/{board_id}/share-all")
+def share_board_with_all(
+    board_id: int,
+    right: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    knowledge.share_board_with_all(db, current.id, board_id, right)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+@router.post("/boards/{board_id}/unshare")
+def unshare_board(
+    board_id: int,
+    member_id: int = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    knowledge.revoke_share(db, current.id, board_id, member_id)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+
+
+@router.post("/boards/{board_id}/unshare-all")
+def unshare_board_with_all(
+    board_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    knowledge.stop_sharing_with_all(db, current.id, board_id)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
 
 
 # --- записи (тикет #27) --------------------------------------------------------
@@ -211,8 +297,15 @@ def _feed_days(entries):
     return days
 
 
-def _board_url(board) -> str:
-    return f"/memory?section={board.section_id}&board={board.id}" if board else "/memory"
+def _board_url(db: Session, current: User, board_id: int) -> str:
+    """Адрес доски глазами смотрящего: своя открывается в своём разделе,
+    расшаренная — в «Общем»."""
+    grant = knowledge.board_access(db, current.id, board_id) if board_id else None
+    if grant is None:
+        return "/memory"
+    if grant.right == knowledge.RIGHT_OWNER:
+        return f"/memory?section={grant.board.section_id}&board={grant.board.id}"
+    return f"/memory?section=common&board={grant.board.id}"
 
 
 @router.post("/entries/add")
@@ -223,8 +316,7 @@ def add_entry(
     current: User = Depends(get_current_user),
 ):
     knowledge.add_entry(db, current.id, board_id, text)
-    return RedirectResponse(_board_url(knowledge.get_board(db, current.id, board_id)),
-                            status_code=303)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
 
 
 @router.post("/entries/{entry_id}/edit")
@@ -237,9 +329,9 @@ def edit_entry(
     # Доска для возврата берётся до правки: отклонённая правка (пустой текст)
     # не должна выбрасывать человека с доски на корневой экран.
     entry = knowledge.get_entry(db, current.id, entry_id)
-    board = knowledge.get_board(db, current.id, entry.board_id) if entry else None
+    board_id = entry.board_id if entry else None
     knowledge.edit_entry(db, current.id, entry_id, text)
-    return RedirectResponse(_board_url(board), status_code=303)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
 
 
 @router.post("/entries/{entry_id}/delete")
@@ -249,9 +341,9 @@ def delete_entry(
     current: User = Depends(get_current_user),
 ):
     entry = knowledge.get_entry(db, current.id, entry_id)
-    board = knowledge.get_board(db, current.id, entry.board_id) if entry else None
+    board_id = entry.board_id if entry else None
     knowledge.delete_entry(db, current.id, entry_id)
-    return RedirectResponse(_board_url(board), status_code=303)
+    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
 
 
 # --- заметки: живут до переезда на доски (#33) --------------------------------

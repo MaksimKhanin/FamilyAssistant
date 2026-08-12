@@ -28,6 +28,12 @@
   </div>
 </div>
 
+{% if notice_text %}
+  <div class="card tight" style="border-color:var(--alarm-text);color:var(--alarm-text);margin-bottom:16px">
+    {{ notice_text }}
+  </div>
+{% endif %}
+
 {% if active_section %}
   <div class="row wrap" style="gap:8px;margin-bottom:16px">
     <form method="post" action="/memory/sections/{{ active_section.id }}/pin">
@@ -60,7 +66,8 @@
         <a class="board-item {% if active_board and active_board.id == board.id %}active{% endif %}"
            href="/memory?section={{ active_section.id }}&board={{ board.id }}">
           <div class="name">{{ board.name }}</div>
-          <div class="meta">{{ "с инструкцией ассистенту" if board.instruction else "без инструкции" }}</div>
+          <div class="meta">{% if board.share_all %}вся семья · {% endif -%}
+            {{ "с инструкцией ассистенту" if board.instruction else "без инструкции" }}</div>
         </a>
       {% endfor %}
       <details class="board-add">
@@ -105,60 +112,60 @@
               </form>
             </div>
           </details>
-        </div>
-        {% if active_board.instruction %}
-          {# Инструкция висит в шапке постоянно: человек видит, как ассистент
-             прочтёт то, что здесь написано. #}
-          <div class="board-instruction">🧭 Ассистенту: {{ active_board.instruction }}</div>
-        {% endif %}
-
-        {# Лента как разговор: автор и время у каждой записи, разделители по
-           дням, подряд идущие записи одного автора не склеиваются — в логе
-           время каждой записи это данные (тикет #27). Меню записи открывает
-           app.js правой кнопкой или долгим нажатием. #}
-        {% if feed_limit %}
-          <p class="tiny" style="text-align:center">Показаны последние
-            {{ feed_limit|counted("запись", "записи", "записей") }} — более старые есть, но сюда не влезли.</p>
-        {% endif %}
-        <div class="feed" data-feed>
-          {% for day in feed %}
-            <div class="daysep">{{ day.label }}</div>
-            {% for entry in day.entries %}
-              <div class="entry" data-entry data-entry-id="{{ entry.id }}" data-editable>
-                <span class="entry-author{% if entry.by_assistant %} assistant{% elif entry.author_id is none %} gone{% endif %}"
-                  >{%- if entry.by_assistant %}Ассистент{% elif entry.author_id is none %}бывший участник{% else %}{{ author_names.get(entry.author_id, "участник") }}{% endif -%}</span>
-                <span class="entry-at">{{ entry.created_at|ru_time }}</span>
-                {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
-                <div class="entry-body" data-entry-body>{{ entry.text }}</div>
-                <form class="stack" style="gap:8px;margin-top:4px" method="post"
-                      action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
-                  <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>
-                  <div class="row" style="gap:8px">
-                    <button class="btn small" type="submit">Сохранить</button>
-                    <button class="btn ghost small" type="button" data-edit-cancel>Отмена</button>
-                  </div>
+          {# Состав доступа меняет только владелец; «всем» — живое правило (тикет #28). #}
+          <details class="strip-pop">
+            <summary class="btn ghost small">Доступ</summary>
+            <div class="pop stack" style="right:0;min-width:280px">
+              {% for user, right in audience.shares %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/unshare">
+                  <input type="hidden" name="member_id" value="{{ user.id }}">
+                  <span style="flex:1">{{ user.display_name }} — {{ right_labels[right] }}</span>
+                  <button class="btn ghost small" type="submit">Отозвать</button>
                 </form>
-                <form method="post" action="/memory/entries/{{ entry.id }}/delete"
-                      data-entry-delete hidden></form>
-              </div>
-            {% endfor %}
-          {% else %}
-            <p class="muted">Пока пусто — первая запись появится здесь.</p>
-          {% endfor %}
+              {% endfor %}
+              {% if audience.all_right %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/unshare-all">
+                  <span style="flex:1">Вся семья — {{ right_labels[audience.all_right] }}</span>
+                  <button class="btn ghost small" type="submit">Отозвать</button>
+                </form>
+              {% else %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/share-all">
+                  <select class="field" name="right" style="flex:1">
+                    {% for value, label in right_labels.items() %}
+                      <option value="{{ value }}">вся семья — {{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn small" type="submit">Поделиться</button>
+                </form>
+              {% endif %}
+              {% set shared_ids = audience.shares|map(attribute=0)|map(attribute="id")|list %}
+              {% set candidates = members|rejectattr("id", "equalto", current_user.id)
+                                         |rejectattr("id", "in", shared_ids)|list %}
+              {% if candidates %}
+                <form class="stack" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/share">
+                  <div class="row" style="gap:8px">
+                    <select class="field" name="member_id" style="flex:1">
+                      {% for member in candidates %}
+                        <option value="{{ member.id }}">{{ member.display_name }}</option>
+                      {% endfor %}
+                    </select>
+                    <select class="field" name="right" style="flex:1">
+                      {% for value, label in right_labels.items() %}
+                        <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <button class="btn small" type="submit">Поделиться</button>
+                </form>
+              {% endif %}
+            </div>
+          </details>
         </div>
-
-        <form class="composer" method="post" action="/memory/entries/add">
-          <input type="hidden" name="board_id" value="{{ active_board.id }}">
-          <input class="field" name="text" placeholder="Написать на доску…" required autocomplete="off">
-          <button class="btn" type="submit">Записать</button>
-        </form>
-        <p class="tiny">Правая кнопка или долгое нажатие на записи — изменить, удалить, скопировать.</p>
-
-        <div class="pop entry-menu" data-entry-menu hidden>
-          <button type="button" data-menu-edit>Изменить</button>
-          <button type="button" class="danger" data-menu-delete>Удалить</button>
-          <button type="button" data-menu-copy>Копировать текст</button>
-        </div>
+        {% include "memory/_feed.html" %}
       {% elif boards %}
         <div class="card-title">Выберите доску</div>
         <p class="muted">Или заведите новую — рядом со списком.</p>
@@ -171,10 +178,38 @@
   </div>
 
 {% elif common_active %}
-  <div class="card stack">
-    <div class="card-title">«Общее» пока пустое</div>
-    <p class="muted">Сюда попадут доски, которыми с вами поделятся другие участники семьи.</p>
-  </div>
+  {% if shared_grants %}
+    {# «Общее» — не хранимый раздел, а отображение грантов: доски, расшаренные
+       на смотрящего, по свежести (тикет #28). #}
+    <div class="board-cols">
+      <div class="stack" style="gap:8px">
+        {% for grant in shared_grants %}
+          <a class="board-item {% if active_board and active_board.id == grant.board.id %}active{% endif %}"
+             href="/memory?section=common&board={{ grant.board.id }}">
+            <div class="name">{{ grant.board.name }}</div>
+            <div class="meta">{{ shared_owners[grant.board.id] }} ·
+              {{ "можно писать" if grant.right == "edit" else "просмотр" }}</div>
+          </a>
+        {% endfor %}
+      </div>
+      <div class="card stack">
+        {% if active_board %}
+          <div class="row wrap" style="gap:8px">
+            <div class="card-title" style="margin:0">{{ active_board.name }}</div>
+          </div>
+          {% include "memory/_feed.html" %}
+        {% else %}
+          <div class="card-title">Выберите доску</div>
+          <p class="muted">Слева — доски, которыми с вами поделились.</p>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="card stack">
+      <div class="card-title">«Общее» пока пустое</div>
+      <p class="muted">Сюда попадут доски, которыми с вами поделятся другие участники семьи.</p>
+    </div>
+  {% endif %}
 
 {% else %}
   <div class="row wrap" style="gap:8px;margin-bottom:16px">

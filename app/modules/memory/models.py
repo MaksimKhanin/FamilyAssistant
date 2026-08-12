@@ -60,6 +60,10 @@ class Board(Base):
     name = Column(String(128), nullable=False)
     #: Как ассистенту читать и вести содержимое: «19.50 170 — время и миллилитры».
     instruction = Column(Text, nullable=True)
+    #: «Всем» — живое правило, а не снимок: новый человек в семье получает
+    #: такую доску сам, без повторного действия владельца (спека #19).
+    share_all = Column(Boolean, nullable=False, default=False)
+    share_all_right = Column(String(8), nullable=True)
     last_activity_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

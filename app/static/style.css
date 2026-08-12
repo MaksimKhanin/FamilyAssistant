@@ -631,3 +631,11 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 }
 .entry-menu button:hover { background: var(--surface-2); }
 .entry-menu button.danger { color: var(--alarm-text); }
+
+/* ---------- экран знаний: доступ к доске (тикет #28) ---------- */
+
+/* Допущенному на просмотр вместо поля ввода — объяснение, к кому идти. */
+.readonly-note {
+  padding: 10px 12px; border-radius: 12px; background: var(--warn-bg);
+  color: var(--warn-text); font-size: 12.5px;
+}
