@@ -57,13 +57,6 @@
           {% endfor %}
           {% if card.comment %}<p class="tiny">{{ card.comment }}</p>{% endif %}
         </div>
-      {% elif card.type == "memory" %}
-        <div class="agent-card">
-          <span class="badge {{ card.kind }}">{{ card.kind_label }}</span>
-          <div>{{ card.text }}</div>
-          {% if card.when %}<div class="tiny">напомню: {{ card.when }}</div>{% endif %}
-          <a class="btn link" href="/memory">Вся память и напоминания →</a>
-        </div>
       {% elif card.type == "board" %}
         <div class="agent-card">
           <span class="badge fact">{{ card.board }}</span>
@@ -92,16 +85,6 @@
           <div>{{ card.text }}</div>
           <div class="tiny">⏱ {{ card.when }}</div>
           <a class="btn link" href="/reminders">Все напоминания →</a>
-        </div>
-      {% elif card.type == "recall" %}
-        <div class="agent-card">
-          {% for note in card.notes %}
-            <div class="row" style="gap:8px;align-items:flex-start">
-              <span class="badge {{ note.kind }}">{{ note.kind_label }}</span>
-              <span>{{ note.text }}</span>
-            </div>
-          {% endfor %}
-          <a class="btn link" href="/memory">Вся память и напоминания →</a>
         </div>
       {% elif card.type == "confirm" %}
         <div class="agent-card">

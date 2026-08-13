@@ -110,8 +110,7 @@ def seed_demo():
     from app.core.db import session_scope
     from app.core.family import get_settings
     from app.core.models import ROLE_HEAD, ROLE_MEMBER, Family, User
-    from app.modules.memory import service as memory
-    from app.modules.memory.models import KIND_HEALTH, KIND_PREF, KIND_TASK
+    from app.modules.memory import knowledge, reminders
     from app.modules.nutrition import service as nutrition
     from app.modules.nutrition.vision import MealEstimate
     from app.modules.security import service as security
@@ -136,7 +135,7 @@ def seed_demo():
         db.flush()
 
         _seed_week(db, head.id, nutrition)
-        _seed_notes(db, head.id, memory, KIND_PREF, KIND_HEALTH, KIND_TASK)
+        _seed_knowledge(db, head.id, knowledge, reminders)
         _seed_home(db, family.id, security)
 
         return {"family": family.name, "head": head.username, "invite": daughter.invite_code}
@@ -179,12 +178,29 @@ def _seed_week(db, user_id: int, nutrition):
                                    happened_at=to_utc(day.replace(hour=19, minute=0)))
 
 
-def _seed_notes(db, user_id: int, memory, kind_pref, kind_health, kind_task):
-    memory.add_note(db, user_id, "Соня не ест грибы", kind=kind_pref, source="из разговора 3 августа")
-    memory.add_note(db, user_id, "У Лёвы аллергия на арахис", kind=kind_health,
-                    source="добавлено вручную")
-    memory.add_note(db, user_id, "Купить корм коту", kind=kind_task, source="из разговора",
-                    when_text="завтра", remind_at=datetime.utcnow() + timedelta(days=1))
+def _seed_knowledge(db, user_id: int, knowledge, reminders):
+    """Раздел с двумя досками и одно напоминание — как после переезда заметок (#33).
+
+    Одна доска со словарём величин: на пустой не видно ни разбора записей, ни
+    того, из чего потом растёт табло.
+    """
+    from app.modules.memory.models import BoardEntry
+
+    section = knowledge.create_section(db, user_id, "Личное")
+    board = knowledge.create_board(
+        db, user_id, section.id, "Наблюдения",
+        instruction="Что ассистент запомнил из разговоров: предпочтения, ограничения, быт.")
+    # Разбор записей здесь не нужен: демо поднимается и без модели.
+    for text in ("Соня не ест грибы", "У Лёвы аллергия на арахис", "Летом едем к бабушке"):
+        db.add(BoardEntry(board_id=board.id, author_id=None, by_assistant=True, text=text))
+
+    feeding = knowledge.create_board(
+        db, user_id, section.id, "Кормления",
+        instruction="Записи вида «время объём»: 170 — это миллилитры.")
+    knowledge.add_event_type(db, user_id, feeding.id, "кормление", "мл")
+
+    reminders.add_reminder(db, user_id, "Купить корм коту",
+                           remind_at=datetime.utcnow() + timedelta(days=1))
 
 
 def _seed_home(db, family_id: int, security):

@@ -1,8 +1,9 @@
 """Memory module — what the assistant remembers about each family member.
 
 Always on: an assistant that cannot remember anything is not an assistant. It has
-no toggle on the onboarding matrix, but its data is still strictly personal
-(scoped by user_id) — one person's notes never reach another's context.
+no toggle on the onboarding matrix, but its data is still strictly personal —
+sections and boards are scoped by user_id, and someone else's never reach the
+assistant's context (ADR-0005).
 """
 from app.core.module import Module, NavItem
 from app.modules.memory import models, screens, tools  # noqa: F401  (регистрирует таблицы и инструменты)

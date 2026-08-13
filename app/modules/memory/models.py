@@ -1,8 +1,8 @@
 """Knowledge a person keeps with the assistant — personal, scoped by user_id.
 
-Two generations side by side: the old flat notes (below) and the knowledge
-schema replacing them — sections → boards → entries, plus per-person shares
-(spec #19). Notes stay until the data migration moves them onto boards.
+Разделы → доски → записи плюс поимённый доступ (спека #19). Плоские заметки,
+жившие здесь до них, переехали на доски миграцией 0008; их таблица осталась
+рядом как `notes_legacy` — прочитать, а не работать.
 """
 from datetime import datetime
 
@@ -10,19 +10,6 @@ from sqlalchemy import (Boolean, Column, Date, DateTime, Float, ForeignKey, Inte
                         Text, UniqueConstraint)
 
 from app.core.db import Base
-
-#: Note kinds, matching the coloured badges in the design.
-KIND_PREF = "pref"      # предпочтение
-KIND_HEALTH = "health"  # здоровье
-KIND_TASK = "task"      # напоминание
-KIND_FACT = "fact"      # наблюдение
-
-KIND_LABELS = {
-    KIND_PREF: "предпочтение",
-    KIND_HEALTH: "здоровье",
-    KIND_TASK: "напоминание",
-    KIND_FACT: "наблюдение",
-}
 
 
 # --- знания: разделы → доски → записи (спека #19) ---
@@ -237,14 +224,24 @@ class Reminder(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
-class Note(Base):
-    __tablename__ = "notes"
+class LegacyNote(Base):
+    """Плоские заметки до знаний — переехали на доски миграцией 0008 (тикет #33).
+
+    Таблица переименована, а не удалена: перенос разбирает свободный текст
+    («в пятницу утром»), и человеку должно остаться куда посмотреть, если
+    что-то переехало не туда. Кода, который её пишет или читает, больше нет —
+    модель стоит здесь ради одной схемы у `create_all()` и у миграций.
+
+    Виды заметок были: pref — предпочтение, health — здоровье, fact —
+    наблюдение, task — напоминание.
+    """
+    __tablename__ = "notes_legacy"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
 
     text = Column(Text, nullable=False)
-    kind = Column(String(16), nullable=False, default=KIND_FACT)
+    kind = Column(String(16), nullable=False, default="fact")
     source = Column(String(64), nullable=False, default="из разговора")
     pinned = Column(Boolean, nullable=False, default=False)
 

@@ -15,8 +15,7 @@ from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render, ru_date
-from app.modules.memory import knowledge, reminders, screens, service
-from app.modules.memory.models import KIND_LABELS
+from app.modules.memory import knowledge, reminders, screens
 from app.web.context import screen_context
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -44,6 +43,7 @@ def reminders_screen(
         fired_retention_days=reminders.FIRED_RETENTION_DAYS,
     )
     return render(request, "memory/reminders.html", context)
+
 
 # --- табло: экран одного показателя (тикет #32) --------------------------------
 
@@ -91,10 +91,6 @@ def delete_stats_screen(
     return RedirectResponse("/memory", status_code=303)
 
 
-FILTERS = [("", "Всё"), ("task", "Напоминания"), ("pref", "Предпочтения"),
-           ("health", "Здоровье"), ("fact", "Наблюдения")]
-
-
 def _decimal_id(raw: str):
     """isdecimal, а не isdigit: isdigit пропускает «²», на котором падает int();
     потолок отсекает числа, не влезающие в INTEGER на боевой базе."""
@@ -134,7 +130,6 @@ def memory_screen(
     request: Request,
     section: str = "",
     board: str = "",
-    kind: str = "",
     notice: str = "",
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
@@ -172,14 +167,6 @@ def memory_screen(
                        right_labels=knowledge.RIGHT_LABELS)
         if active_grant is not None:
             context.update(_board_view(db, current, active_grant, context["members"]))
-    else:
-        context.update(
-            notes=service.list_notes(db, current.id, kind=kind or None),
-            counters=service.counters(db, current.id),
-            filters=FILTERS,
-            active_filter=kind,
-            kind_labels=KIND_LABELS,
-        )
     return render(request, "memory/memory.html", context)
 
 
@@ -428,37 +415,3 @@ def clarify_event(
     board_id = knowledge.event_board(db, current.id, event_id)
     knowledge.clarify_event(db, current.id, event_id, own.strip() or kind)
     return RedirectResponse(_board_url(db, current, board_id), status_code=303)
-
-
-# --- заметки: живут до переезда на доски (#33) --------------------------------
-
-@router.post("/add")
-def add_note(
-    text: str = Form(...),
-    kind: str = Form("fact"),
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
-    if text.strip():
-        service.add_note(db, current.id, text=text, kind=kind, source="добавлено вручную")
-    return RedirectResponse("/memory", status_code=303)
-
-
-@router.post("/{note_id}/pin")
-def pin_note(
-    note_id: int,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
-    service.toggle_pin(db, current.id, note_id)
-    return RedirectResponse("/memory", status_code=303)
-
-
-@router.post("/{note_id}/forget")
-def forget_note(
-    note_id: int,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-):
-    service.forget(db, current.id, note_id)
-    return RedirectResponse("/memory", status_code=303)

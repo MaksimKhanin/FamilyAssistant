@@ -647,6 +647,30 @@ def search_entries(db: Session, user_id: int, query: str, limit: int = 8):
     return [(entry, boards[entry.board_id]) for entry in rows]
 
 
+def person_facts(db: Session, user_id: int, limit: int = 8) -> List[str]:
+    """Свежее с досок, где записывают факты, а не измеряют, — строками.
+
+    Доска со словарём величин — это лог: кормления, шаги, показания счётчиков.
+    Его последние записи не рассказывают о человеке ничего («02:50 170»), зато
+    вытеснили бы из короткой выжимки то единственное, ради чего её собирают, —
+    «у Лёвы аллергия на арахис». Поэтому доски, которые ведут счёт, сюда не идут.
+    """
+    boards = {g.board.id for g in board_grants(db, user_id)}
+    if not boards:
+        return []
+    counted = {row[0] for row in db.query(BoardEventType.board_id)
+               .filter(BoardEventType.board_id.in_(boards)).distinct()}
+    boards -= counted
+    if not boards:
+        return []
+    rows = (db.query(BoardEntry)
+            .filter(BoardEntry.board_id.in_(boards))
+            .order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc())
+            .limit(limit)
+            .all())
+    return [entry.text for entry in rows]
+
+
 def assistant_board(db: Session, user_id: int) -> Board:
     """Доска «Память ассистента» — заводится лениво при первом запоминании,
     вместе с разделом «Личное», если его ещё нет."""

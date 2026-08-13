@@ -5,7 +5,7 @@ from app.core import accounts
 from app.core.accounts import AccountError
 from app.core.auth import hash_password, verify_password
 from app.core.models import ROLE_HEAD, ROLE_MEMBER, User
-from app.modules.memory import service as memory
+from app.modules.memory import knowledge
 from app.modules.nutrition import service as nutrition
 from app.modules.nutrition.vision import MealEstimate
 
@@ -144,14 +144,15 @@ def test_setting_a_password_burns_a_pending_invite(db, head):
 
 def test_deleting_a_person_takes_their_data_with_them(db, head, member):
     nutrition.create_draft(db, member.id, MealEstimate("Овсянка", 320, 12, 14, 34))
-    memory.add_note(db, member.id, "личная заметка")
+    section = knowledge.create_section(db, member.id, "Личное")
+    knowledge.create_board(db, member.id, section.id, "Наблюдения")
     member_id = member.id
 
     accounts.delete_member(db, head, member_id)
 
     assert db.get(User, member_id) is None
     assert nutrition.meals_for_day(db, member_id) == []
-    assert memory.list_notes(db, member_id) == []
+    assert knowledge.list_sections(db, member_id) == []
 
 
 def test_you_cannot_delete_yourself(db, head):

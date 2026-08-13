@@ -8,7 +8,7 @@ from app import scheduler
 from app.core.db import Base, engine
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.models import ScheduledJob
-from app.modules.memory import service as memory
+from app.modules.memory import reminders as reminders_service
 
 
 def test_scheduler_creates_the_schema_it_needs(db):
@@ -111,8 +111,10 @@ def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, head, 
 # --- напоминания ----------------------------------------------------------
 
 def test_a_due_reminder_reaches_its_owner_once(db, head, catcher):
-    memory.add_note(db, head.id, "полить цветы",
-                    remind_at=datetime.utcnow() - timedelta(minutes=1))
+    from app.modules.memory.models import Reminder
+
+    reminders_service.add_reminder(db, head.id, "полить цветы",
+                                   remind_at=datetime.utcnow() - timedelta(minutes=1))
 
     scheduler.run_reminders(db, datetime.utcnow())
     scheduler.run_reminders(db, datetime.utcnow())
@@ -120,31 +122,17 @@ def test_a_due_reminder_reaches_its_owner_once(db, head, catcher):
     reminders = [m for m in catcher if "Напоминаю" in m["text"]]
     assert len(reminders) == 1
     assert "полить цветы" in reminders[0]["text"]
+    assert reminders[0]["user_ids"] == [head.id]
+    # Сработавшее помечено — второй раз оно уже не уйдёт.
+    assert db.query(Reminder).one().reminded_at is not None
 
 
 def test_a_future_reminder_waits(db, head, catcher):
-    memory.add_note(db, head.id, "позвонить врачу",
-                    remind_at=datetime.utcnow() + timedelta(hours=1))
+    reminders_service.add_reminder(db, head.id, "позвонить врачу",
+                                   remind_at=datetime.utcnow() + timedelta(hours=1))
 
     scheduler.run_reminders(db, datetime.utcnow())
 
     assert [m for m in catcher if "Напоминаю" in m["text"]] == []
 
 
-def test_a_due_reminder_from_the_reminders_table_reaches_its_owner_once(db, head, catcher):
-    """Новая таблица напоминаний доставляется той же механикой, что и заметки."""
-    from app.modules.memory.models import Reminder
-
-    db.add(Reminder(user_id=head.id, text="забрать посылку",
-                    remind_at=datetime.utcnow() - timedelta(minutes=1)))
-    db.commit()
-
-    scheduler.run_reminders(db, datetime.utcnow())
-    scheduler.run_reminders(db, datetime.utcnow())
-
-    reminders = [m for m in catcher if "забрать посылку" in m["text"]]
-    assert len(reminders) == 1
-    assert reminders[0]["user_ids"] == [head.id]
-
-    fired = db.query(Reminder).one()
-    assert fired.reminded_at is not None

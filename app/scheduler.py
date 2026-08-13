@@ -117,13 +117,8 @@ def run_jobs(db: Session, now: datetime):
 
 def run_reminders(db: Session, now: datetime):
     from app.modules.memory import reminders as reminders_service
-    from app.modules.memory import service as memory_service
 
-    # Две дороги на время переезда (#24): старые заметки-напоминания живут до
-    # миграции данных (#33), новые напоминания уже в своей таблице. Механика
-    # доставки одна и та же.
-    due = list(memory_service.due_reminders(db, now)) + list(reminders_service.due_reminders(db, now))
-    for reminder in due:
+    for reminder in reminders_service.due_reminders(db, now):
         user = db.get(User, reminder.user_id)
         if user is None:
             continue
