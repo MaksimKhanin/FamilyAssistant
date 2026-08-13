@@ -2,7 +2,7 @@
 
 The core imports whatever `ENABLED_MODULES` lists and asks each package for its
 `module: Module` object. Importing the package is also what registers its tables
-(so `create_all` sees them) and its agent tools (so the registry knows them).
+(so autogenerate sees them) and its agent tools (so the registry knows them).
 """
 import importlib
 from typing import Dict, List

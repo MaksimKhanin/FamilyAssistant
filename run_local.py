@@ -306,11 +306,11 @@ def main():
     sys.path.insert(0, str(Path(__file__).parent))
 
     from app.core.config import settings
-    from app.core.db import create_all
+    from app.core.db import upgrade_schema
     from app.modules import load_modules
 
-    load_modules()      # чтобы create_all увидел таблицы модулей
-    create_all()
+    load_modules()
+    upgrade_schema()    # та же дорога, что и в бою: схему заводят миграции
 
     demo = None if args.no_demo else seed_demo()
     banner(args.port, demo, settings.llm.stub)

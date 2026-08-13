@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.core.clock import local_now, to_local, to_utc, utc_now
-from app.core.db import create_all, session_scope
+from app.core.db import session_scope, upgrade_schema
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.models import ScheduledJob, User
@@ -149,12 +149,12 @@ def prepare():
     """Загрузить модули и убедиться, что схема на месте.
 
     Планировщик и веб поднимаются одновременно, и рассчитывать на то, что схему
-    успел создать кто-то другой, нельзя: проиграв гонку, планировщик раз в минуту
+    довёл до головы кто-то другой, нельзя: проиграв гонку, планировщик раз в минуту
     спрашивал бы несуществующую таблицу и засыпал бы лог базы ошибками.
-    `create_all` идемпотентен — кто пришёл первым, тот и создал.
+    `upgrade_schema` идемпотентен и берёт блокировку — кто пришёл первым, тот и накатил.
     """
     load_modules()
-    create_all()
+    upgrade_schema()
 
 
 def main():

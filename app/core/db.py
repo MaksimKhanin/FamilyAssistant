@@ -7,11 +7,15 @@ level by always scoping module tables on `user_id` (personal data) or `family_id
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.core.config import settings
+
+# Произвольная константа, общая для всех процессов: под ней в Postgres берётся
+# advisory-блокировка на время прогона миграций (см. `_schema_lock`).
+_SCHEMA_LOCK_KEY = 4872003115
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True, future=True)
@@ -58,35 +62,44 @@ def session_scope():
         db.close()
 
 
-def create_all():
-    """Deploy an empty database; a live one is left to Alembic.
+def upgrade_schema():
+    """Довести схему до головы миграций — тем же `alembic upgrade head`.
 
-    Module models must already be imported (app.modules.load_modules does that)
-    or their tables will be missing from the metadata.
+    Вызывается при старте каждым процессом (веб, планировщик, бот), и это
+    единственный способ, которым схема появляется и меняется: пустую базу
+    разворачивает baseline-миграция, отставшую догоняют следующие за ней.
+    Схема едет вместе с кодом, а не отдельной командой руками: пропущенная
+    команда означала процесс, который уже умеет пользоваться новой таблицей,
+    и базу, в которой её ещё нет, — то есть `relation ... does not exist`
+    в логе базы вместо работающей функции.
 
-    На живой базе ничего не делает: схему меняет только `alembic upgrade head`
-    (см. docs/deployment.md). Если бы create_all продолжал досоздавать таблицы
-    на живой базе, каждый сервис, поднятый до прогона миграций, убегал бы вперёд
-    них — и каждой будущей миграции пришлось бы защищаться от «таблица уже есть».
+    Импортированные модели здесь не нужны: таблицы заводит миграция, а не
+    метаданные (`migrations/env.py` сам грузит модули — ради autogenerate).
     """
-    if "users" in inspect(engine).get_table_names():
-        return
-    Base.metadata.create_all(bind=engine)
-    _stamp_migrations_head()
-
-
-def _stamp_migrations_head():
-    """Пометить свежесозданную базу головой миграций.
-
-    База, только что созданная из моделей, по построению совпадает с головой:
-    autogenerate-миграции — это дифф тех же моделей. Без штампа последующий
-    `alembic upgrade head` начал бы с baseline и споткнулся о существующие таблицы.
-    """
+    from alembic import command
     from alembic.config import Config
-    from alembic.runtime.migration import MigrationContext
-    from alembic.script import ScriptDirectory
 
     config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
-    script = ScriptDirectory.from_config(config)
-    with engine.begin() as connection:
-        MigrationContext.configure(connection).stamp(script, script.get_current_head())
+    with _schema_lock():
+        command.upgrade(config, "head")
+
+
+@contextmanager
+def _schema_lock():
+    """Миграции накатывает ровно один процесс, остальные ждут его на старте.
+
+    Веб, планировщик и бот поднимаются одновременно, и без блокировки два
+    процесса начали бы создавать одни и те же таблицы наперегонки: кто пришёл
+    вторым, тот упал бы на «таблица уже есть». В SQLite (локальный запуск и
+    тесты) процесс всегда один — блокировать нечего.
+    """
+    if settings.database_url.startswith("sqlite"):
+        yield
+        return
+
+    with engine.connect() as connection:
+        connection.exec_driver_sql(f"SELECT pg_advisory_lock({_SCHEMA_LOCK_KEY})")
+        try:
+            yield
+        finally:
+            connection.exec_driver_sql(f"SELECT pg_advisory_unlock({_SCHEMA_LOCK_KEY})")

@@ -91,49 +91,62 @@ def test_running_the_upgrade_twice_changes_nothing(tmp_path):
     assert _schema_snapshot(url) == before
 
 
-def test_create_all_deploys_an_empty_database_already_stamped_at_head(db):
-    """Пустая база от `create_all()` сразу помечена головой миграций.
+def test_startup_deploys_an_empty_database(db):
+    """Пустую базу разворачивает старт процесса — тем же прогоном миграций.
 
-    Без штампа первый же `alembic upgrade head` начал бы с baseline и в будущих
-    миграциях спотыкался бы о таблицы, которые `create_all()` создал из моделей.
+    Отдельной дороги «создать схему из моделей» больше нет: и на пустой базе,
+    и на живой схему заводит `alembic upgrade head`, поэтому боевая база и
+    локальная приходят к одному состоянию одним и тем же способом.
     """
     from app.core.config import settings
-    from app.core.db import Base, create_all, engine
+    from app.core.db import Base, engine, upgrade_schema
 
     Base.metadata.drop_all(bind=engine)
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
 
-    create_all()
+    upgrade_schema()
 
     insp = sa.inspect(engine)
-    assert "sections" in insp.get_table_names()
+    assert {"users", "sections", "reminders", "board_stats_screens"} <= set(insp.get_table_names())
     with engine.connect() as conn:
         stamped = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
     assert stamped is not None
-    _upgrade_head(settings.database_url)   # и после штампа это тихий no-op
+    _upgrade_head(settings.database_url)   # база уже на голове — это тихий no-op
 
 
-def test_create_all_leaves_a_lived_in_database_to_migrations(db, head):
-    """Живую базу `create_all()` не трогает — недостающее довозит только Alembic.
+def test_startup_catches_up_a_database_left_behind_by_the_code(db, head):
+    """База, отставшая от кода, догоняется при старте — без команды руками.
 
-    Иначе сервис, поднятый до прогона миграций, убегал бы вперёд них, и каждой
-    будущей миграции пришлось бы защищаться от «таблица уже есть».
+    Ровно тот случай, когда обновлённый сервис уже спрашивает `reminders` и
+    `board_stats_screens`, а в базе их ещё нет: пропущенный `alembic upgrade head`
+    оборачивался «relation does not exist» в логе базы на каждом тике планировщика.
     """
-    from app.core.config import settings
-    from app.core.db import create_all, engine
+    from app.core.db import engine, upgrade_schema
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
-        for table in ("board_events", "board_event_types", "board_shares", "board_entries",
-                      "boards", "sections"):
+        for table in ("board_stats_screens", "board_stats_points", "board_stats_tasks",
+                      "reminders", "board_events", "board_event_types", "board_shares",
+                      "board_entries", "boards", "sections"):
             conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
+    assert "users" in sa.inspect(engine).get_table_names()   # база живая, не пустая
 
-    create_all()
-    assert "sections" not in sa.inspect(engine).get_table_names()
+    upgrade_schema()
 
-    _upgrade_head(settings.database_url)
-    assert "sections" in sa.inspect(engine).get_table_names()
+    tables = set(sa.inspect(engine).get_table_names())
+    assert {"sections", "reminders", "board_stats_screens"} <= tables
+
+
+def test_startup_is_idempotent(db):
+    """Второй старт ничего не меняет: схема уже на голове."""
+    from app.core.db import engine, upgrade_schema
+
+    upgrade_schema()
+    before = _schema_snapshot(str(engine.url))
+
+    upgrade_schema()
+    assert _schema_snapshot(str(engine.url)) == before
 
 
 def test_upgrade_creates_the_reminders_table_outside_the_knowledge_tables(tmp_path):

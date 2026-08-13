@@ -18,7 +18,7 @@ from app.core import push
 from app.core.auth import NotAuthenticatedException
 from app.core.bootstrap import ensure_admin
 from app.core.config import settings
-from app.core.db import create_all, session_scope
+from app.core.db import session_scope, upgrade_schema
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.templating import render
@@ -33,7 +33,7 @@ logger = get_logger("app")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Path(settings.media_root).mkdir(parents=True, exist_ok=True)
-    create_all()
+    upgrade_schema()
 
     # Глава семьи заводится из окружения при первом старте; дальше учётные записи
     # он нарезает в панели. Вызов идемпотентный — на непустой базе ничего не делает.

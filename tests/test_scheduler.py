@@ -11,13 +11,20 @@ from app.core.models import ScheduledJob
 from app.modules.memory import reminders as reminders_service
 
 
+def _empty_the_database():
+    """Пустая база: ни таблиц, ни отметки Alembic о том, докуда доехала схема."""
+    Base.metadata.drop_all(bind=engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+
+
 def test_scheduler_creates_the_schema_it_needs(db):
     """Веб и планировщик стартуют одновременно.
 
     Раньше схему создавал только веб, и планировщик, выиграв гонку, раз в минуту
     спрашивал несуществующую таблицу — база сыпала «relation does not exist».
     """
-    Base.metadata.drop_all(bind=engine)
+    _empty_the_database()
     assert "scheduled_jobs" not in inspect(engine).get_table_names()
 
     scheduler.prepare()
@@ -25,8 +32,25 @@ def test_scheduler_creates_the_schema_it_needs(db):
     assert "scheduled_jobs" in inspect(engine).get_table_names()
 
 
+def test_the_scheduler_alone_catches_a_database_up_with_the_code(db):
+    """Планировщик на живой, но отставшей базе догоняет её сам.
+
+    Его тик спрашивает `reminders` — таблицу, которой в базе прошлой версии
+    не было; без прогона миграций при старте это «relation does not exist»
+    каждую минуту.
+    """
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
+        conn.exec_driver_sql("DROP TABLE IF EXISTS reminders")
+
+    scheduler.prepare()
+
+    assert "reminders" in inspect(engine).get_table_names()
+    scheduler.tick()
+
+
 def test_a_tick_on_a_fresh_database_does_not_explode(db):
-    Base.metadata.drop_all(bind=engine)
+    _empty_the_database()
     scheduler.prepare()
 
     scheduler.tick()          # ни одной задачи и ни одного напоминания — просто тихо
