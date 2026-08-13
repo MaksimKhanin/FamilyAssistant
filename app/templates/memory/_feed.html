@@ -1,0 +1,97 @@
+{# Карточка ленты доски. Ожидает: active_board, board_right, audience, feed,
+   feed_limit, author_names, right_labels, current_user.
+   Право смотрящего решает всё: владелец правит любые записи, допущенный на
+   редактирование — свои, допущенный на просмотр только читает и копирует. #}
+
+{% if active_board.instruction %}
+  {# Инструкция висит в шапке постоянно: человек видит, как ассистент
+     прочтёт то, что здесь написано. #}
+  <div class="board-instruction">🧭 Ассистенту: {{ active_board.instruction }}</div>
+{% endif %}
+
+{% if audience %}
+  <p class="tiny">
+    Доступ: {{ audience.owner.display_name if audience.owner else "бывший участник" }} — владелец
+    {%- for user, right in audience.shares %} · {{ user.display_name }} — {{ right_labels[right] }}{% endfor %}
+    {%- if audience.all_right %} · вся семья — {{ right_labels[audience.all_right] }}{% endif %}
+  </p>
+{% endif %}
+
+{% if feed_limit %}
+  <p class="tiny" style="text-align:center">Показаны последние
+    {{ feed_limit|counted("запись", "записи", "записей") }} — более старые есть, но сюда не влезли.</p>
+{% endif %}
+
+{# Лента как разговор: автор и время у каждой записи, разделители по дням,
+   подряд идущие записи одного автора не склеиваются — в логе время каждой
+   записи это данные (тикет #27). Меню записи открывает app.js правой кнопкой
+   или долгим нажатием. #}
+<div class="feed" data-feed>
+  {% for day in feed %}
+    <div class="daysep">{{ day.label }}</div>
+    {% for entry in day.entries %}
+      {% set editable = board_right == "owner"
+         or (board_right == "edit" and entry.author_id == current_user.id) %}
+      <div class="entry" data-entry data-entry-id="{{ entry.id }}"
+           {% if editable %}data-editable{% endif %}>
+        <span class="entry-author{% if entry.by_assistant %} assistant{% elif entry.author_id is none %} gone{% endif %}"
+          >{%- if entry.by_assistant %}Ассистент{% elif entry.author_id is none %}бывший участник{% else %}{{ author_names.get(entry.author_id, "участник") }}{% endif -%}</span>
+        <span class="entry-at">{{ entry.created_at|ru_time }}</span>
+        {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
+        <div class="entry-body" data-entry-body>{{ entry.text }}</div>
+        {% if editable %}
+          {# Плашка уточнения: ассистент разобрал величину неуверенно, и в счёт
+             она не идёт, пока человек не ответил. Тихая и не блокирующая —
+             запись уже сохранена, ответ можно и не давать (тикет #30). #}
+          {% for ask in (clarify or {}).get(entry.id, []) %}
+            <form class="clarify" method="post" data-clarify
+                  action="/memory/events/{{ ask.id }}/clarify">
+              {# Enter в поле отправляет форму первой кнопкой; будь ею вариант,
+                 нажатие Enter подтвердило бы невыбранный тип. Поэтому первой
+                 идёт безымянная: она отправляет ровно то, что человек написал. #}
+              <button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
+              <span class="tiny">Не понял{% if ask.raw %} «{{ ask.raw }}»{% endif %} — что это?</span>
+              {% for option in ask.options %}
+                <button class="btn ghost small" type="submit" name="kind" value="{{ option }}"
+                  >{{ option }}</button>
+              {% endfor %}
+              <input class="field small" name="own" placeholder="свои слова" autocomplete="off">
+              <button class="btn small" type="submit">Уточнить</button>
+            </form>
+          {% endfor %}
+          <form class="stack" style="gap:8px;margin-top:4px" method="post"
+                action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
+            <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>
+            <div class="row" style="gap:8px">
+              <button class="btn small" type="submit">Сохранить</button>
+              <button class="btn ghost small" type="button" data-edit-cancel>Отмена</button>
+            </div>
+          </form>
+          <form method="post" action="/memory/entries/{{ entry.id }}/delete"
+                data-entry-delete hidden></form>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Пока пусто — первая запись появится здесь.</p>
+  {% endfor %}
+</div>
+
+{% if board_right != "view" %}
+  <form class="composer" method="post" action="/memory/entries/add">
+    <input type="hidden" name="board_id" value="{{ active_board.id }}">
+    <input class="field" name="text" placeholder="Написать на доску…" required autocomplete="off">
+    <button class="btn" type="submit">Записать</button>
+  </form>
+  <p class="tiny">Правая кнопка или долгое нажатие на записи — изменить, удалить, скопировать.</p>
+{% else %}
+  {# Вместо неработающей формы — объяснение, к кому идти за доступом. #}
+  <div class="readonly-note">Только просмотр. Писать сюда может разрешить
+    {{ audience.owner.display_name if audience and audience.owner else "владелец доски" }}.</div>
+{% endif %}
+
+<div class="pop entry-menu" data-entry-menu hidden>
+  <button type="button" data-menu-edit>Изменить</button>
+  <button type="button" class="danger" data-menu-delete>Удалить</button>
+  <button type="button" data-menu-copy>Копировать текст</button>
+</div>

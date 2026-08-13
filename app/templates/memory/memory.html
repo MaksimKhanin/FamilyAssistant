@@ -1,69 +1,267 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="row wrap" style="gap:8px;margin-bottom:16px">
-  {% for value, label in filters %}
-    <a class="chip {% if active_filter == value %}active{% endif %}"
-       href="/memory{% if value %}?kind={{ value }}{% endif %}">{{ label }}</a>
+{# Полоса разделов: закреплённые впереди, дальше по свежести, «Общее» в конце.
+   Что не влезло по ширине, app.js прячет в «⋯»; активный раздел помечен
+   data-strip-active и не прячется никогда (тикет #25, прототип #16). #}
+<div class="section-strip" data-section-strip>
+  {% for section in sections %}
+    <a class="chip {% if active_section and active_section.id == section.id %}active{% endif %}"
+       data-strip-item
+       {% if active_section and active_section.id == section.id %}data-strip-active{% endif %}
+       href="/memory?section={{ section.id }}"
+      >{% if section.pinned %}<span class="pin">📌</span>{% endif %}{{ section.name }}</a>
   {% endfor %}
+  <a class="chip {% if common_active %}active{% endif %}"
+     data-strip-item {% if common_active %}data-strip-active{% endif %}
+     href="/memory?section=common">Общее</a>
+  <details class="strip-pop">
+    <summary class="chip dashed">+ раздел</summary>
+    <form class="pop stack" method="post" action="/memory/sections/add">
+      <input class="field" name="name" placeholder="Например: Ремонт" required maxlength="128">
+      <button class="btn small" type="submit">Завести раздел</button>
+    </form>
+  </details>
+  <div class="strip-pop" data-strip-more hidden>
+    <button class="chip" type="button" data-strip-more-btn aria-label="Ещё разделы">⋯</button>
+    <div class="pop stack" data-strip-menu hidden></div>
+  </div>
 </div>
 
-<div class="two-col">
-  <div class="stack">
-    {% for note in notes %}
-      <div class="card tight stack" style="gap:8px">
+{% if notice_text %}
+  <div class="card tight" style="border-color:var(--alarm-text);color:var(--alarm-text);margin-bottom:16px">
+    {{ notice_text }}
+  </div>
+{% endif %}
+
+{% if active_section %}
+  <div class="row wrap" style="gap:8px;margin-bottom:16px">
+    <form method="post" action="/memory/sections/{{ active_section.id }}/pin">
+      <button class="btn ghost small" type="submit">
+        {{ "Открепить" if active_section.pinned else "Закрепить" }}
+      </button>
+    </form>
+    <details class="strip-pop">
+      <summary class="btn ghost small">Переименовать</summary>
+      <form class="pop stack" method="post" action="/memory/sections/{{ active_section.id }}/rename">
+        <input class="field" name="name" value="{{ active_section.name }}" required maxlength="128">
+        <button class="btn small" type="submit">Сохранить</button>
+      </form>
+    </details>
+    <details class="strip-pop">
+      <summary class="btn ghost small" style="color:var(--alarm-text)">Удалить</summary>
+      <div class="pop stack">
+        <p class="tiny" style="margin:0">Раздел «{{ active_section.name }}» и его доски будут удалены.</p>
+        <form method="post" action="/memory/sections/{{ active_section.id }}/delete">
+          <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить раздел</button>
+        </form>
+      </div>
+    </details>
+  </div>
+  {# Список досок раздела рядом с выбранной; на узком экране колонки складываются
+     в одну (тикет #26). Лента записей придёт следующим шагом (#27). #}
+  <div class="board-cols">
+    <div class="stack" style="gap:8px">
+      {% for board in boards %}
+        <a class="board-item {% if active_board and active_board.id == board.id %}active{% endif %}"
+           href="/memory?section={{ active_section.id }}&board={{ board.id }}">
+          <div class="name">{{ board.name }}</div>
+          <div class="meta">{% if board.share_all %}вся семья · {% endif -%}
+            {{ "с инструкцией ассистенту" if board.instruction else "без инструкции" }}</div>
+        </a>
+      {% endfor %}
+      <details class="board-add">
+        <summary class="board-item dashed">
+          <div class="name">+ доска</div>
+          <div class="meta">имя и инструкция ассистенту</div>
+        </summary>
+        <form class="card tight stack" method="post" action="/memory/boards/add">
+          <input type="hidden" name="section_id" value="{{ active_section.id }}">
+          <input class="field" name="name" placeholder="Например: Питание и сон Ани" required maxlength="128">
+          <textarea class="field" name="instruction" rows="3"
+                    placeholder="Как читать и вести эту доску. Например: 19.50 170 — время и миллилитры; если время не указано — бери время записи."></textarea>
+          <button class="btn small" type="submit">Завести доску</button>
+        </form>
+      </details>
+    </div>
+
+    <div class="card stack">
+      {% if active_board %}
         <div class="row wrap" style="gap:8px">
-          <span class="badge {{ note.kind }}">{{ kind_labels.get(note.kind, "заметка") }}</span>
-          <span class="tiny">{{ note.source }}</span>
-          {% if editable %}
-            <span class="spacer"></span>
-            <form method="post" action="/memory/{{ note.id }}/pin">
-              <button class="btn link small" type="submit">{{ "Закреплено" if note.pinned else "Закрепить" }}</button>
-            </form>
-            <form method="post" action="/memory/{{ note.id }}/forget">
-              <button class="btn link small" type="submit" style="color:var(--alarm-text)">Забыть</button>
-            </form>
+          <div class="card-title" style="margin:0">{{ active_board.name }}</div>
+          <span class="spacer"></span>
+          <details class="strip-pop">
+            <summary class="btn ghost small">Настроить</summary>
+            <div class="pop stack" style="right:0;min-width:280px">
+              <form class="stack" method="post" action="/memory/boards/{{ active_board.id }}/update">
+                <input class="field" name="name" value="{{ active_board.name }}" required maxlength="128">
+                <textarea class="field" name="instruction" rows="3"
+                          placeholder="Инструкция ассистенту">{{ active_board.instruction or "" }}</textarea>
+                {% if sections|length > 1 %}
+                  <select class="field" name="section_id">
+                    {% for section in sections %}
+                      <option value="{{ section.id }}"
+                              {% if section.id == active_section.id %}selected{% endif %}>{{ section.name }}</option>
+                    {% endfor %}
+                  </select>
+                {% endif %}
+                <button class="btn small" type="submit">Сохранить</button>
+              </form>
+              <form method="post" action="/memory/boards/{{ active_board.id }}/delete">
+                <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить доску</button>
+              </form>
+            </div>
+          </details>
+          {# Словарь величин доски: пока он пуст, записи не разбираются вовсе.
+             Заводит его тот, кто ведёт лог, — иначе на плашку уточнения под
+             своей записью ему нечем было бы ответить (тикет #30). #}
+          {% if board_right != "view" %}
+            <details class="strip-pop">
+              <summary class="btn ghost small">Величины</summary>
+              <div class="pop stack" style="right:0;min-width:280px">
+                {% for event_type in event_types %}
+                  <p class="tiny" style="margin:0">{{ event_type.name }}{% if event_type.unit %} — {{ event_type.unit }}{% endif %}</p>
+                {% else %}
+                  <p class="tiny" style="margin:0">Пока пусто: без величин ассистент
+                    не разбирает записи этой доски на цифры.</p>
+                {% endfor %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/types/add">
+                  <input class="field" name="name" placeholder="кормление" required
+                         maxlength="64" style="flex:1">
+                  <input class="field" name="unit" placeholder="мл" maxlength="16" style="width:80px">
+                  <button class="btn small" type="submit">Добавить</button>
+                </form>
+              </div>
+            </details>
           {% endif %}
+          {# Состав доступа меняет только владелец; «всем» — живое правило (тикет #28). #}
+          <details class="strip-pop">
+            <summary class="btn ghost small">Доступ</summary>
+            <div class="pop stack" style="right:0;min-width:280px">
+              {% for user, right in audience.shares %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/unshare">
+                  <input type="hidden" name="member_id" value="{{ user.id }}">
+                  <span style="flex:1">{{ user.display_name }} — {{ right_labels[right] }}</span>
+                  <button class="btn ghost small" type="submit">Отозвать</button>
+                </form>
+              {% endfor %}
+              {% if audience.all_right %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/unshare-all">
+                  <span style="flex:1">Вся семья — {{ right_labels[audience.all_right] }}</span>
+                  <button class="btn ghost small" type="submit">Отозвать</button>
+                </form>
+              {% else %}
+                <form class="row" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/share-all">
+                  <select class="field" name="right" style="flex:1">
+                    {% for value, label in right_labels.items() %}
+                      <option value="{{ value }}">вся семья — {{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn small" type="submit">Поделиться</button>
+                </form>
+              {% endif %}
+              {% set shared_ids = audience.shares|map(attribute=0)|map(attribute="id")|list %}
+              {% set candidates = members|rejectattr("id", "equalto", current_user.id)
+                                         |rejectattr("id", "in", shared_ids)|list %}
+              {% if candidates %}
+                <form class="stack" style="gap:8px" method="post"
+                      action="/memory/boards/{{ active_board.id }}/share">
+                  <div class="row" style="gap:8px">
+                    <select class="field" name="member_id" style="flex:1">
+                      {% for member in candidates %}
+                        <option value="{{ member.id }}">{{ member.display_name }}</option>
+                      {% endfor %}
+                    </select>
+                    <select class="field" name="right" style="flex:1">
+                      {% for value, label in right_labels.items() %}
+                        <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <button class="btn small" type="submit">Поделиться</button>
+                </form>
+              {% endif %}
+            </div>
+          </details>
         </div>
-        <div>{{ note.text }}</div>
-        <div class="tiny">
-          {% if note.when_text %}⏱ напомню: {{ note.when_text }}{% else %}когда придётся к слову{% endif %}
-        </div>
-      </div>
-    {% else %}
-      <div class="card stack">
-        <div class="card-title">Память пока пустая</div>
-        <p class="muted">Скажите ассистенту «запомни…» — или добавьте заметку справа.</p>
-      </div>
-    {% endfor %}
+        {% include "memory/_feed.html" %}
+      {% elif boards %}
+        <div class="card-title">Выберите доску</div>
+        <p class="muted">Или заведите новую — рядом со списком.</p>
+      {% else %}
+        <div class="card-title">В разделе «{{ active_section.name }}» пока пусто</div>
+        <p class="muted">Доска — лента записей с инструкцией ассистенту: как читать
+          и вести её содержимое. Заведите первую.</p>
+      {% endif %}
+    </div>
   </div>
 
-  <div class="stack">
-    {% if editable %}
-      <form class="card stack" method="post" action="/memory/add">
-        <div class="card-title">Добавить в память</div>
-        <textarea class="field" name="text" rows="3" placeholder="Например: Соня не ест грибы"></textarea>
-        <select class="field" name="kind">
-          {% for value, label in kind_labels.items() %}
-            <option value="{{ value }}" {% if value == "fact" %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <button class="btn" type="submit">Добавить в память</button>
-      </form>
-    {% endif %}
+{% elif common_active %}
+  {% if shared_grants %}
+    {# «Общее» — не хранимый раздел, а отображение грантов: доски, расшаренные
+       на смотрящего, по свежести (тикет #28). #}
+    <div class="board-cols">
+      <div class="stack" style="gap:8px">
+        {% for grant in shared_grants %}
+          <a class="board-item {% if active_board and active_board.id == grant.board.id %}active{% endif %}"
+             href="/memory?section=common&board={{ grant.board.id }}">
+            <div class="name">{{ grant.board.name }}</div>
+            <div class="meta">{{ shared_owners[grant.board.id] }} ·
+              {{ "можно писать" if grant.right == "edit" else "просмотр" }}</div>
+          </a>
+        {% endfor %}
+      </div>
+      <div class="card stack">
+        {% if active_board %}
+          <div class="row wrap" style="gap:8px">
+            <div class="card-title" style="margin:0">{{ active_board.name }}</div>
+          </div>
+          {% include "memory/_feed.html" %}
+        {% else %}
+          <div class="card-title">Выберите доску</div>
+          <p class="muted">Слева — доски, которыми с вами поделились.</p>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="card stack">
+      <div class="card-title">«Общее» пока пустое</div>
+      <p class="muted">Сюда попадут доски, которыми с вами поделятся другие участники семьи.</p>
+    </div>
+  {% endif %}
+
+{% else %}
+  {# Раздел не выбран: экран знаний открывается сам собой, но выбрать всё равно
+     надо — и полоса разделов уже наверху (тикет #33). #}
+  <div class="two-col">
+    <div class="card stack">
+      {% if sections %}
+        <div class="card-title">Выберите раздел</div>
+        <p class="muted">Разделы — сверху. Внутри раздела живут доски: ленты записей
+          с инструкцией ассистенту.</p>
+      {% else %}
+        <div class="card-title">Знания пока пустые</div>
+        <p class="muted">Раздел — ваша рубрика: «Дети», «Дом», «Здоровье». Заведите
+          первый наверху, а внутри — доску, на которую будете писать.</p>
+      {% endif %}
+    </div>
 
     <div class="card dark stack">
       <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
       <p>
-        Ассистент запоминает то, что всплывает в разговоре, и возвращается к этому,
-        когда приходится к слову. Ничего из этого не видят другие члены семьи.
+        Вы пишете на доски словами, ассистент читает их по инструкции доски и
+        возвращается к записанному, когда приходится к слову. Ваши разделы не видит
+        никто — пока вы сами не поделитесь доской.
       </p>
       <p class="tiny" style="color:var(--dark-text-2)">
-        {{ counters.total|counted("заметка", "заметки", "заметок") }} в памяти ·
-        {{ counters.waiting }} {{ counters.waiting|plural("ждёт", "ждут", "ждут") }} напоминания
+        Напоминания живут отдельно, на своём экране: скажите «напомни завтра в девять».
       </p>
     </div>
   </div>
-</div>
+{% endif %}
 
 {% endblock %}

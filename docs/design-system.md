@@ -61,7 +61,7 @@ sidebar 246px  |  header (sticky)
 |---|---|---|
 | Главная | `dashboard.html` | `/` |
 | Панель чата | `partials/chat_panel.html`, `chat_messages.html` | `/chat/panel` |
-| Память и заметки | `memory/memory.html` | `/memory` |
+| Знания | `memory/memory.html` | `/memory` |
 | Приём пищи (ввод → оценка → сохранено) | `nutrition/meal.html` | `/nutrition/meal` |
 | Статистика | `nutrition/stats.html` | `/nutrition/stats` |
 | Активность | `nutrition/activity.html` | `/nutrition/activity` |
@@ -87,7 +87,7 @@ sidebar 246px  |  header (sticky)
 Плюрализация и падежи — фильтры Jinja (`app/core/templating.py`):
 
 ```jinja
-{{ counters.total|counted("заметка", "заметки", "заметок") }}   → «5 заметок в памяти»
+{{ feed_limit|counted("запись", "записи", "записей") }}         → «5 записей»
 Для {{ user.display_name|genitive }} безопасность пока не включена
 {{ event.happened_at|ru_datetime }}                            → «Сегодня, 23:14»
 ```
@@ -102,7 +102,7 @@ sidebar 246px  |  header (sticky)
 
 * **Каркас.** До 900px сайдбар превращается в выдвижное меню, снизу появляется панель
   с четырьмя пунктами — ровно тем, ради чего приложение открывают: главная, приём
-  пищи, события дома, память. Пятая кнопка — «Спросить», она открывает чат на весь
+  пищи, события дома, знания. Пятая кнопка — «Спросить», она открывает чат на весь
   экран. Состав панели собирается из тех же `NavItem`, что и сайдбар, и уважает
   выключенные модули (`build_quick_nav` в `app/web/context.py`).
 * **Безопасные зоны.** Нижняя панель и подвал чата учитывают `env(safe-area-inset-bottom)`,

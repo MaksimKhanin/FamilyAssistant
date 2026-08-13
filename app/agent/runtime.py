@@ -149,7 +149,16 @@ class Agent:
         if image:
             user_content = [text_part(user_content), image_part(image, image_mime)]
 
-        messages: List[dict] = [{"role": "system", "content": system_prompt(subject, modules)}]
+        system = system_prompt(subject, modules)
+        if "memory" in modules:
+            # Названия и инструкции досок — в промпт; содержимое остаётся за
+            # read_board, автообогащения нет (спека #19). Доски — глазами того,
+            # кто разговаривает, а не «от лица» (ADR-0005), как и сами инструменты.
+            from app.modules.memory.knowledge import boards_prompt
+            boards = boards_prompt(db, actor.id)
+            if boards:
+                system += f"\n{boards}"
+        messages: List[dict] = [{"role": "system", "content": system}]
         messages.extend(history)
         messages.append({"role": "user", "content": user_content})
 
@@ -301,7 +310,10 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
 
     arguments = json.loads(pending.arguments_json or "{}")
     image = media.read_and_discard(pending.attachment_path)
-    ctx = ToolContext(db=db, actor=actor, subject=subject, channel=channel,
+    # Действие исполняется в контексте того, чей это был разговор: «да» главы
+    # семьи подтверждает чужую просьбу, но не переносит её данные к себе —
+    # инструменты знаний ходят по ctx.actor (ADR-0005).
+    ctx = ToolContext(db=db, actor=subject, subject=subject, channel=channel,
                       attachments={"image": image} if image else {})
     result = registry.execute(spec, ctx, arguments)
 

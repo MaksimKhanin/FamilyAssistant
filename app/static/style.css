@@ -387,6 +387,14 @@ textarea.field { font-size: 13.5px; resize: vertical; }
 }
 .macro-bar { height: 8px; border-radius: 99px; background: var(--acc); }
 
+/* Табло: ряд во времени и та же цифра таблицей (тикет #32). Линия тянется по
+   ширине карточки, толщина штриха при этом не растягивается. */
+.sparkline { width: 100%; height: 120px; display: block; }
+table.plain { width: 100%; border-collapse: collapse; }
+table.plain td { padding: 7px 0; border-bottom: 1px solid var(--border); }
+table.plain tr:last-child td { border-bottom: none; }
+table.plain td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ---------- security ---------- */
 
 .event {
@@ -552,3 +560,103 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
   ::view-transition-new(*) { animation: none !important; }
   #nav-progress.on::after { animation: none; width: 100%; }
 }
+
+/* ---------- экран знаний: полоса разделов (тикет #25) ---------- */
+
+/* Без JavaScript полоса просто переносится на новые строки; app.js переводит её
+   в одну строку и прячет не влезшее в меню «⋯» — активный раздел не прячется
+   никогда. */
+.section-strip { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.section-strip.nowrap { flex-wrap: nowrap; }
+.section-strip .chip { white-space: nowrap; flex: none; }
+.section-strip .chip .pin { opacity: .55; }
+.chip.dashed { border: 1px dashed var(--border-dashed); background: transparent; }
+/* .chip задаёт display и перебивает браузерное [hidden] — возвращаем его силу */
+.chip[hidden] { display: none; }
+
+/* Всплывашки полосы: форма нового раздела, меню «⋯», действия раздела.
+   <details> раскрывается и закрывается без единой строчки кода. */
+.strip-pop { position: relative; flex: none; }
+.strip-pop summary { list-style: none; cursor: pointer; user-select: none; }
+.strip-pop summary::-webkit-details-marker { display: none; }
+.pop {
+  position: absolute; z-index: 30; margin-top: 6px; min-width: 220px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px;
+  padding: 12px; box-shadow: 0 12px 32px rgba(35, 32, 28, .14);
+}
+.pop[hidden] { display: none; }
+.pop .chip { display: flex; }
+
+/* ---------- экран знаний: доски раздела (тикет #26) ---------- */
+
+/* Список досок рядом с выбранной; на узком экране колонки складываются в одну. */
+.board-cols { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .board-cols { grid-template-columns: 1fr; } }
+
+.board-item {
+  display: block; text-align: left; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
+  font: inherit; color: var(--text); cursor: pointer; text-decoration: none;
+}
+.board-item:hover { border-color: var(--border-strong); }
+.board-item.active { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 6%, var(--surface)); }
+.board-item .name { font-weight: 600; font-size: 13.5px; }
+.board-item .meta { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.board-item.dashed { border: 1px dashed var(--border-dashed); background: transparent; color: var(--text-2); }
+
+.board-add summary { list-style: none; cursor: pointer; }
+.board-add summary::-webkit-details-marker { display: none; }
+
+/* Инструкция доски в шапке — постоянно, чтобы было видно, как ассистент
+   прочтёт написанное. */
+.board-instruction {
+  padding: 10px 12px; border-radius: 12px; background: var(--surface-2);
+  color: var(--text-2); font-size: 12.5px;
+}
+
+/* ---------- экран знаний: лента записей (тикет #27) ---------- */
+
+/* Лента как разговор: автор и время у каждой записи, подряд идущие записи
+   одного автора не склеиваются — время каждой это данные. */
+.feed { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; padding-right: 4px; }
+.daysep { text-align: center; font-size: 11px; color: var(--text-4); margin: 12px 0 6px; }
+.entry { padding: 7px 12px; border-radius: 12px; }
+.entry:hover { background: var(--surface-2); }
+.entry-author { font-size: 12px; font-weight: 600; color: var(--acc); }
+.entry-author.assistant { color: var(--ok-dark); }
+.entry-author.gone { color: var(--text-4); font-weight: 500; font-style: italic; }
+.entry-at, .entry-edited { font-size: 11px; color: var(--text-4); margin-left: 6px; }
+.entry-body { white-space: pre-line; margin-top: 1px; }
+
+.composer { display: flex; gap: 8px; }
+.composer .field { flex: 1; }
+
+/* Контекстное меню записи: позиционирует app.js по точке нажатия. */
+.entry-menu { position: fixed; margin: 0; min-width: 190px; padding: 6px; }
+.entry-menu button {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  font-size: 13px; padding: 8px 10px; border-radius: 9px; cursor: pointer;
+}
+.entry-menu button:hover { background: var(--surface-2); }
+.entry-menu button.danger { color: var(--alarm-text); }
+
+/* ---------- экран знаний: доступ к доске (тикет #28) ---------- */
+
+/* Допущенному на просмотр вместо поля ввода — объяснение, к кому идти. */
+.readonly-note {
+  padding: 10px 12px; border-radius: 12px; background: var(--warn-bg);
+  color: var(--warn-text); font-size: 12.5px;
+}
+
+/* ---------- экран знаний: уточнение величины (тикет #30) ---------- */
+
+/* Тихая плашка под записью: варианты из словаря доски и поле для своих слов.
+   Не модалка и ничего не блокирует — запись уже сохранена, ответить можно
+   когда угодно или не отвечать вовсе. */
+.clarify {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 8px 10px; border-radius: 12px;
+  background: var(--surface-2); border: 1px dashed var(--border-dashed);
+}
+.clarify .tiny { color: var(--text-3); }
+.clarify .field.small { flex: 1; min-width: 120px; font-size: 12px; padding: 5px 9px; }

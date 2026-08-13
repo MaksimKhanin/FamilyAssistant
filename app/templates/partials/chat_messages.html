@@ -57,22 +57,34 @@
           {% endfor %}
           {% if card.comment %}<p class="tiny">{{ card.comment }}</p>{% endif %}
         </div>
-      {% elif card.type == "memory" %}
+      {% elif card.type == "board" %}
         <div class="agent-card">
-          <span class="badge {{ card.kind }}">{{ card.kind_label }}</span>
+          <span class="badge fact">{{ card.board }}</span>
           <div>{{ card.text }}</div>
-          {% if card.when %}<div class="tiny">напомню: {{ card.when }}</div>{% endif %}
-          <a class="btn link" href="/memory">Вся память и напоминания →</a>
+          <a class="btn link" href="{{ card.url or '/memory' }}">Открыть доску →</a>
         </div>
-      {% elif card.type == "recall" %}
+      {% elif card.type == "stats-screen" %}
         <div class="agent-card">
-          {% for note in card.notes %}
+          <span class="badge fact">{{ card.board }}</span>
+          <div>{{ card.name }} · {{ card.form }}</div>
+          <a class="btn link" href="{{ card.url }}">Открыть табло →</a>
+        </div>
+      {% elif card.type == "board-recall" %}
+        <div class="agent-card">
+          {% for hit in card.hits %}
             <div class="row" style="gap:8px;align-items:flex-start">
-              <span class="badge {{ note.kind }}">{{ note.kind_label }}</span>
-              <span>{{ note.text }}</span>
+              <span class="badge fact">{{ hit.board }}</span>
+              <span>{{ hit.text }}</span>
             </div>
           {% endfor %}
-          <a class="btn link" href="/memory">Вся память и напоминания →</a>
+          <a class="btn link" href="/memory">Все знания →</a>
+        </div>
+      {% elif card.type == "reminder" %}
+        <div class="agent-card">
+          <span class="badge task">напоминание</span>
+          <div>{{ card.text }}</div>
+          <div class="tiny">⏱ {{ card.when }}</div>
+          <a class="btn link" href="/reminders">Все напоминания →</a>
         </div>
       {% elif card.type == "confirm" %}
         <div class="agent-card">

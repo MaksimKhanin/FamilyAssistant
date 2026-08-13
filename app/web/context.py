@@ -54,16 +54,24 @@ def avatar(user: User) -> Dict[str, str]:
     }
 
 
-def build_nav(enabled: Set[str], current: User) -> List[dict]:
+def build_nav(db: Session, enabled: Set[str], current: User) -> List[dict]:
     """Sidebar groups, with items of switched-off modules left out.
 
     `enabled` считается один раз в `screen_context` — навигация строится на
     каждый переход, и ходить в базу за каждым модулем отдельно было бы дорого.
+
+    Кроме статических пунктов модуль отдаёт и заведённые самим человеком
+    (`nav_items_for`) — сегодня это табло. Спрашивают их про `current`, а не
+    `viewed`: знания и всё, что из них растёт, исключены из режима «от лица»
+    (ADR-0005), и переключение аватара в шапке чужих табло не показывает.
     """
     items: List[NavItem] = list(CORE_NAV)
     for module in load_modules():
-        if module.always_on or module.name in enabled:
-            items.extend(module.nav_items)
+        if not (module.always_on or module.name in enabled):
+            continue
+        items.extend(module.nav_items)
+        if module.nav_items_for is not None:
+            items.extend(module.nav_items_for(db, current))
     items.extend(SETTINGS_NAV)
 
     groups: Dict[str, List[NavItem]] = {}
@@ -110,7 +118,7 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
     # Один запрос на все флаги модулей: навигация, бейджи и сами экраны дальше
     # смотрят в это множество, а не дёргают is_module_enabled по одному.
     enabled = set(enabled_modules(db, viewed.id, [m.name for m in load_modules()]))
-    nav_groups = build_nav(enabled, current)
+    nav_groups = build_nav(db, enabled, current)
 
     return {
         "request": request,

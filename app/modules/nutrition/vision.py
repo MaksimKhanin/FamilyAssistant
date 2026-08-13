@@ -93,7 +93,7 @@ def estimate_from_image(image_bytes: bytes, hint: str = None, context: str = Non
 def estimate_from_text(text: str, context: str = None, llm: LLMClient = None) -> MealEstimate:
     """Estimate a meal from a free-form description («кофе с молоком и бутерброд»).
 
-    `context` — что известно об этом человеке: цель, норма, заметки из памяти.
+    `context` — что известно об этом человеке: цель, норма, записи с досок знаний.
     Аллергия или «ест без сахара» меняют оценку сильнее, чем кажется, а модель
     сама об этом не спросит.
     """

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="two-col">
+  <div class="stack">
+    {% for reminder in active %}
+      <div class="card tight stack" style="gap:8px">
+        <div class="row wrap" style="gap:8px">
+          <span class="badge task">напоминание</span>
+          <span class="tiny">⏱ {{ reminder.remind_at|ru_datetime }}</span>
+        </div>
+        <div>{{ reminder.text }}</div>
+      </div>
+    {% else %}
+      <div class="card stack">
+        <div class="card-title">Активных напоминаний нет</div>
+        <p class="muted">Скажите ассистенту «напомни…» — и назовите время.</p>
+      </div>
+    {% endfor %}
+
+    {% if fired %}
+      <div class="label" style="margin-top:8px">Уже напомнил</div>
+      {% for reminder in fired %}
+        <div class="card tight stack" style="gap:8px;opacity:.65">
+          <div class="row wrap" style="gap:8px">
+            <span class="badge">сработало</span>
+            <span class="tiny">{{ reminder.reminded_at|ru_datetime }}</span>
+          </div>
+          <div>{{ reminder.text }}</div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <div class="card dark stack">
+      <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
+      <p>
+        Ассистент ставит напоминание только на конкретное время: если его не назвать,
+        он переспросит, а не запишет «на когда-нибудь».
+      </p>
+      <p class="tiny" style="color:var(--dark-text-2)">
+        Сработавшие остаются здесь помеченными и исчезают сами через
+        {{ fired_retention_days|counted("день", "дня", "дней") }} — закрывать их не нужно.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -33,7 +33,6 @@ SECURITY_ANOMALY = "security.anomaly"
 MEAL_LOGGED = "nutrition.meal.logged"
 MEAL_CONFIRMED = "nutrition.meal.confirmed"
 ACTIVITY_LOGGED = "nutrition.activity.logged"
-NOTE_CREATED = "memory.note.created"
 AGENT_MESSAGE = "agent.message"           # агент хочет что-то сказать человеку
 ACTION_PENDING = "agent.action.pending"   # действие ждёт подтверждения
 

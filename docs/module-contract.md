@@ -66,12 +66,20 @@ module = Module(
         NavItem(slug="expenses", label="Расходы", url="/finance/expenses",
                 icon="chart", group="Финансы"),
     ],
+    nav_items_for=screens.nav_items,   # пункты, которые завёл сам человек
+
     event_handlers={MEAL_CONFIRMED: [_maybe_log_grocery]},
     per_user=True,
 )
 ```
 
 `always_on=True` — если модуль не должен иметь тумблера (как «Память»).
+
+`nav_items` — пункты, известные заранее и одинаковые у всех. Если пункт заводит сам
+человек (табло — экран одного показателя), модуль отдаёт вместо списка функцию
+`nav_items_for(db, user) -> List[NavItem]`. Её зовут на каждый переход и про того,
+кто смотрит, а не про того, от чьего лица работают, — поэтому запрос за такими
+пунктами обязан быть коротким.
 
 ### 5. Включить
 

@@ -10,7 +10,7 @@ from app.agent.prompts import MEAL_PLAN_SYSTEM
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
 from app.core.logging import get_logger
-from app.modules.memory import service as memory_service
+from app.modules.memory import knowledge
 from app.modules.nutrition import service
 from app.modules.nutrition.models import (
     ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SOURCE_PHOTO, SOURCE_TEXT,
@@ -40,10 +40,14 @@ def _person_context(ctx: ToolContext) -> str:
     """Что оценщику полезно знать про этого человека.
 
     Без этого блока модель считает еду «в вакууме»: не знает ни цели, ни того, что
-    человек не ест сахар. Заметки из памяти влияют на оценку сильнее, чем кажется.
+    человек не ест сахар. Записи с досок влияют на оценку сильнее, чем кажется.
+
+    Профиль берётся у того, кому считают еду (`subject`), а знания — у того, кто
+    разговаривает (`actor`): доски из режима «от лица» исключены, и ассистент
+    видит ровно те, что видит его собеседник (ADR-0005).
     """
     profile = service.get_profile(ctx.db, ctx.subject.id)
-    notes = memory_service.search_notes(ctx.db, ctx.subject.id, limit=8)
+    notes = _known(ctx)
     lines = [
         "Что известно об этом человеке (учитывай, но не упоминай в ответе):",
         f"- цель: {profile.goal_label}, суточная норма {profile.daily_kcal} ккал",
@@ -51,8 +55,17 @@ def _person_context(ctx: ToolContext) -> str:
     if profile.weight_kg:
         lines.append(f"- вес: {profile.weight_kg:g} кг")
     if notes:
-        lines.append("- из памяти: " + "; ".join(note.text for note in notes))
+        lines.append(f"- с досок {ctx.actor.display_name}: " + "; ".join(notes))
     return "\n".join(lines)
+
+
+def _known(ctx: ToolContext, limit: int = 8) -> list:
+    """Факты с досок собеседника — короткими строками для промпта.
+
+    Чьи это доски, в промпте сказано прямо: профиль тут одного человека, а
+    знания другого, когда глава семьи считает еду за ребёнка (ADR-0005).
+    """
+    return knowledge.person_facts(ctx.db, ctx.actor.id, limit=limit)
 
 
 def _describe(text: str, weight_g: float = None, cooking: str = None) -> str:
@@ -362,14 +375,14 @@ def get_nutrition_stats(ctx: ToolContext, period: str = "day") -> ToolResult:
 def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
     profile = service.get_profile(ctx.db, ctx.subject.id)
     history = service.recent_meal_titles(ctx.db, ctx.subject.id)
-    notes = memory_service.search_notes(ctx.db, ctx.subject.id, limit=10)
+    notes = _known(ctx, limit=10)
 
     prompt = (
         f"Человек: {ctx.subject.display_name}. Цель: {profile.goal_label}. "
         f"Суточная норма: {profile.daily_kcal} ккал.\n"
         f"Что ел за последние дни: {', '.join(history) if history else 'записей пока нет'}.\n"
-        f"Что известно из памяти: "
-        f"{'; '.join(n.text for n in notes) if notes else 'ничего особенного'}."
+        f"Что известно с досок {ctx.actor.display_name}: "
+        f"{'; '.join(notes) if notes else 'ничего особенного'}."
     )
 
     try:

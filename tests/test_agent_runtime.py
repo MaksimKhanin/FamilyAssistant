@@ -16,7 +16,7 @@ def test_auto_mode_runs_the_tool_and_traces_it(db, head):
     db.commit()
 
     llm = FakeLLM([
-        _call("remember", text="Соня не ест грибы", kind="pref"),
+        _call("remember", text="Соня не ест грибы"),
         LLMResponse(content="Запомнил."),
     ])
     reply = Agent(llm).respond(db, head, "запомни: Соня не ест грибы")
@@ -24,7 +24,7 @@ def test_auto_mode_runs_the_tool_and_traces_it(db, head):
     assert reply.text == "Запомнил."
     assert [t.status for t in reply.traces] == ["done"]
     assert reply.traces[0].tool == "remember"
-    assert reply.cards[0]["type"] == "memory"
+    assert reply.cards[0]["type"] == "board"
 
     assert db.query(ActionLog).filter(ActionLog.tool == "remember").count() == 1
     assert db.query(PendingAction).count() == 0
@@ -35,7 +35,7 @@ def test_ask_mode_prepares_the_action_instead_of_doing_it(db, head):
     db.commit()
 
     llm = FakeLLM([
-        _call("remember", text="купить хлеб", kind="task"),
+        _call("remember", text="купить хлеб"),
         LLMResponse(content="Подготовил, подтвердите."),
     ])
     reply = Agent(llm).respond(db, head, "запомни купить хлеб")
@@ -54,7 +54,7 @@ def test_ask_mode_prepares_the_action_instead_of_doing_it(db, head):
 def test_approving_runs_the_action_and_marks_it_confirmed(db, head):
     head.autonomy = 0
     db.commit()
-    Agent(FakeLLM([_call("remember", text="купить хлеб", kind="task"),
+    Agent(FakeLLM([_call("remember", text="купить хлеб"),
                    LLMResponse(content="Подготовил.")])).respond(db, head, "запомни")
 
     pending = db.query(PendingAction).one()
@@ -69,7 +69,7 @@ def test_approving_runs_the_action_and_marks_it_confirmed(db, head):
 def test_rejecting_leaves_no_trace_of_the_action(db, head):
     head.autonomy = 0
     db.commit()
-    Agent(FakeLLM([_call("remember", text="что-то", kind="task"),
+    Agent(FakeLLM([_call("remember", text="что-то"),
                    LLMResponse(content="Подготовил.")])).respond(db, head, "запомни")
 
     pending = db.query(PendingAction).one()
@@ -84,7 +84,7 @@ def test_rejecting_leaves_no_trace_of_the_action(db, head):
 def test_another_member_cannot_confirm_your_action(db, head, member):
     member.autonomy = 0
     db.commit()
-    Agent(FakeLLM([_call("remember", text="личное", kind="pref"),
+    Agent(FakeLLM([_call("remember", text="личное"),
                    LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
 
     pending = db.query(PendingAction).one()

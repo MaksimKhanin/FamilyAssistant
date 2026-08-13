@@ -105,7 +105,7 @@
 
           {% if row.can_delete %}
             <form method="post" action="/settings/family/member/{{ member.id }}/delete"
-                  hx-confirm="Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, заметки и переписка с ассистентом. Это необратимо.">
+                  hx-confirm="Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, разделы знаний и переписка с ассистентом. Это необратимо.">
               <button class="btn ghost small" type="submit" style="color:var(--alarm-text)">Удалить</button>
             </form>
           {% endif %}

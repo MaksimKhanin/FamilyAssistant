@@ -7,10 +7,11 @@
 import pytest
 
 from app.agent.registry import ToolContext
-from app.modules.memory import service as memory_service
+from app.modules.memory import knowledge
 from app.modules.nutrition import service, tools, vision
 from app.modules.nutrition.models import STATUS_DRAFT
 from app.modules.nutrition.vision import MealEstimate
+from tests.conftest import FakeLLM
 
 
 @pytest.fixture
@@ -67,13 +68,32 @@ def test_weight_and_cooking_reach_the_estimator(ctx, spy):
 
 def test_the_estimator_is_told_who_it_is_counting_for(ctx, db, head, spy):
     """Аллергия и цель меняют оценку сильнее, чем кажется, а модель о них не спросит."""
-    memory_service.add_note(db, head.id, "Максим не ест сахар", kind="health")
+    section = knowledge.create_section(db, head.id, "Личное")
+    board = knowledge.create_board(db, head.id, section.id, "Здоровье")
+    knowledge.add_entry(db, head.id, board.id, "Максим не ест сахар")
     service.update_profile(db, head.id, daily_kcal=2400)
 
     tools.log_meal(ctx, text="чай с печеньем")
 
     assert "2400 ккал" in spy["context"]
     assert "не ест сахар" in spy["context"]
+
+
+def test_a_measuring_board_does_not_crowd_out_what_matters(ctx, db, head, spy):
+    """«02:50 170» об этом человеке не говорит ничего, а вытеснило бы аллергию:
+    доски, которые ведут счёт, в выжимку не идут."""
+    section = knowledge.create_section(db, head.id, "Личное")
+    facts = knowledge.create_board(db, head.id, section.id, "Здоровье")
+    knowledge.add_entry(db, head.id, facts.id, "Максим не ест сахар")
+    log = knowledge.create_board(db, head.id, section.id, "Кормления")
+    knowledge.add_event_type(db, head.id, log.id, "кормление", "мл")
+    for hour in range(12):
+        knowledge.add_entry(db, head.id, log.id, f"{hour}:50 170", llm=FakeLLM([{"events": []}]))
+
+    tools.log_meal(ctx, text="чай с печеньем")
+
+    assert "не ест сахар" in spy["context"]
+    assert "170" not in spy["context"]
 
 
 def test_no_question_when_there_is_nothing_to_ask(ctx, spy):

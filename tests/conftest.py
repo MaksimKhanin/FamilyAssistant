@@ -91,6 +91,7 @@ class FakeLLM:
         return self.responses.pop(0)
 
     def json_completion(self, system, user_content, **kwargs):
+        self.calls.append({"system": system, "user": user_content})
         if not self.responses:
             raise AssertionError("FakeLLM: запрошено больше ответов, чем задано в тесте")
         return self.responses.pop(0)
