@@ -6,10 +6,10 @@
 from app.agent.llm import LLMResponse
 from app.agent.registry import ToolContext
 from app.agent.runtime import Agent
-from app.modules.memory import knowledge, stats
+from app.modules.memory import knowledge, screens, stats
 from app.modules.memory.models import BoardEntry, RIGHT_EDIT, RIGHT_VIEW, Section
 from app.modules.memory.tools import (create_board, forget, read_board, recall,
-                                      remember, track_board, write_entry)
+                                      remember, show_stats, track_board, write_entry)
 from tests.conftest import FakeLLM
 
 
@@ -355,6 +355,109 @@ def test_track_board_puts_the_weekly_question_into_the_weekly_review(db, head):
 
     assert result.ok
     assert stats.list_tasks(db, board.id)[0].digest_kind == "weekly_review"
+
+
+# --- show_stats: табло по уже посчитанному ряду (тикет #32) --------------------------
+
+def _tracked_board(db, user, **kwargs):
+    """Доска, по которой уже считается показатель: из него и растёт табло."""
+    board = _counted_board(db, user, **kwargs)
+    stats.create_task(db, user.id, board.id, request="сколько малыш съел за сутки",
+                      kind="кормление")
+    return board
+
+
+def test_show_stats_makes_a_screen_out_of_the_series(db, head):
+    _tracked_board(db, head)
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Молоко за сутки", form="bars")
+
+    assert result.ok
+    screen = screens.list_screens(db, head.id)[0]
+    assert (screen.name, screen.form) == ("Молоко за сутки", "bars")
+    assert result.card["url"] == f"/stats/{screen.id}"
+
+
+def test_show_stats_has_nothing_to_show_without_a_task(db, head):
+    """Табло не считает само: без задачи статистики показывать нечего."""
+    _counted_board(db, head)
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Молоко")
+
+    assert not result.ok
+    assert "track_board" in result.summary
+    assert screens.list_screens(db, head.id) == []
+
+
+def test_show_stats_asks_which_of_several_figures_to_show(db, head):
+    board = _tracked_board(db, head)
+    knowledge.add_event_type(db, head.id, board.id, "срыгивание", "мл")
+    stats.create_task(db, head.id, board.id, request="сколько срыгнул", kind="срыгивание")
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Молоко")
+
+    assert not result.ok
+    assert "срыгивание" in result.summary
+    assert screens.list_screens(db, head.id) == []
+
+
+def test_show_stats_does_not_call_one_figure_several(db, head):
+    """Названный тип не нашёлся — это не «их несколько»: показать один и сказать
+    «выбирай» значит соврать."""
+    _tracked_board(db, head)
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Молоко", kind="прогулка")
+
+    assert not result.ok
+    assert "«прогулка»" in result.summary
+    assert "несколько" not in result.summary
+    assert "кормление" in result.summary
+
+
+def test_show_stats_takes_the_kind_when_it_is_named(db, head):
+    board = _tracked_board(db, head)
+    knowledge.add_event_type(db, head.id, board.id, "срыгивание", "мл")
+    stats.create_task(db, head.id, board.id, request="сколько срыгнул", kind="срыгивание")
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Срыгивания", kind="срыгивание")
+
+    assert result.ok
+    assert stats.get_task(db, head.id, screens.list_screens(db, head.id)[0].task_id).kind \
+        == "срыгивание"
+
+
+def test_show_stats_corrects_the_form_of_an_existing_screen(db, head):
+    """«Покажи это столбиками» — поправка табло, а не второй экран."""
+    _tracked_board(db, head)
+    show_stats(ctx(db, head), board="Кормления", name="Молоко", form="number")
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Молоко", form="bars")
+
+    assert result.ok
+    assert [s.form for s in screens.list_screens(db, head.id)] == ["bars"]
+
+
+def test_show_stats_does_not_hang_a_fourth_screen_in_the_menu(db, head):
+    for number in range(screens.MAX_SCREENS):
+        board = _tracked_board(db, head, section_name=f"Раздел {number}",
+                               board_name=f"Доска {number}")
+        show_stats(ctx(db, head), board=board.name, name=f"Табло {number}")
+    _tracked_board(db, head, section_name="Ещё", board_name="Прогулки")
+
+    result = show_stats(ctx(db, head), board="Прогулки", name="Лишнее")
+
+    assert not result.ok
+    assert "три табло" in result.summary
+    assert len(screens.list_screens(db, head.id)) == screens.MAX_SCREENS
+
+
+def test_show_stats_does_not_reach_a_strangers_figure(db, head, member):
+    _tracked_board(db, member)
+
+    result = show_stats(ctx(db, head), board="Кормления", name="Чужое")
+
+    assert not result.ok
+    assert screens.list_screens(db, head.id) == []
 
 
 # --- системный промпт --------------------------------------------------------------

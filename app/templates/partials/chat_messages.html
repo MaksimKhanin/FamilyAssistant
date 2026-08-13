@@ -70,6 +70,12 @@
           <div>{{ card.text }}</div>
           <a class="btn link" href="{{ card.url or '/memory' }}">Открыть доску →</a>
         </div>
+      {% elif card.type == "stats-screen" %}
+        <div class="agent-card">
+          <span class="badge fact">{{ card.board }}</span>
+          <div>{{ card.name }} · {{ card.form }}</div>
+          <a class="btn link" href="{{ card.url }}">Открыть табло →</a>
+        </div>
       {% elif card.type == "board-recall" %}
         <div class="agent-card">
           {% for hit in card.hits %}

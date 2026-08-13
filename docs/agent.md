@@ -44,7 +44,7 @@ reply = agent.respond(db, user, "съел суп и салат", image=None, cha
 | `log_meal`, `confirm_meal` | 0 | черновик и человеческое «да» к нему: подтверждение поверх подтверждения — абсурд |
 | `suggest_meal_plan`, `classify_event` | 1 | тратит модель, но ничего не меняет |
 | `log_activity`, `remember`, `set_reminder`, `write_entry` | 2 | пишет в личные данные |
-| `create_board`, `track_board` | 3 | заводит то, что останется жить: доску, регулярную цифру в сводке |
+| `create_board`, `track_board`, `show_stats` | 3 | заводит то, что останется жить: доску, регулярную цифру в сводке, экран в меню |
 | `delete_meal`, `delete_activity`, `forget` | 3 | необратимо |
 | `notify_family` | 3 | пишет всей семье — по умолчанию всегда спросит |
 

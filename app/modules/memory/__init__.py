@@ -5,18 +5,20 @@ no toggle on the onboarding matrix, but its data is still strictly personal
 (scoped by user_id) — one person's notes never reach another's context.
 """
 from app.core.module import Module, NavItem
-from app.modules.memory import models, tools  # noqa: F401  (регистрирует таблицы и инструменты)
-from app.modules.memory.routes import reminders_router, router
+from app.modules.memory import models, screens, tools  # noqa: F401  (регистрирует таблицы и инструменты)
+from app.modules.memory.routes import reminders_router, router, stats_router
 
 module = Module(
     name="memory",
     title="Знания",
     description="Ассистент помнит предпочтения, ограничения и напоминания",
-    routers=[router, reminders_router],
+    routers=[router, reminders_router, stats_router],
     nav_items=[NavItem(slug="memory", label="Знания", url="/memory",
                        icon="note", short="Знания"),
                NavItem(slug="reminders", label="Напоминания", url="/reminders",
                        icon="clock", short="Напомнить")],
+    # Табло человек заводит сам, поэтому его пункта в коде нет (тикет #32).
+    nav_items_for=screens.nav_items,
     per_user=True,
     always_on=True,
 )

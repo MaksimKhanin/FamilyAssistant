@@ -6,7 +6,7 @@
 в шапке), к содержимому он не прикасается; `can_act_as` не проверяется — править
 своё можно всегда.
 """
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -15,13 +15,15 @@ from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render, ru_date
-from app.modules.memory import knowledge, reminders, service
+from app.modules.memory import knowledge, reminders, screens, service
 from app.modules.memory.models import KIND_LABELS
 from app.web.context import screen_context
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 reminders_router = APIRouter(prefix="/reminders", tags=["reminders"])
+
+stats_router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 @reminders_router.get("", response_class=HTMLResponse)
@@ -42,6 +44,52 @@ def reminders_screen(
         fired_retention_days=reminders.FIRED_RETENTION_DAYS,
     )
     return render(request, "memory/reminders.html", context)
+
+# --- табло: экран одного показателя (тикет #32) --------------------------------
+
+@stats_router.get("/{screen_id}", response_class=HTMLResponse)
+def stats_screen(
+    request: Request,
+    screen_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Табло — как и знания, глазами `current`, а не `viewed` (ADR-0005).
+
+    Чужого табло не существует: нет права на ряд — нет и экрана, а не пустая
+    заглушка, из которой видно, что показатель у кого-то есть.
+    """
+    screen = screens.get_screen(db, current.id, screen_id)
+    if screen is None:
+        raise HTTPException(status_code=404)
+    view = screens.screen_view(db, current.id, screen)
+    context = screen_context(request, db, current, viewed,
+                             title=screen.name, subtitle=f"по доске «{view['board_name']}»")
+    context.update(view)
+    return render(request, "memory/stats_screen.html", context)
+
+
+@stats_router.post("/{screen_id}/form")
+def set_stats_form(
+    screen_id: int,
+    form: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    screens.set_form(db, current.id, screen_id, form)
+    return RedirectResponse(f"/stats/{screen_id}", status_code=303)
+
+
+@stats_router.post("/{screen_id}/delete")
+def delete_stats_screen(
+    screen_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    screens.delete_screen(db, current.id, screen_id)
+    return RedirectResponse("/memory", status_code=303)
+
 
 FILTERS = [("", "Всё"), ("task", "Напоминания"), ("pref", "Предпочтения"),
            ("health", "Здоровье"), ("fact", "Наблюдения")]

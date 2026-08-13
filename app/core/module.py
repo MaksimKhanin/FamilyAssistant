@@ -44,6 +44,10 @@ class Module:
     description: str                # одна строка для экранов профиля и онбординга
     routers: List[APIRouter] = field(default_factory=list)
     nav_items: List[NavItem] = field(default_factory=list)
+    #: Пункты, которых нет в коде: их завёл сам человек (табло — экран одного
+    #: показателя). `(db, user) -> List[NavItem]`; считается на каждый переход,
+    #: поэтому запрос за ними обязан быть коротким.
+    nav_items_for: Optional[Callable] = None
     #: Топики Event Bus → обработчики. Подписки регистрируются при сборке приложения.
     event_handlers: Dict[str, List[Callable]] = field(default_factory=dict)
     #: Личные данные (скоуп по user_id) или общие для семьи (скоуп по family_id).

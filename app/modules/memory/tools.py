@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core.templating import ru_datetime
-from app.modules.memory import knowledge, reminders, stats
+from app.modules.memory import knowledge, reminders, screens, stats
 from app.modules.memory.models import RIGHT_VIEW
 
 MODULE = "memory"
@@ -409,6 +409,91 @@ def track_board(ctx: ToolContext, board: str, request: str, kind: str = None,
         data={"task_id": task.id, "board_id": grant.board.id},
         card={"type": "board", "board": grant.board.name, "text": task.request,
               "url": knowledge.board_url(grant)},
+    )
+
+
+@tool(
+    name="show_stats",
+    module=MODULE,
+    title="Завести табло",
+    description="""
+    Завести табло — экран одного показателя в панели по уже поставленной задаче
+    статистики: «выведи это на отдельный экран», «покажи кормления столбиками».
+    board — название доски, kind — тип величины, если задач по доске несколько.
+    name — как назвать экран словами человека: это подпись пункта меню.
+    form — вид, выбери его сам под ряд: number — одно число с дельтой (годится
+    почти всегда), line — ряд во времени, bars — столбики по дням, table —
+    таблица. Своей разметки не придумывай, вида кроме этих четырёх нет.
+    Повторный вызов по тому же показателю не заводит второй экран, а меняет
+    название и вид, — так и правь табло, когда человек просит показать иначе.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "board": {"type": "string", "description": "Название доски"},
+            "name": {"type": "string", "description": "Название экрана — слова человека"},
+            "kind": {"type": "string", "description": "Тип величины, если задач по доске несколько"},
+            "form": {"type": "string", "enum": ["number", "line", "bars", "table"],
+                     "description": "Вид табло: число с дельтой, ряд во времени, столбики, таблица"},
+        },
+        "required": ["board", "name"],
+    },
+    # Новый пункт в меню человека — из того же ряда, что доска и регулярная цифра.
+    auto_from=3,
+)
+def show_stats(ctx: ToolContext, board: str, name: str, kind: str = None,
+               form: str = None) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+
+    # Табло растёт из ряда, а ряд — из задачи: считать заново оно не умеет.
+    on_board = stats.list_tasks(ctx.db, grant.board.id)
+    mine = stats.visible_tasks(ctx.db, ctx.actor.id, [task.id for task in on_board])
+    tasks = [task for task in on_board if task.id in mine]
+    if not tasks:
+        return ToolResult(
+            summary=f"По доске «{grant.board.name}» никто ничего не считает — табло "
+                    f"показывать нечего. Сначала поставь задачу статистики "
+                    f"(track_board), а экран заведёшь по ней.",
+            ok=False,
+        )
+
+    named = (kind or "").strip().lower()
+    matched = [task for task in tasks if task.kind.lower() == named] if named else tasks
+    if len(matched) != 1:
+        known = "; ".join(f"«{task.kind}» — {task.request}" for task in tasks)
+        # Названный тип не нашёлся — это не то же самое, что несколько на выбор:
+        # сказать «их несколько», показав один, значит соврать человеку.
+        trouble = (f"показателя «{kind}» по доске «{grant.board.name}» не считается"
+                   if named else
+                   f"по доске «{grant.board.name}» считается несколько показателей")
+        return ToolResult(
+            summary=f"{trouble.capitalize()}. Считается вот что: {known}. "
+                    f"Переспроси у человека, что из этого вывести на экран.",
+            ok=False,
+        )
+
+    try:
+        screen = screens.create_screen(ctx.db, ctx.actor.id, matched[0].id, name, form=form)
+    except screens.TooManyScreens:
+        having = ", ".join(f"«{s.name}»" for s in screens.list_screens(ctx.db, ctx.actor.id))
+        return ToolResult(
+            summary=f"У этого человека уже три табло ({having}) — больше в меню не "
+                    f"помещается. Скажи ему, что сначала надо снять одно: это делается "
+                    f"на самом табло.",
+            ok=False,
+        )
+    if screen is None:
+        return ToolResult(summary="Табло без названия не завести: это подпись пункта меню.",
+                          ok=False)
+
+    return ToolResult(
+        summary=f"Завёл табло «{screen.name}» по доске «{grant.board.name}»: "
+                f"{screens.FORMS[screen.form]}. Оно появилось в меню панели.",
+        data={"screen_id": screen.id, "task_id": matched[0].id},
+        card={"type": "stats-screen", "name": screen.name, "board": grant.board.name,
+              "form": screens.FORMS[screen.form], "url": f"/stats/{screen.id}"},
     )
 
 

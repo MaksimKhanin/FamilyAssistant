@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+
+{# Табло — экран одного показателя по ряду задачи статистики (тикет #32).
+   Вид выбирается из четырёх готовых форм: разметку модель не сочиняет, иначе
+   экран панели выглядел бы каждый раз по-новому. #}
+
+<div class="row wrap" style="gap:8px;margin-bottom:16px">
+  {# Четыре формы — четыре кнопки одной формы: каждая отправляет своё значение,
+     поэтому переключение вида не требует ни скрытых полей, ни JS. #}
+  <form class="segment" method="post" action="/stats/{{ screen.id }}/form">
+    {% for value, label in forms.items() %}
+      <button class="{% if form == value %}on{% endif %}" type="submit"
+              name="form" value="{{ value }}">{{ label }}</button>
+    {% endfor %}
+  </form>
+  <span class="spacer"></span>
+  <a class="btn ghost small" href="{{ board_url }}">Открыть доску</a>
+  <details class="strip-pop">
+    <summary class="btn ghost small" style="color:var(--alarm-text)">Снять табло</summary>
+    <div class="pop stack" style="right:0">
+      <p class="tiny" style="margin:0">Экран уберётся из меню. Цифра в сводке останется —
+        её снимают отдельно.</p>
+      <form method="post" action="/stats/{{ screen.id }}/delete">
+        <button class="btn small" type="submit" style="background:var(--alarm-text)">Снять табло</button>
+      </form>
+    </div>
+  </details>
+</div>
+
+<div class="card stack">
+  <div class="row wrap" style="gap:8px">
+    <span class="card-title" style="margin:0">{{ task.request }}</span>
+    <span class="spacer"></span>
+    <span class="tiny">{{ task.kind }}{% if unit %}, {{ unit }}{% endif %}</span>
+  </div>
+
+  {% if not points %}
+    {# Пустые сутки — не ноль: рисовать нечего, и врать об этом не надо (ADR-0002). #}
+    <p class="muted">Пока нечего показать: ряд начнёт копиться, когда задача
+      посчитает первую цифру.</p>
+
+  {% elif form == "number" %}
+    <div class="big-number">{{ "%g"|format(last) }}{% if unit %} {{ unit }}{% endif %}</div>
+    <div class="tiny">
+      {% if delta is none %}
+        первый день ряда — сравнивать пока не с чем
+      {% else %}
+        {# С каким днём сравнили — датой: в ряду бывают дыры, и «ко вчерашнему»
+           было бы неправдой на разнице с позапрошлой средой (ADR-0002). #}
+        {{ "%+g"|format(delta) }} к {{ delta_from.strftime("%d.%m") }}
+      {% endif %}
+    </div>
+
+  {% elif form == "line" %}
+    <svg class="sparkline" viewBox="0 0 100 40" preserveAspectRatio="none" role="img"
+         aria-label="Ряд по дням">
+      <polyline points="{{ line }}" fill="none" stroke="var(--acc)" stroke-width="1.5"
+                vector-effect="non-scaling-stroke" />
+    </svg>
+    <div class="row tiny">
+      <span>{{ points[0].day.strftime("%d.%m") }}</span>
+      <span class="spacer" style="text-align:right">{{ points[-1].day.strftime("%d.%m") }}</span>
+    </div>
+
+  {% elif form == "bars" %}
+    <div class="chart">
+      {% for point in points %}
+        <div class="chart-col">
+          <div class="chart-bars">
+            <i class="consumed" style="height:{{ point.height }}%"
+               title="{{ "%g"|format(point.value) }}{% if unit %} {{ unit }}{% endif %}"></i>
+          </div>
+          <div class="tiny" {% if loop.last %}style="color:var(--text)"{% endif %}>
+            {{ point.day.strftime("%d.%m") }}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+  {% else %}
+    <table class="plain">
+      <tbody>
+        {% for point in points|reverse %}
+          <tr>
+            <td class="muted">{{ point.day.strftime("%d.%m") }}</td>
+            <td>{{ "%g"|format(point.value) }}{% if unit %} {{ unit }}{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if short %}
+    {# Неполное не выдаётся за полное: у ряда короче окна так и написано (ADR-0002). #}
+    <p class="tiny">Данных за {{ days_have|counted("день", "дня", "дней") }}
+      из {{ days_asked }}: в сутки, когда считать было нечего, точки нет.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

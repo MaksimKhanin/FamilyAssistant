@@ -223,3 +223,25 @@ def test_upgrade_creates_the_stats_tasks_and_their_series(tmp_path):
     point_fk = insp.get_foreign_keys("board_stats_points")[0]
     assert point_fk["referred_table"] == "board_stats_tasks"
     assert point_fk["options"].get("ondelete", "").upper() == "CASCADE"
+
+
+def test_upgrade_creates_the_stats_screens_that_die_with_their_series(tmp_path):
+    """Табло каскадится от задачи и от участника (тикет #32).
+
+    Экран не переживает ряда, который показывает, а пункт навигации — человека,
+    который его завёл.
+    """
+    url = f"sqlite:///{tmp_path}/fresh.db"
+    _upgrade_head(url)
+
+    insp = sa.inspect(sa.create_engine(url))
+    assert "board_stats_screens" in insp.get_table_names()
+
+    columns = {c["name"] for c in insp.get_columns("board_stats_screens")}
+    assert {"id", "task_id", "user_id", "name", "form", "created_at"} <= columns
+
+    fks = {fk["constrained_columns"][0]: fk for fk in insp.get_foreign_keys("board_stats_screens")}
+    assert fks["task_id"]["referred_table"] == "board_stats_tasks"
+    assert fks["task_id"]["options"].get("ondelete", "").upper() == "CASCADE"
+    assert fks["user_id"]["referred_table"] == "users"
+    assert fks["user_id"]["options"].get("ondelete", "").upper() == "CASCADE"

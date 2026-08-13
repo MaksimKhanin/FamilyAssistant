@@ -182,6 +182,32 @@ class BoardStatsPoint(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class BoardStatsScreen(Base):
+    """Табло — экран одного показателя по ряду задачи статистики.
+
+    Своего расписания и своих чисел у табло нет: оно показывает уже накопленный
+    ряд, поэтому и живёт ровно столько, сколько живёт задача за ним (каскад), а
+    та — сколько живёт её доска.
+
+    Табло принадлежит смотрящему, а не задаче: по разосланному владельцем
+    показателю каждый допущенный заводит своё — со своим названием и своим видом,
+    потому что и пункт навигации у каждого свой.
+    """
+    __tablename__ = "board_stats_screens"
+
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("board_stats_tasks.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    #: Название, которое дал человек, — оно же подпись пункта навигации.
+    name = Column(String(64), nullable=False)
+    #: Одна из четырёх готовых форм (см. screens.FORMS). Разметку табло модель не
+    #: генерирует: она выбирает вид, а рисует его панель.
+    form = Column(String(16), nullable=False, default="number")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class BoardShare(Base):
     """Поимённый доступ к доске: просмотр или редактирование."""
     __tablename__ = "board_shares"

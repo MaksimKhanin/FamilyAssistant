@@ -387,6 +387,14 @@ textarea.field { font-size: 13.5px; resize: vertical; }
 }
 .macro-bar { height: 8px; border-radius: 99px; background: var(--acc); }
 
+/* Табло: ряд во времени и та же цифра таблицей (тикет #32). Линия тянется по
+   ширине карточки, толщина штриха при этом не растягивается. */
+.sparkline { width: 100%; height: 120px; display: block; }
+table.plain { width: 100%; border-collapse: collapse; }
+table.plain td { padding: 7px 0; border-bottom: 1px solid var(--border); }
+table.plain tr:last-child td { border-bottom: none; }
+table.plain td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ---------- security ---------- */
 
 .event {

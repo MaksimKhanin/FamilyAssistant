@@ -12,7 +12,7 @@
 """
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -57,13 +57,30 @@ def list_tasks(db: Session, board_id: int) -> List[BoardStatsTask]:
             .all())
 
 
+def visible_tasks(db: Session, user_id: int,
+                  task_ids: Sequence[int]) -> Dict[int, BoardStatsTask]:
+    """Из названных задач — те, что этому человеку сейчас видно.
+
+    Видно по двум дорогам, и обе ведут через доску: своя задача на доступной
+    доске и чужая, разосланная владельцем всем допущенным. Отобранный доступ
+    уносит и задачу — та же граница, что у экранов и у сводки.
+
+    Разрешение считается пачкой: у табло это запрос на каждый переход в панели,
+    и ходить за правами по задаче за раз было бы дорого.
+    """
+    task_ids = list(task_ids)
+    if not task_ids:
+        return {}
+    reachable = {g.board.id for g in knowledge.board_grants(db, user_id)}
+    rows = db.query(BoardStatsTask).filter(BoardStatsTask.id.in_(task_ids))
+    return {task.id: task for task in rows
+            if task.board_id in reachable and (task.author_id == user_id or task.share_all)}
+
+
 def get_task(db: Session, user_id: int, task_id: int) -> Optional[BoardStatsTask]:
     """Задача, которую этому человеку видно: доска доступна, а задача его
     собственная или разослана владельцем всем допущенным."""
-    task = db.get(BoardStatsTask, task_id)
-    if task is None or knowledge.board_access(db, user_id, task.board_id) is None:
-        return None
-    return task if task.author_id == user_id or task.share_all else None
+    return visible_tasks(db, user_id, [task_id]).get(task_id)
 
 
 def create_task(db: Session, user_id: int, board_id: int, request: str, kind: str,
