@@ -28,14 +28,16 @@ CHARACTER = "неформально и с иронией, без сюсюкан�
 
 # --- хранение -------------------------------------------------------------
 
-def test_character_is_personal_and_clears_when_emptied(db, head, member):
+def test_character_is_personal_and_falls_back_to_the_default(db, head, member):
     instructions.set_character(db, head, CHARACTER)
 
     assert instructions.character(head) == CHARACTER
-    assert instructions.character(member) == ""     # чужой характер не приезжает
+    # Чужой характер не приезжает, а свой у соседа — тот, что был всегда.
+    assert instructions.character(member) == instructions.DEFAULT_CHARACTER
 
     instructions.set_character(db, head, "   ")
-    assert instructions.character(head) == ""
+    assert instructions.character(head) == instructions.DEFAULT_CHARACTER
+    assert instructions.own_character(head) == ""   # своего нет
     assert head.assistant_character is None         # пустую строку не храним
 
 
@@ -68,13 +70,31 @@ def test_long_text_is_cut_instead_of_eating_the_context(db, head):
 
 # --- системный промпт -----------------------------------------------------
 
-def test_character_lands_in_the_prompt_and_says_it_beats_the_tone(db, head):
+def test_the_character_is_the_only_place_the_manner_is_written(db, head):
     prompt = system_prompt(head, ["nutrition"], character=CHARACTER)
 
     assert CHARACTER in prompt
-    assert "важнее правил тона" in prompt
-    # Характер меняет манеру, а не цифры — про это в промпте сказано прямо.
-    assert "не выдумывать данные" in prompt
+    # Манеры в коде не осталось: спорить характеру не с чем.
+    assert "тепло и спокойно" not in prompt
+    # А то, что характер не меняет, на месте.
+    assert "Не выдумывай данные" in prompt
+    assert "нравоучений о еде" in prompt
+
+
+def test_the_default_character_keeps_the_panel_talking_as_it_always_did(db, head):
+    """Ничего не написал — ассистент говорит ровно так же, как до настройки."""
+    prompt = system_prompt(head, ["nutrition"],
+                           character=instructions.character(head))
+
+    assert "тепло и спокойно, как внимательный член семьи" in prompt
+
+
+def test_a_chat_of_a_person_who_wrote_nothing_carries_the_default(db, head):
+    llm = FakeLLM([LLMResponse(content="Привет!")])
+    Agent(llm).respond(db, head, "привет")
+
+    system = llm.calls[0]["messages"][0]["content"]
+    assert instructions.DEFAULT_CHARACTER in system
 
 
 def test_memo_travels_only_with_its_own_area(db, head):
@@ -86,11 +106,8 @@ def test_memo_travels_only_with_its_own_area(db, head):
     assert MEMO not in system_prompt(head, ["security"], memos=[])
 
 
-def test_prompt_without_either_is_the_prompt_it_always_was(db, head):
-    prompt = system_prompt(head, ["nutrition"])
-
-    assert "Характер" not in prompt
-    assert "просил учитывать" not in prompt
+def test_a_person_without_memos_gets_no_memo_block(db, head):
+    assert "просил учитывать" not in system_prompt(head, ["nutrition"])
 
 
 # --- разговор -------------------------------------------------------------

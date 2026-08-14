@@ -342,7 +342,10 @@ def profile_screen(
     context.update(
         profile=nutrition_service.get_profile(db, viewed.id),
         goal_labels=GOAL_LABELS,
-        character=instructions.character(viewed),
+        # На экране — только своё: умолчание стоит подсказкой в пустом поле, иначе
+        # человек видит текст, который он не писал, и не решается его стереть.
+        character=instructions.own_character(viewed),
+        default_character=instructions.DEFAULT_CHARACTER,
         character_limit=instructions.CHARACTER_LIMIT,
         memo_modules=memo_modules,
         memo_limit=instructions.MEMO_LIMIT,

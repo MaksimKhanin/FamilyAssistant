@@ -59,16 +59,18 @@
        видит ассистента, а не про то, что тому разрешено. #}
     <form class="card tight stack" method="post" action="/settings/profile/character">
       <div class="card-title">Характер ассистента</div>
-      <p class="muted">Кем ему быть для вас — своими словами. «Отвечай сухо и по делу»,
+      <p class="muted">Как ему с вами говорить — своими словами. «Отвечай сухо и по делу»,
         «неформально, с иронией». Это про манеру речи: цифры и оценки от характера
         не меняются.</p>
+      {# Умолчание — в подсказке, а не в поле: предзаполненный текст, который человек
+         не писал, стирать страшно, и настройка выглядит уже занятой. #}
       <textarea class="field" name="character" rows="3" maxlength="{{ character_limit }}"
-                placeholder="Обычный тон панели: тепло и спокойно, как внимательный член семьи."
+                placeholder="{{ default_character }}"
                 {% if not can_edit %}disabled{% endif %}>{{ character }}</textarea>
       {% if can_edit %}
         <div class="row">
           <button class="btn" type="submit">Сохранить</button>
-          <span class="spacer tiny">Пустое поле — обычный тон.</span>
+          <span class="spacer tiny">Пустое поле — характер по умолчанию, он в подсказке.</span>
         </div>
       {% endif %}
     </form>
