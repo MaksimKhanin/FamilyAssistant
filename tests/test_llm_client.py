@@ -8,6 +8,8 @@ from app.agent.llm import (
 from app.core.config import LLMSettings
 
 ANSWER = {"choices": [{"message": {"content": "Здравствуйте."}, "finish_reason": "stop"}]}
+#: Место кончилось раньше, чем начался ответ: модель успела только подумать.
+TRUNCATED = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
 
 
 def settings(**overrides) -> LLMSettings:
@@ -18,11 +20,15 @@ def settings(**overrides) -> LLMSettings:
 
 
 class Recorder(list):
-    """Список отправленных запросов; в `responses` кладутся ответы по порядку."""
+    """Список отправленных запросов; в `responses` кладутся ответы по порядку.
+
+    В `timeouts` — сколько времени было отпущено каждому запросу.
+    """
 
     def __init__(self):
         super().__init__()
         self.responses = []
+        self.timeouts = []
 
 
 @pytest.fixture
@@ -32,6 +38,7 @@ def calls(monkeypatch):
 
     def fake_post(url, json=None, headers=None, timeout=None):
         sent.append(json)
+        sent.timeouts.append(timeout)
         status, body = sent.responses.pop(0) if sent.responses else (200, ANSWER)
         return httpx.Response(status, json=body, request=httpx.Request("POST", url))
 
@@ -196,9 +203,48 @@ def test_the_deeper_the_thinking_the_larger_the_headroom(calls):
 
 def test_a_truncated_answer_complains_about_the_limit(calls):
     """«Модель вернула не JSON» уводит не туда: дело не в модели, а в лимите."""
-    calls.responses.append((200, {"choices": [{"message": {"content": ""},
-                                               "finish_reason": "length"}]}))
+    calls.responses.extend([(200, TRUNCATED)] * 2)
 
     with pytest.raises(LLMUnavailable, match="токен"):
         LLMClient(settings(reasoning_estimate="low")).json_completion("система", "овсянка",
                                                                       task=ESTIMATE)
+
+
+def test_a_thought_that_ate_the_answer_is_asked_again_without_thinking(calls):
+    """Мыслям бюджета хватило, ответу — нет. Плоский ответ лучше пустого экрана.
+
+    Запас конечен, а длина мыслей — на усмотрение модели: у говорливой он кончится
+    при любом потолке. Поэтому последнее слово не за ошибкой, а за вторым вопросом.
+    """
+    calls.responses.extend([
+        (200, TRUNCATED),
+        (200, {"choices": [{"message": {"content": '{"days": []}'}, "finish_reason": "stop"}]}),
+    ])
+
+    result = LLMClient(settings()).json_completion("система", "идеи", task=PLANNING)
+
+    assert calls[0]["reasoning_effort"] == "medium"
+    assert calls[1]["reasoning_effort"] == "none"      # переспросили молча
+    assert result == {"days": []}
+
+
+def test_a_silent_call_is_not_asked_twice(calls):
+    """Размышление и не включали — второй вопрос ничего не изменит, только задержит."""
+    calls.responses.append((200, TRUNCATED))
+
+    with pytest.raises(LLMUnavailable, match="токен"):
+        LLMClient(settings()).json_completion("система", "овсянка", task=ESTIMATE)
+
+    assert len(calls) == 1
+
+
+def test_thinking_is_given_more_time_than_the_chat(calls):
+    """Мысли идут тем же потоком, что и ответ: общий таймаут обрывает их на финише."""
+    client = LLMClient(settings(request_timeout=60))
+
+    client.chat([{"role": "user", "content": "привет"}], task=ROUTINE)
+    calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))
+    client.json_completion("система", "идеи", task=PLANNING)
+
+    assert calls.timeouts[0] == 60
+    assert calls.timeouts[1] > 60

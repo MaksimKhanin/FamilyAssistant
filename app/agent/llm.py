@@ -75,10 +75,25 @@ REASONING_PRESETS = {
 
 #: Сколько токенов добавить к ответу, когда модели разрешено размышлять. Мысли
 #: расходуют тот же бюджет, что и сам ответ, — без запаса на JSON места не остаётся.
-#: Запас идёт по режиму: на `high` модель думает втрое дольше, чем на `low`, и
-#: одного и того же запаса ей хватит на первое и не хватит на второе — приходит
+#: Запас идёт по режиму: на `high` модель думает дольше, чем на `low`, и одного и
+#: того же запаса ей хватит на первое и не хватит на второе — приходит
 #: `finish_reason: length` с пустым ответом.
-REASONING_HEADROOM = {"low": 1200, "medium": 2400, "high": 4000}
+#:
+#: Запас щедрый намеренно. `max_tokens` — это потолок, а не счёт: неизрасходованное
+#: не стоит ничего, а нехватка стоит всего ответа целиком. И уровень размышления —
+#: просьба, а не команда: замер на qwen3 через gen-api дал одинаковые ~3300 токенов
+#: мыслей и на `low`, и на `medium`, и на `high`, и вовсе без ручки. Считать запас
+#: по номиналу режима значит на таком провайдере не работать никогда — так и было:
+#: идеям питания отводилось 3300 токенов при нужде в 3400, и экран отвечал
+#: «не могу собрать идеи» на каждое нажатие.
+REASONING_HEADROOM = {"low": 2400, "medium": 4800, "high": 8000}
+
+#: Во сколько раз дольше ждать ответа, когда модели разрешено думать. Мысли идут
+#: тем же потоком, что и ответ, и занимают больше его: те же идеи питания — 60
+#: секунд с размышлением против 14 без него. `LLM_TIMEOUT` рассчитан на быстрые
+#: вызовы, которых большинство, и мерить им думающий вызов значит обрывать его
+#: ровно на финише — уже оплаченным, но не полученным.
+THINKING_PATIENCE = 3
 
 #: Задачи, ради которых ассистент обращается к модели. Размышление — свойство
 #: задачи, а не запроса: выбрать инструмент в чате и собрать рацион на несколько
@@ -175,11 +190,16 @@ class LLMClient:
         if response_format:
             payload["response_format"] = response_format
 
-        return self._parse(self._post(payload, self._tuning(self._mode(task, reasoning))))
+        mode = self._mode(task, reasoning)
+        return self._parse(self._post(payload, self._tuning(mode), self._patience(mode)))
 
     def _mode(self, task: Optional[str], reasoning: Optional[str]) -> str:
         """Режим размышления одного вызова: явный — важнее рода задачи."""
         return self.reasoning_for(task) if reasoning is None else reasoning
+
+    def _patience(self, mode: str) -> float:
+        """Сколько ждать ответа: думающему вызову времени нужно кратно больше."""
+        return self.cfg.request_timeout * (THINKING_PATIENCE if _thinking(mode) else 1)
 
     def _tuning(self, mode: str) -> List[Dict[str, Any]]:
         """Лесенка попыток управления размышлением — от широкой к пустой.
@@ -197,7 +217,8 @@ class LLMClient:
         ladder.append(extra)  # последняя ступень — только то, что задал хозяин дома
         return ladder
 
-    def _post(self, payload: Dict[str, Any], ladder: List[Dict[str, Any]]) -> dict:
+    def _post(self, payload: Dict[str, Any], ladder: List[Dict[str, Any]],
+              timeout: float) -> dict:
         """Запрос к модели. На 400 — следующая попытка из лесенки, вплоть до чистой.
 
         Управление размышлением у каждого провайдера своё, и строгие серверы
@@ -214,8 +235,7 @@ class LLMClient:
             for number, tuning in enumerate(ladder):
                 body = {**payload, **tuning}
                 started = time.monotonic()
-                response = httpx.post(url, json=body, headers=headers,
-                                      timeout=self.cfg.request_timeout)
+                response = httpx.post(url, json=body, headers=headers, timeout=timeout)
                 last = number == len(ladder) - 1
                 # Пишем каждую попытку: лесенка — как раз то, что хочется увидеть
                 # в трейсе, когда провайдер молча игнорирует половину полей.
@@ -298,7 +318,30 @@ class LLMClient:
             {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ]
-        response = self.chat(
+        response = self._json_call(messages, model, max_tokens, mode)
+
+        # Модель истратила весь бюджет на мысли и не начала отвечать. Каким бы ни
+        # был запас, он конечен, а длину мыслей выбирает модель — у разговорчивой
+        # он кончится снова. Переспрашиваем молча, без размышления: ответ выйдет
+        # площе, но он будет, а «не могу собрать идеи» на экране не лучше плоского
+        # ответа.
+        if _truncated(response) and _thinking(mode):
+            logger.warning(f"Мысли съели весь бюджет max_tokens={max_tokens} — переспрашиваю "
+                           f"без размышления. Поднимите лимит или поставьте "
+                           f"{_KNOB.get(task, 'LLM_REASONING')}=off, чтобы не платить дважды.")
+            response = self._json_call(messages, model, max_tokens, "off")
+
+        if _truncated(response):
+            # Отдельная жалоба, потому что «модель вернула не JSON» уводит не туда:
+            # ответа нет не потому, что модель глупая, а потому что ей не хватило места.
+            logger.error(f"Ответ не поместился в max_tokens={max_tokens}. Поднимите лимит "
+                         f"или поставьте {_KNOB.get(task, 'LLM_REASONING')}=off.")
+            raise LLMUnavailable("Модель не уложилась в отведённые токены")
+        return _parse_json_object(response.content)
+
+    def _json_call(self, messages: List[dict], model: Optional[str], max_tokens: int,
+                   mode: str) -> LLMResponse:
+        return self.chat(
             messages,
             model=model,
             temperature=0.1,
@@ -306,13 +349,16 @@ class LLMClient:
             response_format={"type": "json_object"},
             reasoning=mode,
         )
-        if response.finish_reason == "length" and not response.content:
-            # Отдельная жалоба, потому что «модель вернула не JSON» уводит не туда:
-            # ответа нет не потому, что модель глупая, а потому что ей не хватило места.
-            logger.error(f"Ответ не поместился в max_tokens={max_tokens}. Поднимите лимит "
-                         f"или поставьте {_KNOB.get(task, 'LLM_REASONING')}=off.")
-            raise LLMUnavailable("Модель не уложилась в отведённые токены")
-        return _parse_json_object(response.content)
+
+
+def _thinking(mode: str) -> bool:
+    """Режим, в котором модели разрешено думать, — у него свой запас и своё время."""
+    return mode in REASONING_HEADROOM
+
+
+def _truncated(response: LLMResponse) -> bool:
+    """Место кончилось раньше, чем начался ответ."""
+    return response.finish_reason == "length" and not response.content
 
 
 def _parse_json_object(text: str) -> dict:
