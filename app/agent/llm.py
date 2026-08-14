@@ -75,7 +75,26 @@ REASONING_PRESETS = {
 
 #: Сколько токенов добавить к ответу, когда модели разрешено размышлять. Мысли
 #: расходуют тот же бюджет, что и сам ответ, — без запаса на JSON места не остаётся.
-REASONING_HEADROOM = 1200
+#: Запас идёт по режиму: на `high` модель думает втрое дольше, чем на `low`, и
+#: одного и того же запаса ей хватит на первое и не хватит на второе — приходит
+#: `finish_reason: length` с пустым ответом.
+REASONING_HEADROOM = {"low": 1200, "medium": 2400, "high": 4000}
+
+#: Задачи, ради которых ассистент обращается к модели. Размышление — свойство
+#: задачи, а не запроса: выбрать инструмент в чате и собрать рацион на несколько
+#: дней — работа разной природы, и одна ручка на обе врёт. Поэтому место вызова
+#: называет не режим («думай сильно»), а род работы, а во что он превращается,
+#: решает хозяин дома настройками (см. `LLMClient.reasoning_for`).
+#:
+#: Кто из них случится, выбирает сама модель — тем, какой инструмент она возьмёт
+#: под просьбу человека. Отдельного «классификатора сложности» здесь нет и не
+#: нужно: маршрутизация в инструменты и есть классификация (ADR-0007).
+ROUTINE = "routine"      #: маршрутизация в чате, разбор текста, формулировка — думать не о чем
+ESTIMATE = "estimate"    #: прикидка чисел: КБЖУ по фото и по описанию, событие с камеры, состав товара
+PLANNING = "planning"    #: подбор под ограничения: идеи питания на несколько дней
+
+#: Какую переменную окружения назвать в жалобе, когда ответ не уложился в бюджет.
+_KNOB = {PLANNING: "LLM_REASONING_PLAN", ESTIMATE: "LLM_REASONING_ESTIMATE"}
 
 
 class LLMUnavailable(RuntimeError):
@@ -119,6 +138,14 @@ class LLMClient:
     def configured(self) -> bool:
         return self.cfg.configured
 
+    def reasoning_for(self, task: Optional[str]) -> str:
+        """Сколько думать над задачей этого рода — по настройкам хозяина дома."""
+        if task == PLANNING:
+            return self.cfg.reasoning_plan
+        if task == ESTIMATE:
+            return self.cfg.reasoning_estimate
+        return self.cfg.reasoning
+
     def chat(
         self,
         messages: List[dict],
@@ -127,6 +154,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
+        task: Optional[str] = None,
         reasoning: Optional[str] = None,
     ) -> LLMResponse:
         if self.cfg.stub:
@@ -147,18 +175,18 @@ class LLMClient:
         if response_format:
             payload["response_format"] = response_format
 
-        return self._parse(self._post(payload, self._tuning(reasoning)))
+        return self._parse(self._post(payload, self._tuning(self._mode(task, reasoning))))
 
-    def _tuning(self, reasoning: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _mode(self, task: Optional[str], reasoning: Optional[str]) -> str:
+        """Режим размышления одного вызова: явный — важнее рода задачи."""
+        return self.reasoning_for(task) if reasoning is None else reasoning
+
+    def _tuning(self, mode: str) -> List[Dict[str, Any]]:
         """Лесенка попыток управления размышлением — от широкой к пустой.
-
-        `reasoning` задаёт режим для одного вызова: чат ассистента маршрутизирует
-        в инструменты и думать не должен, а оценка КБЖУ — как раз должна.
 
         `LLM_EXTRA_BODY` — последнее слово хозяина дома: он перекрывает пресет и
         едет во всех попытках, включая ту, где от пресета не осталось ничего.
         """
-        mode = self.cfg.reasoning if reasoning is None else reasoning
         extra = dict(self.cfg.extra_body or {})
         ladder: List[Dict[str, Any]] = []
         for preset in REASONING_PRESETS.get(mode, []):
@@ -243,6 +271,7 @@ class LLMClient:
         user_content,
         model: Optional[str] = None,
         max_tokens: int = 600,
+        task: Optional[str] = None,
         reasoning: Optional[str] = None,
     ) -> dict:
         """Ask the model for a single JSON object and parse it.
@@ -251,20 +280,19 @@ class LLMClient:
         relied upon — plenty of OpenAI-compatible servers ignore it, so the answer
         is also unwrapped from ```json fences before parsing.
 
-        Размышление здесь своё (`LLM_REASONING_ESTIMATE`, по умолчанию `low`):
-        прикинуть вес порции и сложить калории — ровно та работа, ради которой
-        оно и нужно, в отличие от выбора инструмента в чате.
+        `task` — род работы (`ESTIMATE`, `PLANNING`, `ROUTINE`), от него зависит,
+        сколько модели позволено думать: прикинуть вес порции и собрать рацион на
+        неделю — разные задачи, и ручки у них разные.
         """
         if self.cfg.stub:
             from app.agent import stub
             return stub.json_completion(system, user_content)
 
-        mode = self.cfg.reasoning_estimate if reasoning is None else reasoning
-        if mode not in ("", "off"):
-            # Размышление тратит тот же бюджет, что и ответ. Без запаса модель
-            # успевает только подумать: приходит finish_reason=length с пустым
-            # content, и JSON не рождается вовсе.
-            max_tokens += REASONING_HEADROOM
+        mode = self._mode(task, reasoning)
+        # Размышление тратит тот же бюджет, что и ответ. Без запаса модель успевает
+        # только подумать: приходит finish_reason=length с пустым content, и JSON
+        # не рождается вовсе.
+        max_tokens += REASONING_HEADROOM.get(mode, 0)
 
         messages = [
             {"role": "system", "content": system},
@@ -282,7 +310,7 @@ class LLMClient:
             # Отдельная жалоба, потому что «модель вернула не JSON» уводит не туда:
             # ответа нет не потому, что модель глупая, а потому что ей не хватило места.
             logger.error(f"Ответ не поместился в max_tokens={max_tokens}. Поднимите лимит "
-                         f"или поставьте LLM_REASONING_ESTIMATE=off.")
+                         f"или поставьте {_KNOB.get(task, 'LLM_REASONING')}=off.")
             raise LLMUnavailable("Модель не уложилась в отведённые токены")
         return _parse_json_object(response.content)
 

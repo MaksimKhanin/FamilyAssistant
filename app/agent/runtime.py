@@ -21,7 +21,9 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.agent import policy, registry, tracing
-from app.agent.llm import LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part
+from app.agent.llm import (
+    ROUTINE, LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part,
+)
 from app.agent.prompts import system_prompt
 from app.agent.registry import ToolContext, ToolResult, ToolSpec
 from app.core import instructions, media
@@ -178,6 +180,10 @@ class Agent:
                 response = self.llm.chat(
                     messages,
                     tools=[registry.openai_schema(s) for s in specs.values()] or None,
+                    # Работа этого вызова — выбрать инструмент и ответить парой фраз.
+                    # Думать над ней нечего; думают, если надо, сами инструменты
+                    # (ADR-0007).
+                    task=ROUTINE,
                 )
                 if not response.tool_calls:
                     answer = response.content

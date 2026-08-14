@@ -49,6 +49,19 @@ def test_notifying_the_whole_family_needs_the_top_setting(db, head):
     assert policy.resolve_mode(db, head, notify) == MODE_AUTO
 
 
+def test_wiping_a_month_asks_even_at_full_autonomy(db, head):
+    """Одно «да» стирает здесь месяц истории — этого не отдают ползунку.
+
+    Удаление одной записи на самом смелом положении проходит само (её видно в
+    разговоре и легко записать заново), а чистку периода спрашивают всегда.
+    """
+    head.autonomy = 3
+    db.commit()
+
+    assert policy.resolve_mode(db, head, registry.get("delete_meal")) == MODE_AUTO
+    assert policy.resolve_mode(db, head, registry.get("clear_nutrition_period")) == MODE_ASK
+
+
 def test_explicit_override_beats_the_slider(db, head):
     head.autonomy = 3
     db.commit()

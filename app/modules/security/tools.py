@@ -8,7 +8,7 @@ instead of the frame itself.
 from datetime import datetime
 from pathlib import Path
 
-from app.agent.llm import LLMUnavailable, client as llm_client, image_part, text_part
+from app.agent.llm import ESTIMATE, LLMUnavailable, client as llm_client, image_part, text_part
 from app.agent.prompts import EVENT_CLASSIFY_SYSTEM
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core import family as family_service
@@ -215,7 +215,8 @@ def classify_event(ctx: ToolContext, event_id: int) -> ToolResult:
         content.append(text_part("Кадр не передаётся: семья попросила, чтобы снимки не покидали дом."))
 
     try:
-        raw = llm_client.json_completion(EVENT_CLASSIFY_SYSTEM, content, max_tokens=400)
+        raw = llm_client.json_completion(EVENT_CLASSIFY_SYSTEM, content, max_tokens=400,
+                                         task=ESTIMATE)
     except LLMUnavailable:
         return ToolResult(summary=f"Не смог разобрать событие — модель не отвечает. "
                                   f"Пока считаю так: {event.verdict_label}, {event.reason}.", ok=False)

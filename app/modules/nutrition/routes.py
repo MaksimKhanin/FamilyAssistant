@@ -1,4 +1,7 @@
 """Web screens for the nutrition module: приём пищи, статистика, активность, план."""
+from datetime import date
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -14,7 +17,7 @@ from app.modules.nutrition import service
 from app.modules.nutrition.models import (
     ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, GOAL_LABELS, SOURCE_PHOTO, SOURCE_TEXT,
 )
-from app.modules.nutrition.service import PERIOD_LABELS
+from app.modules.nutrition.service import PERIOD_LABELS, PERIOD_WINDOWS
 from app.modules.nutrition.vision import estimate_from_image, safe_estimate_from_text
 from app.web.context import screen_context
 
@@ -110,11 +113,22 @@ def confirm_meal(
     return RedirectResponse(f"/nutrition/meal?meal_id={meal.id}&state=done", status_code=303)
 
 
+def _safe_back(back: str, fallback: str) -> str:
+    """Куда вернуть человека после действия — только внутрь панели.
+
+    Адрес приезжает из формы, а значит, из браузера: пускать по нему куда угодно
+    незачем. Всё, что не начинается с одного «/», — не наш экран.
+    """
+    if back and back.startswith("/") and not back.startswith("//"):
+        return back
+    return fallback
+
+
 @router.post("/meal/{meal_id}/discard")
 def discard_meal(
     request: Request,
     meal_id: int,
-    back: str = None,
+    back: str = Form(None),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -125,6 +139,10 @@ def discard_meal(
     приходит обычная форма и получает переход, из чата — запрос htmx, и тогда в
     ленту возвращается реплика ассистента: человек видит подтверждение там же,
     где нажал, а не на внезапно сменившемся экране.
+
+    Различает их не «пришло ли через htmx» — через него приходит и переход
+    (`hx-boost`, ADR-0001), — а `HX-Boosted`: боту чата отвечаем репликой, экрану
+    переходом обратно на него же.
     """
     meal = service.get_meal(db, viewed.id, meal_id) if can_act_as(current, viewed) else None
     if meal is not None:
@@ -134,23 +152,25 @@ def discard_meal(
     else:
         said = "Эту запись уже не удалить — возможно, её удалили раньше."
 
-    if request.headers.get("HX-Request"):
+    if request.headers.get("HX-Request") and not request.headers.get("HX-Boosted"):
         return render(request, "partials/chat_messages.html",
                       {"request": request,
                        "messages": [{"role": "assistant", "text": said, "traces": [], "cards": []}]})
-    return RedirectResponse(back or "/nutrition/meal", status_code=303)
+    return RedirectResponse(_safe_back(back, "/nutrition/meal"), status_code=303)
 
 
 @router.post("/activity/{activity_id}/discard")
 def discard_activity(
     activity_id: int,
+    back: str = Form(None),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
+    """Убрать одну запись об активности. `back` — экран, с которого нажали."""
     if can_act_as(current, viewed):
         service.delete_activity(db, viewed.id, activity_id)
-    return RedirectResponse("/nutrition/activity", status_code=303)
+    return RedirectResponse(_safe_back(back, "/nutrition/activity"), status_code=303)
 
 
 @router.get("/stats", response_class=HTMLResponse)
@@ -171,9 +191,62 @@ def stats_screen(
 
     context = screen_context(request, db, current, viewed,
                              title="Статистика питания", subtitle="Спокойный взгляд на баланс дня")
+    # Записи периода — под графиком: столбик без строк, из которых он сложился,
+    # нечем поправить, и «убрать лишнее» превращается в разговор с ассистентом.
     context.update(stats=stats, period=period, period_labels=PERIOD_LABELS, chart_peak=peak,
-                   profile=service.get_profile(db, viewed.id))
+                   period_windows=PERIOD_WINDOWS, profile=service.get_profile(db, viewed.id),
+                   records=service.records_for_period(db, viewed.id, period),
+                   notice=request.query_params.get("notice"))
     return render(request, "nutrition/stats.html", context)
+
+
+def _back_to_stats(period: str, notice: str = None) -> RedirectResponse:
+    params = {"period": period if period in PERIOD_LABELS else "week"}
+    if notice:
+        params["notice"] = notice
+    return RedirectResponse(f"/nutrition/stats?{urlencode(params)}", status_code=303)
+
+
+@router.post("/stats/day/{day}/clear")
+def clear_day(
+    day: str,
+    period: str = Form("week"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Убрать все записи одного дня — «этот день записан неверно, сотрите»."""
+    if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
+        return _back_to_stats(period)
+
+    try:
+        chosen = date.fromisoformat(day)
+    except ValueError:
+        return _back_to_stats(period)
+
+    removed = service.clear_day(db, viewed.id, chosen)
+    notice = (f"Убрал за {chosen.strftime('%d.%m')}: {removed.words}."
+              if removed else f"За {chosen.strftime('%d.%m')} убирать было нечего.")
+    return _back_to_stats(period, notice)
+
+
+@router.post("/stats/clear")
+def clear_period(
+    period: str = Form("week"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Убрать всё за период, который человек сейчас видит на экране."""
+    if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
+        return _back_to_stats(period)
+
+    period = period if period in PERIOD_LABELS else "week"
+    removed = service.clear_period(db, viewed.id, period)
+    window = PERIOD_WINDOWS[period]
+    notice = (f"Убрал {window}: {removed.words}. Цифры пересчитаны."
+              if removed else f"{window.capitalize()} убирать было нечего.")
+    return _back_to_stats(period, notice)
 
 
 @router.get("/activity", response_class=HTMLResponse)

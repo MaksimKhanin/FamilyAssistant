@@ -5,9 +5,9 @@ estimate, and `confirm_meal` is what turns it into a confirmed (or hand-correcte
 entry. That two-step shape is a product requirement — the number came from a model
 looking at a plate, and the person must be able to fix it in one gesture.
 """
-from app.agent.llm import LLMUnavailable, client as llm_client
+from app.agent.llm import PLANNING, LLMUnavailable, client as llm_client
 from app.agent.prompts import MEAL_PLAN_SYSTEM
-from app.agent.registry import ToolContext, ToolResult, tool
+from app.agent.registry import ALWAYS_ASK, ToolContext, ToolResult, tool
 from app.core import instructions
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
 from app.core.logging import get_logger
@@ -375,6 +375,57 @@ def delete_meal(ctx: ToolContext, meal_id: int = None) -> ToolResult:
 
 
 @tool(
+    name="clear_nutrition_period",
+    module=MODULE,
+    title="Убрать записи о еде за период",
+    description="""
+    Убрать разом все записи за период: «удали статистику за неделю», «сотри
+    сегодняшнюю еду», «почисти месяц». Записи исчезают насовсем вместе со снимками
+    тарелок, цифры пересчитываются.
+    period: day — сегодняшний день, week — последние семь дней вместе с сегодняшним,
+    month — последние 30 дней. Других периодов инструмент не умеет: если человек
+    просит убрать «за вчера», «за март» или «с 1 по 5 число», не подставляй ближайший
+    период — скажи, что такие дни убираются по одному на экране «Статистика питания»,
+    там у каждого дня своя кнопка.
+    what: meals — только еда, activity — только активность, all — и то и другое.
+    Одну ошибочную запись убирает delete_meal, а не этот инструмент.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "period": {"type": "string", "enum": ["day", "week", "month"],
+                       "description": "Сегодня, последние семь дней или последние 30 дней"},
+            "what": {"type": "string", "enum": ["meals", "activity", "all"],
+                     "description": "Что именно убрать; по умолчанию и еду, и активность"},
+        },
+        "required": ["period"],
+    },
+    # Одно «да» стирает здесь месяц истории, и восстановить её неоткуда: спрашиваем
+    # всегда, даже у того, кто разрешил агенту всё остальное.
+    auto_from=ALWAYS_ASK,
+)
+def clear_nutrition_period(ctx: ToolContext, period: str, what: str = service.WHAT_ALL) -> ToolResult:
+    if period not in service.PERIODS:
+        return ToolResult(summary=f"Не знаю такого периода: {period}. Есть день, неделя и месяц.",
+                          ok=False)
+    if what not in service.WHAT_LABELS:
+        what = service.WHAT_ALL
+
+    window = service.PERIOD_WINDOWS[period]
+    removed = service.clear_period(ctx.db, ctx.subject.id, period, what)
+    if not removed:
+        return ToolResult(summary=f"Убирать было нечего: {service.WHAT_LABELS[what]} {window} "
+                                  f"и так не заведены.",
+                          data={"meals": 0, "activity": 0})
+
+    return ToolResult(
+        summary=f"Убрал {window}: {removed.words}. Записей больше нет, дневной баланс "
+                f"и статистика пересчитаны.",
+        data={"meals": removed.meals, "activity": removed.activity},
+    )
+
+
+@tool(
     name="delete_activity",
     module=MODULE,
     title="Удалить запись об активности",
@@ -504,7 +555,10 @@ def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
         prompt += f"\nЧто человек просил учитывать: {memo}"
 
     try:
-        raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900)
+        # Единственная задача ассистента, где модели есть что обдумывать: уложиться
+        # в норму, свести цель, обойти то, что человеку нельзя, и не повторить
+        # вчерашнее — всё сразу. Отсюда и `PLANNING` вместо общей ручки чата.
+        raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900, task=PLANNING)
     except LLMUnavailable:
         return ToolResult(summary="Сейчас не могу собрать идеи — модель не отвечает.", ok=False)
 
