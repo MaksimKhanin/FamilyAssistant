@@ -66,6 +66,20 @@ def test_the_theme_is_saved_and_reaches_the_document(as_head, db, head):
     assert 'data-theme="dark"' in as_head.get("/chat").text
 
 
+def test_the_theme_form_reloads_the_document(as_head):
+    """Форма оформления — единственная, которая ходит без hx-boost.
+
+    Оформление живёт атрибутом на `<html>` и цветом статусбара в `<head>`, а
+    переход подменяет только тело документа (ADR-0001): значение сохранялось,
+    но цвета оставались прежними до перезагрузки, и кнопка выглядела нерабочей.
+    Тест на сохранение темы этого не ловил — он ходит запросами, а не браузером.
+    """
+    markup = as_head.get("/settings/profile").text
+
+    form = markup.split('action="/settings/profile/theme"')[1].split(">")[0]
+    assert 'hx-boost="false"' in form
+
+
 def test_an_unknown_theme_is_ignored(as_head, db, head):
     as_head.post("/settings/profile/theme", data={"theme": "neon"}, follow_redirects=False)
 
