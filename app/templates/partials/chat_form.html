@@ -1,0 +1,23 @@
+{# Подвал разговора: снимок, поле и отправка. Один партиал на экран и на панель.
+   Чипсов-подсказок здесь нет — на телефоне они отнимали строку у клавиатуры;
+   подсказки показываются только в пустой ленте (chat_hints). #}
+{% import "partials/icons.html" as ic %}
+<form class="chat-foot" id="chat-form" hx-post="/chat/send" hx-target="#chat-body" hx-swap="beforeend"
+      hx-encoding="multipart/form-data" hx-disabled-elt="#chat-input, #chat-send">
+  <div class="chat-input-row">
+    {# Снимок уходит сразу по выбору: телефон уже показал галерею и камеру,
+       второе подтверждение здесь ничего не добавляет. Поле при этом не
+       очищается — подпись к фото уезжает вместе с ним. #}
+    <label class="chat-attach" title="Прислать снимок">
+      {{ ic.icon("camera", 21) }}
+      <input type="file" name="photo" accept="image/*" id="chat-photo"
+             onchange="if (this.files.length) this.form.requestSubmit();">
+    </label>
+    <textarea class="chat-field" id="chat-input" name="message" rows="1"
+              placeholder="Напишите словами…"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit();}"></textarea>
+    <button class="chat-send" type="submit" id="chat-send" aria-label="Отправить">
+      {{ ic.icon("send", 21) }}
+    </button>
+  </div>
+</form>

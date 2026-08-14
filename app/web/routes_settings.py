@@ -14,7 +14,7 @@ from app.core import push
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
-from app.core.models import AUTONOMY_LEVELS, ActionLog, ScheduledJob, User
+from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ScheduledJob, User
 from app.core.templating import render
 from app.modules import togglable
 from app.web.context import avatar, screen_context
@@ -84,33 +84,15 @@ def update_connector(
 
 # --- агент и инструменты --------------------------------------------------
 
-@router.get("/agent", response_class=HTMLResponse)
-def agent_screen(
-    request: Request,
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-    viewed: User = Depends(get_viewed_user),
-):
-    context = screen_context(request, db, current, viewed,
-                             title="Агент и инструменты",
-                             subtitle="Что ассистент делает сам, а о чём спрашивает")
+@router.get("/agent")
+def agent_screen():
+    """Экран переехал в «Профиль и агент».
 
-    since = datetime.utcnow() - timedelta(days=1)
-    context.update(
-        autonomy=viewed.autonomy or 0,
-        autonomy_levels=AUTONOMY_LEVELS,
-        tools=policy.policy_overview(db, viewed),
-        jobs=_jobs(db, viewed),
-        job_labels=JOB_LABELS,
-        recent_actions=(
-            db.query(ActionLog)
-            .filter(ActionLog.user_id == viewed.id, ActionLog.created_at >= since)
-            .order_by(ActionLog.created_at.desc())
-            .limit(8)
-            .all()
-        ),
-    )
-    return render(request, "settings/agent.html", context)
+    Разделение «кто я» и «что ассистенту можно» заставляло ходить туда-обратно:
+    самостоятельность и режимы инструментов — это тоже про себя. Маршрут остаётся
+    ради ссылок, которые уже разошлись по уведомлениям и закладкам.
+    """
+    return RedirectResponse("/settings/profile", status_code=308)
 
 
 def _jobs(db: Session, user: User):
@@ -134,7 +116,7 @@ def set_autonomy(
     if can_act_as(current, viewed) and 0 <= autonomy <= 3:
         viewed.autonomy = autonomy
         db.commit()
-    return RedirectResponse("/settings/agent", status_code=303)
+    return RedirectResponse("/settings/profile", status_code=303)
 
 
 @router.post("/agent/tools/{tool_name}")
@@ -150,7 +132,7 @@ def set_tool_mode(
             policy.set_mode(db, viewed, tool_name, mode)
         except ValueError:
             pass
-    return RedirectResponse("/settings/agent", status_code=303)
+    return RedirectResponse("/settings/profile", status_code=303)
 
 
 @router.post("/agent/jobs/{kind}")
@@ -172,7 +154,7 @@ def toggle_job(
             db.add(job)
         job.enabled = enabled == "on"
         db.commit()
-    return RedirectResponse("/settings/agent", status_code=303)
+    return RedirectResponse("/settings/profile", status_code=303)
 
 
 # --- семья и модули -------------------------------------------------------
@@ -347,8 +329,10 @@ def profile_screen(
     from app.modules.nutrition.models import GOAL_LABELS
 
     context = screen_context(request, db, current, viewed,
-                             title="Профиль", subtitle="Цель, суточная норма и включённые модули")
+                             title="Профиль и агент",
+                             subtitle="Оформление, самостоятельность ассистента и режимы инструментов")
     module_list = togglable()
+    since = datetime.utcnow() - timedelta(days=1)
     context.update(
         profile=nutrition_service.get_profile(db, viewed.id),
         goal_labels=GOAL_LABELS,
@@ -358,8 +342,37 @@ def profile_screen(
         module_list=module_list,
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]).get(viewed.id, {}),
         can_toggle=current.is_head,
+        themes=THEMES,
+        # Оформление меняет себе тот, кто смотрит: режим «от лица» переключает
+        # данные экрана, а не глаза человека перед телефоном.
+        current_theme=current.theme,
+        autonomy=viewed.autonomy or 0,
+        autonomy_levels=AUTONOMY_LEVELS,
+        tools=policy.policy_overview(db, viewed),
+        jobs=_jobs(db, viewed),
+        job_labels=JOB_LABELS,
+        recent_actions=(
+            db.query(ActionLog)
+            .filter(ActionLog.user_id == viewed.id, ActionLog.created_at >= since)
+            .order_by(ActionLog.created_at.desc())
+            .limit(8)
+            .all()
+        ),
     )
     return render(request, "settings/profile.html", context)
+
+
+@router.post("/profile/theme")
+def set_theme(
+    theme: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Оформление своё у каждого — и меняет его человек всегда себе."""
+    if theme in THEMES:
+        current.theme = theme
+        db.commit()
+    return RedirectResponse("/settings/profile", status_code=303)
 
 
 @router.post("/profile/password")

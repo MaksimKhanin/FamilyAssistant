@@ -61,7 +61,7 @@
   {# Список досок раздела рядом с выбранной; на узком экране колонки складываются
      в одну (тикет #26). Лента записей придёт следующим шагом (#27). #}
   <div class="board-cols">
-    <div class="stack" style="gap:8px">
+    <div class="board-list stack" style="gap:8px">
       {% for board in boards %}
         <a class="board-item {% if active_board and active_board.id == board.id %}active{% endif %}"
            href="/memory?section={{ active_section.id }}&board={{ board.id }}">
@@ -205,7 +205,7 @@
     {# «Общее» — не хранимый раздел, а отображение грантов: доски, расшаренные
        на смотрящего, по свежести (тикет #28). #}
     <div class="board-cols">
-      <div class="stack" style="gap:8px">
+      <div class="board-list stack" style="gap:8px">
         {% for grant in shared_grants %}
           <a class="board-item {% if active_board and active_board.id == grant.board.id %}active{% endif %}"
              href="/memory?section=common&board={{ grant.board.id }}">

@@ -3,7 +3,7 @@
 One builder so the shell stays identical across core screens and module screens,
 and so a new module gets the whole chrome for free by contributing NavItems.
 """
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from fastapi import Request
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from app.core import family as family_service
 from app.core.access import enabled_modules
 from app.core.auth import can_act_as, can_see_figures
 from app.core.module import NavItem
-from app.core.models import User
+from app.core.models import THEME_WARM, THEMES, User
 from app.modules import load_modules
 
 #: Avatar palettes (фон / текст) for up to five members, from the design package.
@@ -26,15 +26,22 @@ AVATAR_PALETTE = [
 
 GROUP_ORDER = ["", "Питание", "Безопасность", "Настройки", "Администрирование"]
 
+#: Акцент, с которым семья заводится, — цвет прежнего оформления. Пока его никто
+#: не трогал, акцент берётся из темы (терракота днём, янтарь ночью); как только
+#: семья выберет свой, он перебьёт тему в обоих оформлениях. Так «акцент семьи»
+#: остаётся её настройкой, а не молчаливым наследством одного из оформлений.
+DEFAULT_ACCENT = "#2E6E7E"
+
 CORE_NAV = [
     NavItem(slug="dashboard", label="Главная", url="/", icon="grid"),
 ]
 
 SETTINGS_NAV = [
     NavItem(slug="connectors", label="Коннекторы", url="/settings/connectors", icon="plug", group="Настройки"),
-    NavItem(slug="agent", label="Агент и инструменты", url="/settings/agent", icon="wand", group="Настройки"),
+    # Профиль и настройки агента — один экран: на телефоне их разделение
+    # заставляло ходить туда-обратно между «кто я» и «что ему можно».
+    NavItem(slug="profile", label="Профиль и агент", url="/settings/profile", icon="user", group="Настройки"),
     NavItem(slug="family", label="Семья и модули", url="/settings/family", icon="users", group="Настройки"),
-    NavItem(slug="profile", label="Профиль", url="/settings/profile", icon="user", group="Настройки"),
     NavItem(slug="llm", label="Модель и знания", url="/settings/model", icon="brain",
             group="Администрирование", head_only=True),
     NavItem(slug="traces", label="Трейсы агента", url="/settings/traces", icon="pulse",
@@ -86,19 +93,25 @@ def build_nav(db: Session, enabled: Set[str], current: User) -> List[dict]:
     return [{"title": group, "entries": groups[group]} for group in ordered]
 
 
-#: Что попадает в нижнюю панель на телефоне — по одному пункту на то, ради чего
-#: приложение вообще открывают. Остальное прячется в выдвижное меню.
+#: Что попадает в нижнюю панель на телефоне. Пунктов два, и оба по краям:
+#: посередине всегда стоит «Разговор», и он не отсюда — разговор есть всегда,
+#: даже когда оба модуля выключены, и в NavItem его нет. Пять пунктов, как было
+#: раньше, не помещались подписями, а четыре из них открывали то, о чём проще
+#: спросить словами. Остальное живёт в выдвижном меню и в сайдбаре компьютера.
 QUICK_NAV = [
-    ("dashboard", None),
-    ("meal", "nutrition"),
     ("events", "security"),
     ("memory", None),
 ]
 
 
-def build_quick_nav(nav_groups: List[dict]) -> List[NavItem]:
+def build_quick_nav(nav_groups: List[dict]) -> List[Optional[NavItem]]:
+    """По одному месту на пункт — даже если пункта нет.
+
+    Длина списка постоянна: выключенный модуль отдаёт `None`, и «Разговор»
+    посередине остаётся посередине, а не съезжает к краю.
+    """
     by_slug = {item.slug: item for group in nav_groups for item in group["entries"]}
-    return [by_slug[slug] for slug, _ in QUICK_NAV if slug in by_slug]
+    return [by_slug.get(slug) for slug, _ in QUICK_NAV]
 
 
 def badges(db: Session, viewed: User, enabled: Set[str]) -> Dict[str, int]:
@@ -128,7 +141,10 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
         "viewed_user": viewed,
         "family": current.family,
         "family_settings": settings_row,
-        "accent": settings_row.accent_color,
+        "accent": None if settings_row.accent_color == DEFAULT_ACCENT else settings_row.accent_color,
+        # Оформление берётся у того, кто смотрит, а не у того, от чьего лица:
+        # режим «от лица» меняет данные экрана, а не глаза человека перед ним.
+        "theme": current.theme if current.theme in THEMES else THEME_WARM,
         "members": members,
         "avatars": [avatar(m) for m in members],
         "viewed_avatar": avatar(viewed),

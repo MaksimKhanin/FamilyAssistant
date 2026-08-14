@@ -19,16 +19,25 @@
     {% for card in message.cards %}
       {% if card.type == "meal" %}
         <div class="agent-card">
-          {% if card.is_estimate %}<span class="badge estimate">≈ оценка</span>{% endif %}
-          <div style="font-weight:600">{{ card.title }}</div>
-          <div class="muted">{{ card.kcal }} ккал · Б {{ card.protein }} / Ж {{ card.fat }} / У {{ card.carbs }}</div>
-          <div class="row" style="gap:8px">
-            {% if card.is_estimate %}
-              <a class="btn small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=done">Подтвердить</a>
-              <a class="btn ghost small" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=estimate">Поправить</a>
-            {% endif %}
-            {# Удалить можно и оценку, и подтверждённую запись: ошибиться легко на любом шаге. #}
-            <button class="btn ghost small" hx-post="/nutrition/meal/{{ card.meal_id }}/discard"
+          {% if card.is_estimate %}
+            <div class="card-head"><span class="badge estimate">≈ оценка</span></div>
+          {% endif %}
+          <div class="name">{{ card.title }}</div>
+          <div class="macros">
+            <span><b>{{ card.kcal }}</b> ккал</span>
+            <span>Б {{ card.protein }}</span><span>Ж {{ card.fat }}</span><span>У {{ card.carbs }}</span>
+          </div>
+          {% if card.is_estimate %}
+            <div class="actions">
+              <a class="btn" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=done">Всё верно</a>
+              <a class="btn ghost" href="/nutrition/meal?meal_id={{ card.meal_id }}&state=estimate">Поправить</a>
+            </div>
+          {% endif %}
+          {# Удалить можно и оценку, и подтверждённую запись: ошибиться легко на любом шаге. #}
+          <div class="row" style="gap:12px">
+            <a class="btn link" href="/nutrition/stats">Открыть экран питания →</a>
+            <button class="btn link spacer" style="color:var(--alarm)"
+                    hx-post="/nutrition/meal/{{ card.meal_id }}/discard"
                     hx-target="#chat-body" hx-swap="beforeend"
                     hx-confirm="Удалить запись «{{ card.title }}»?">Удалить</button>
           </div>
@@ -39,13 +48,27 @@
             <div><div class="label">Получено</div><div class="big-number">{{ card.consumed }}</div></div>
             <div><div class="label">Потрачено</div><div class="big-number">{{ card.burned }}</div></div>
           </div>
-          <a class="btn link" href="/nutrition/stats?period={{ card.period }}">Открыть →</a>
+          <a class="btn link" href="/nutrition/stats?period={{ card.period }}">Открыть экран питания →</a>
         </div>
       {% elif card.type == "security" %}
-        <div class="agent-card alarm">
-          <div style="font-weight:600">{{ card.title }}</div>
-          <div class="muted">{{ card.camera }} · {{ card.at }}</div>
-          <a class="btn link" href="/security/events?event_id={{ card.event_id }}">Посмотреть →</a>
+        {# Кадр — первым: событие узнаётся по картинке, а не по заголовку.
+           Снимка может не быть (камера не отдала, ретенция удалила) — тогда
+           остаётся тот же градиент, что у превью в ленте событий. #}
+        <div class="agent-card alarm framed">
+          <div class="frame">
+            <img src="/security/snapshot/{{ card.event_id }}?thumb=true" alt=""
+                 style="width:100%;height:100%;object-fit:cover" onerror="this.hidden = true">
+          </div>
+          <div class="card-inner">
+            <div class="name">{{ card.title }}</div>
+            <div class="muted">{{ card.camera }} · {{ card.at }} · оценка модели, а не факт</div>
+            <div class="actions tight">
+              <form method="post" action="/security/events/{{ card.event_id }}/ours">
+                <button class="btn ghost" type="submit">Это свои</button>
+              </form>
+              <a class="btn ghost" href="/security/events?event_id={{ card.event_id }}">Смотреть запись</a>
+            </div>
+          </div>
         </div>
       {% elif card.type == "plan" %}
         <div class="agent-card">
@@ -59,13 +82,13 @@
         </div>
       {% elif card.type == "board" %}
         <div class="agent-card">
-          <span class="badge fact">{{ card.board }}</span>
+          <span class="badge fact" style="align-self:flex-start">{{ card.board }}</span>
           <div>{{ card.text }}</div>
           <a class="btn link" href="{{ card.url or '/memory' }}">Открыть доску →</a>
         </div>
       {% elif card.type == "stats-screen" %}
         <div class="agent-card">
-          <span class="badge fact">{{ card.board }}</span>
+          <span class="badge fact" style="align-self:flex-start">{{ card.board }}</span>
           <div>{{ card.name }} · {{ card.form }}</div>
           <a class="btn link" href="{{ card.url }}">Открыть табло →</a>
         </div>
@@ -81,24 +104,24 @@
         </div>
       {% elif card.type == "reminder" %}
         <div class="agent-card">
-          <span class="badge task">напоминание</span>
+          <span class="badge task" style="align-self:flex-start">напоминание</span>
           <div>{{ card.text }}</div>
           <div class="tiny">⏱ {{ card.when }}</div>
           <a class="btn link" href="/reminders">Все напоминания →</a>
         </div>
       {% elif card.type == "confirm" %}
         <div class="agent-card">
-          <div style="font-weight:600">{{ card.title }}</div>
+          <div class="name">{{ card.title }}</div>
           {# С чем именно: подтверждать вслепую «удалить запись о еде» человек не должен. #}
           <div class="mono">
             {{ card.tool }}({% for name, value in (card.arguments or {}).items() %}
               {{- name }}={{ value }}{% if not loop.last %}, {% endif %}
             {%- endfor %})
           </div>
-          <div class="row" style="gap:8px">
-            <button class="btn small" hx-post="/chat/actions/{{ card.pending_id }}/approve"
+          <div class="actions">
+            <button class="btn" hx-post="/chat/actions/{{ card.pending_id }}/approve"
                     hx-target="#chat-body" hx-swap="beforeend">Да, сделай</button>
-            <button class="btn ghost small" hx-post="/chat/actions/{{ card.pending_id }}/reject"
+            <button class="btn ghost" hx-post="/chat/actions/{{ card.pending_id }}/reject"
                     hx-target="#chat-body" hx-swap="beforeend">Не надо</button>
           </div>
         </div>
