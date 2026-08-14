@@ -91,6 +91,9 @@ def test_the_bottom_bar_is_home_talk_and_knowledge(as_head):
     assert bar.count("<a ") == 3
     assert "/security/events" in bar and "/memory" in bar
     assert 'href="/chat"' in bar
+    # Внизу пункт зовётся «Дом», хотя в сайдбаре компьютера он «События»:
+    # туда идут посмотреть, что дома, а не за списком событий.
+    assert "<span>Дом</span>" in bar and "<span>События</span>" not in bar
     # Ссылок на «Главную» и «Записать еду» в панели больше нет: о еде проще
     # сказать словами, а обзор дня переехал в шапку разговора.
     assert 'href="/nutrition/meal"' not in bar
@@ -149,6 +152,71 @@ def test_every_agent_card_renders(card):
     )
 
     assert "agent-card" in markup, card["type"]
+
+
+# --- шапка вторичного экрана ----------------------------------------------------
+
+@pytest.mark.parametrize("path,title", [("/memory", "Знания"),
+                                        ("/settings/profile", "Профиль и агент")])
+def test_a_secondary_screen_leads_back_to_the_talk(as_head, path, title):
+    """Разговор — главный экран, и со «Знаний» и «Профиля» возвращаются в него."""
+    markup = as_head.get(path).text
+
+    row = markup.split('class="screen-head-row"')[1].split("</div>")[0]
+    assert 'href="/chat"' in row
+    assert f'<div class="screen-title">{title}</div>' in markup
+
+
+def test_the_profile_head_has_no_button_to_itself(as_head):
+    head = (as_head.get("/settings/profile").text
+            .split('class="screen-head-row"')[1].split('class="two-col"')[0])
+    assert 'href="/settings/profile"' not in head
+
+
+def test_the_sections_ride_along_with_the_head_of_the_knowledge_screen(as_head):
+    """Полоса разделов стоит в шапке и липнет вместе с ней: раздел — это то,
+    где ты находишься, и уезжать вверх он не должен."""
+    markup = as_head.get("/memory").text
+
+    assert markup.index('<div class="screen-head">') < markup.index('class="section-strip"')
+
+
+def test_the_knowledge_head_keeps_the_profile_button(as_head):
+    """Справа в шапке — тот же профиль, что и в разговоре."""
+    row = as_head.get("/memory").text.split('class="screen-head-row"')[1]
+    assert row.index('href="/settings/profile"') < row.index('class="section-strip"')
+
+
+# --- разделители дня в разговоре ------------------------------------------------
+
+def test_the_history_is_split_by_days():
+    """Разговор длится месяцами: без даты вчерашний ответ читается как сегодняшний."""
+    from datetime import timedelta
+
+    from app.core.clock import utc_now
+    from app.web.routes_chat import _with_day_separators
+
+    now = utc_now()
+    messages = _with_day_separators([
+        {"role": "user", "text": "вчера", "at": now - timedelta(days=1)},
+        {"role": "assistant", "text": "и тоже вчера", "at": now - timedelta(days=1)},
+        {"role": "user", "text": "сегодня", "at": now},
+    ])
+
+    assert messages[0]["daysep"] == "Вчера"
+    assert "daysep" not in messages[1]        # второй раз за тот же день не надо
+    assert messages[2]["daysep"] == "Сегодня"
+
+
+def test_an_answer_arriving_now_carries_no_day_separator():
+    """Ответ прилетает в конец ленты по HTMX — «Сегодня» посреди переписки сбивает."""
+    from app.core.templating import templates
+
+    markup = templates.get_template("partials/chat_messages.html").render(
+        messages=[{"role": "assistant", "text": "Готово.", "traces": [], "cards": []}],
+    )
+
+    assert "chat-daysep" not in markup
 
 
 def test_the_profile_carries_the_agent_controls(as_head):

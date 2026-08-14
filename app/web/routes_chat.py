@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.agent.runtime import AgentReply, agent, approve_action, message_payload, reject_action
 from app.core.auth import get_current_user, get_viewed_user
+from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import ChatMessage, User
-from app.core.templating import render
+from app.core.templating import render, ru_date
 from app.web import day as day_service
 from app.web.context import screen_context
 
@@ -41,8 +42,29 @@ def _history(db: Session, user: User):
         .limit(HISTORY_ON_OPEN)
         .all()
     )
-    return [{"role": m.role, "text": m.content, "at": m.created_at, **message_payload(m)}
-            for m in reversed(rows)]
+    messages = [{"role": m.role, "text": m.content, "at": m.created_at, **message_payload(m)}
+                for m in reversed(rows)]
+    return _with_day_separators(messages)
+
+
+def _with_day_separators(messages: list) -> list:
+    """Разделитель дня над первым сообщением каждого дня.
+
+    Разговор с ассистентом длится месяцами, и без дат вчерашний ответ читается
+    как сегодняшний. Метка ставится на историю целиком — у ответа, который
+    прилетает по HTMX в конец ленты, дня нет: он всегда сегодняшний, и
+    отдельная надпись «Сегодня» посреди переписки только сбивала бы.
+    """
+    today = local_now().date()
+    previous = None
+    for message in messages:
+        day = to_local(message["at"]).date() if message.get("at") else None
+        if day and day != previous:
+            message["daysep"] = ("Сегодня" if day == today
+                                 else "Вчера" if (today - day).days == 1
+                                 else ru_date(message["at"]))
+            previous = day
+    return messages
 
 
 @router.get("", response_class=HTMLResponse)

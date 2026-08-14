@@ -28,8 +28,11 @@ module = Module(
     description="Смотрит за домом и пишет, только когда есть что сказать",
     routers=[ui_router, ingest_router],
     nav_items=[
-        NavItem(slug="events", label="События", url="/security/events", icon="shield",
-                group="Безопасность", badge_key="anomaly_count"),
+        # В нижней панели пункт называется «Дом»: там их три на всю ширину, и
+        # человек идёт туда не «за событиями», а посмотреть, что дома. В сайдборе
+        # компьютера рядом стоят «Архив» и «Камеры», и там «События» точнее.
+        NavItem(slug="events", label="События", short="Дом", url="/security/events",
+                icon="shield", group="Безопасность", badge_key="anomaly_count"),
         NavItem(slug="archive", label="Архив", url="/security/archive", icon="archive",
                 group="Безопасность"),
         NavItem(slug="cameras", label="Камеры", url="/security/cameras", icon="camera",
