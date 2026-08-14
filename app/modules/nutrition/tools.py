@@ -10,12 +10,15 @@ from app.agent.prompts import MEAL_PLAN_SYSTEM
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
 from app.core.logging import get_logger
+from app.core.websearch import SearchUnavailable
 from app.modules.memory import knowledge
-from app.modules.nutrition import service
+from app.modules.nutrition import lookup, service
 from app.modules.nutrition.models import (
     ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SOURCE_PHOTO, SOURCE_TEXT,
 )
-from app.modules.nutrition.vision import estimate_from_image, safe_estimate_from_text
+from app.modules.nutrition.vision import (
+    MealEstimate, estimate_from_image, safe_estimate_from_text,
+)
 
 MODULE = "nutrition"
 logger = get_logger("nutrition.tools")
@@ -68,6 +71,42 @@ def _known(ctx: ToolContext, limit: int = 8) -> list:
     return knowledge.person_facts(ctx.db, ctx.actor.id, limit=limit)
 
 
+def _refined_by_web(estimate: MealEstimate, again) -> MealEstimate:
+    """Пересчитать оценку по составу товара, если это фабричная еда.
+
+    Первый проход отвечает на вопрос «что это»; узнал марку — второй считает уже
+    по этикетке, а не на глаз. Оценка «батончика Марс» по внешнему виду и его же
+    состав с сайта производителя расходятся в разы, и второй проход стоит одного
+    лишнего обращения к модели.
+
+    Всё здесь необязательно: поиск не настроен, товар не нашёлся, модель не
+    ответила — остаётся обычная оценка, а еда всё равно записана.
+    """
+    if not estimate.brand:
+        return estimate
+
+    facts = lookup.safe_lookup(estimate.brand)
+    if facts is None:
+        return estimate
+
+    try:
+        refined = again(facts.as_prompt())
+    except LLMUnavailable:
+        logger.warning("Справка нашлась, но пересчитать по ней не вышло — оставляю первую оценку")
+        return estimate
+
+    if not refined.kcal:                       # пустой пересчёт хуже первой оценки
+        return estimate
+
+    refined.brand = estimate.brand
+    refined.sources = facts.sources
+    if facts.domains:
+        source_note = "Состав взят с " + ", ".join(facts.domains)
+        refined.note = f"{refined.note.rstrip('.')}. {source_note}" if refined.note else source_note
+        refined.note = refined.note[:255]
+    return refined
+
+
 def _describe(text: str, weight_g: float = None, cooking: str = None) -> str:
     """Слова человека плюс то, что он уточнил отдельными полями."""
     parts = [(text or "").strip()]
@@ -115,20 +154,28 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     described = _describe(text, weight_g, cooking)
 
     if image:
+        def by_photo(facts: str = None) -> MealEstimate:
+            return estimate_from_image(image, hint=described or None, context=context, facts=facts)
+
         try:
-            estimate = estimate_from_image(image, hint=described or None, context=context)
+            estimate = by_photo()
         except LLMUnavailable:
             return ToolResult(
                 summary="Не смог разглядеть блюдо — модель не отвечает. Опишите словами, я запишу.",
                 ok=False,
             )
+        # Товар видно на фото — считаем по его составу, а не по виду упаковки.
+        estimate = _refined_by_web(estimate, by_photo)
         image_path = service.save_image(image, ctx.subject.id)
         meal = service.create_draft(ctx.db, ctx.subject.id, estimate, source=SOURCE_PHOTO,
                                     raw_input=described or None, image_path=image_path)
     else:
         if not described:
             return ToolResult(summary="Нечего записывать: нет ни фото, ни описания.", ok=False)
-        estimate = safe_estimate_from_text(described, context=context)
+        estimate = _refined_by_web(
+            safe_estimate_from_text(described, context=context),
+            lambda facts: safe_estimate_from_text(described, context=context, facts=facts),
+        )
         meal = service.create_draft(ctx.db, ctx.subject.id, estimate,
                                     source=SOURCE_TEXT, raw_input=described)
 
@@ -153,7 +200,7 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     return ToolResult(
         summary=" ".join(details),
         data={"meal_id": meal.id, "kcal": meal.kcal, "confidence": estimate.confidence,
-              "question": estimate.question},
+              "question": estimate.question, "sources": estimate.sources},
         card=_meal_card(meal, subtitle=estimate.portion),
     )
 
@@ -204,9 +251,11 @@ def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int 
         draft = service.get_meal(ctx.db, ctx.subject.id, meal_id)
         if draft is None:
             return ToolResult(summary="Такой записи нет.", ok=False)
-        recounted = safe_estimate_from_text(
-            _describe(draft.raw_input or draft.title, weight_g, cooking),
-            context=_person_context(ctx),
+        described = _describe(draft.raw_input or draft.title, weight_g, cooking)
+        context = _person_context(ctx)
+        recounted = _refined_by_web(
+            safe_estimate_from_text(described, context=context),
+            lambda facts: safe_estimate_from_text(described, context=context, facts=facts),
         )
         if recounted.kcal:
             corrections.update(kcal=recounted.kcal, protein=recounted.protein,
@@ -224,6 +273,61 @@ def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int 
     if recounted is not None:
         summary += f" Пересчитал с уточнением: {recounted.portion or 'по новым данным'}."
     return ToolResult(summary=summary, data={"meal_id": meal.id}, card=_meal_card(meal))
+
+
+@tool(
+    name="lookup_product",
+    module=MODULE,
+    title="Найти товар в интернете",
+    description="""
+    Найти в интернете калорийность и БЖУ фабричного товара: батончика, газировки,
+    пиццы из доставки, готового блюда из сети. Нужен, когда человек спрашивает про
+    товар, но ничего не ел: «сколько калорий в банке колы?», «а в пепперони из Додо?».
+    Название пиши так, как товар ищут: марка, название, размер или вес упаковки —
+    «пицца Пепперони Додо 25 см», а не «пицца».
+    Если человек это съел, вызывай log_meal: он сам сходит за составом и запишет.
+    Ответ — цифры с этикетки; назови их вместе с тем, где они нашлись.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string",
+                     "description": "Марка и название товара, при известном — вес или размер"},
+        },
+        "required": ["name"],
+    },
+    read_only=True,
+)
+def lookup_product(ctx: ToolContext, name: str) -> ToolResult:
+    if not lookup.available():
+        return ToolResult(
+            summary="Поиск в интернете не настроен, поэтому точного состава я не найду. "
+                    "Могу прикинуть на глаз, если опишете товар.",
+            ok=False,
+        )
+
+    try:
+        facts = lookup.lookup(name)
+    except SearchUnavailable:
+        return ToolResult(summary=f"Не нашёл в интернете состав «{name}».", ok=False)
+    except LLMUnavailable:
+        return ToolResult(summary="Нашёл страницы, но разобрать их сейчас нечем — модель молчит.",
+                          ok=False)
+
+    if not facts.known:
+        return ToolResult(summary=f"Про «{name}» нашлось, но без цифр состава.", ok=False)
+
+    return ToolResult(
+        summary=facts.summary(),
+        data={
+            "title": facts.title,
+            "per_100g": vars(facts.per_100g) if facts.per_100g else None,
+            "per_portion": vars(facts.per_portion) if facts.per_portion else None,
+            "portion": facts.portion,
+            "sources": facts.sources,
+            "confidence": facts.confidence,
+        },
+    )
 
 
 @tool(
