@@ -9,6 +9,11 @@
 <section class="chat-screen" id="chat">
   <div class="chat-head">
     <div class="chat-head-row">
+      {# На телефоне у разговора своя шапка — общая шапка каркаса скрыта
+         (.screen-chat .header), а вместе с ней и кнопка выдвижного меню.
+         Здесь та же кнопка, чтобы с разговора можно было попасть на «Главную». #}
+      <button class="btn ghost small only-mobile" type="button" onclick="panel.openDrawer()"
+              aria-label="Меню">{{ ic.icon("grid", 16) }}</button>
       <div class="brand-mark" style="width:34px;height:34px;border-radius:12px">С</div>
       <div>
         <div class="chat-title">Ассистент</div>
@@ -20,34 +25,6 @@
         {{ ic.icon("user", 19) }}
       </a>
     </div>
-
-    {# Шапка дня. Плитки исчезают вместе с выключенным модулем, а «День» —
-       ещё и тогда, когда чужие цифры смотрящему не открыты. #}
-    {% if tiles.day or tiles.home %}
-      <div class="day-tiles">
-        {% if tiles.day %}
-          <a class="day-tile" href="/nutrition/stats">
-            <div class="cap">День</div>
-            <div class="val"><b>{{ tiles.day.consumed }}</b><span>/ {{ tiles.day.norm }}</span></div>
-            <div class="bar"><i style="width:{{ tiles.day.percent }}%"></i></div>
-          </a>
-        {% endif %}
-        {% if tiles.home %}
-          <a class="day-tile" href="/security/events">
-            <div class="cap">Дом</div>
-            <div class="val">
-              <b>{{ tiles.home.anomalies or tiles.home.events }}</b>
-              <span>{{ (tiles.home.anomalies or tiles.home.events)|plural("событие", "события", "событий") }}</span>
-            </div>
-            {% if tiles.home.anomalies %}
-              <div class="note">стоит взглянуть</div>
-            {% else %}
-              <div class="cap">всё спокойно</div>
-            {% endif %}
-          </a>
-        {% endif %}
-      </div>
-    {% endif %}
 
     {# Первый из трёх сигналов ожидания: полоса под шапкой. #}
     <div class="chat-progress"><i></i></div>
