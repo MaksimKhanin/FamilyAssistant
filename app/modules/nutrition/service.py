@@ -1,5 +1,5 @@
 """Nutrition domain logic: meals, activity, daily balance, statistics."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core import media
 from app.core.clock import day_bounds_utc, local_date, local_today, utc_now
+from app.core.templating import counted
 from app.modules.nutrition.models import (
     ACTIVITY_KCAL, GOAL_KEEP, SOURCE_PHOTO, SOURCE_TEXT, STATUS_CONFIRMED,
     STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, NutritionProfile,
@@ -15,6 +16,12 @@ from app.modules.nutrition.vision import MealEstimate
 
 PERIODS = {"day": 1, "week": 7, "month": 30}
 PERIOD_LABELS = {"day": "День", "week": "Неделя", "month": "Месяц"}
+
+#: Тот же период словами — для фразы «убрал ...». Окно скользящее и всегда
+#: включает сегодняшний день, поэтому «неделя» здесь честнее звучит как «последние
+#: семь дней»: человек должен понимать, что именно исчезнет, до того как нажмёт.
+PERIOD_WINDOWS = {"day": "за сегодня", "week": "за последние семь дней",
+                  "month": "за последние 30 дней"}
 
 
 # --- profile --------------------------------------------------------------
@@ -116,6 +123,9 @@ def delete_meal(db: Session, user_id: int, meal_id: int) -> bool:
     meal = get_meal(db, user_id, meal_id)
     if meal is None:
         return False
+    # Снимок тарелки живёт ровно столько, сколько запись о ней: без строки в базе
+    # его всё равно никто не откроет, а место он занимает.
+    media.discard(meal.image_path)
     db.delete(meal)
     db.commit()
     return True
@@ -274,6 +284,158 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
 
     profile = get_profile(db, user_id)
     return PeriodStats(period=period, days=[buckets[k] for k in sorted(buckets)], norm=profile.daily_kcal)
+
+
+# --- журнал: что именно записано за эти дни -------------------------------
+
+@dataclass
+class DayRecords:
+    """Один календарный день семьи со всем, что в нём записано.
+
+    Цифры дня складываются из строк, и человеку нужны обе стороны: увидеть, из
+    чего вышел столбик на графике, и убрать оттуда лишнее. Поэтому день здесь —
+    не итог (`DayTotals`), а сами записи.
+    """
+    day: date
+    meals: List[Meal] = field(default_factory=list)
+    activity: List[ActivityLog] = field(default_factory=list)
+
+    @property
+    def consumed(self) -> int:
+        return sum(m.kcal for m in self.meals)
+
+    @property
+    def burned(self) -> int:
+        return sum(a.kcal for a in self.activity)
+
+    @property
+    def count(self) -> int:
+        return len(self.meals) + len(self.activity)
+
+
+def records_for_period(db: Session, user_id: int, period: str = "week",
+                       today: date = None) -> List[DayRecords]:
+    """Записи периода, разложенные по дням; свежий день первым.
+
+    Пустые дни выпадают: на графике нулевой столбик — это осмысленный ноль, а в
+    списке пустой день — просто строка, которую пролистывают.
+    """
+    span = PERIODS.get(period, 1)
+    today = today or local_today()
+    start, _ = day_bounds_utc(today - timedelta(days=span - 1))
+    _, end = day_bounds_utc(today)
+
+    days: Dict[date, DayRecords] = {}
+
+    def bucket(moment: datetime) -> DayRecords:
+        day = local_date(moment)
+        if day not in days:
+            days[day] = DayRecords(day=day)
+        return days[day]
+
+    for meal in (db.query(Meal)
+                 .filter(Meal.user_id == user_id, Meal.eaten_at >= start, Meal.eaten_at < end)
+                 .order_by(Meal.eaten_at).all()):
+        bucket(meal.eaten_at).meals.append(meal)
+
+    for entry in (db.query(ActivityLog)
+                  .filter(ActivityLog.user_id == user_id,
+                          ActivityLog.happened_at >= start, ActivityLog.happened_at < end)
+                  .order_by(ActivityLog.happened_at).all()):
+        bucket(entry.happened_at).activity.append(entry)
+
+    return [days[day] for day in sorted(days, reverse=True)]
+
+
+# --- чистка: убрать записанное пачкой --------------------------------------
+
+WHAT_MEALS = "meals"
+WHAT_ACTIVITY = "activity"
+WHAT_ALL = "all"
+
+#: Что именно чистим. «Всё» — это и еда, и активность: человек, который просит
+#: убрать статистику за неделю, имеет в виду обе половины баланса.
+WHAT_LABELS = {
+    WHAT_MEALS: "записи о еде",
+    WHAT_ACTIVITY: "записи об активности",
+    WHAT_ALL: "записи о еде и активности",
+}
+
+
+@dataclass
+class Removed:
+    """Сколько записей убрано — раздельно, чтобы сказать об этом человеку точно."""
+    meals: int = 0
+    activity: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.meals + self.activity
+
+    def __bool__(self) -> bool:
+        return self.total > 0
+
+    @property
+    def words(self) -> str:
+        """«3 приёма пищи и 1 запись активности» — одинаково в панели и в чате.
+
+        Пересказывать удалённое двумя разными фразами незачем: человек читает их
+        в один день на одном экране, а числа тут — единственное, что успокаивает.
+        """
+        parts = []
+        if self.meals:
+            parts.append(counted(self.meals, "приём пищи", "приёма пищи", "приёмов пищи"))
+        if self.activity:
+            parts.append(counted(self.activity, "запись активности", "записи активности",
+                                 "записей активности"))
+        return " и ".join(parts) or "ничего"
+
+
+def _clear_window(db: Session, user_id: int, start: datetime, end: datetime,
+                  what: str = WHAT_ALL) -> Removed:
+    """Убрать записи в окне [start, end) — общая работа для дня и для периода."""
+    removed = Removed()
+
+    if what in (WHAT_MEALS, WHAT_ALL):
+        meals = (db.query(Meal)
+                 .filter(Meal.user_id == user_id, Meal.eaten_at >= start, Meal.eaten_at < end)
+                 .all())
+        for meal in meals:
+            media.discard(meal.image_path)
+            db.delete(meal)
+        removed.meals = len(meals)
+
+    if what in (WHAT_ACTIVITY, WHAT_ALL):
+        entries = (db.query(ActivityLog)
+                   .filter(ActivityLog.user_id == user_id,
+                           ActivityLog.happened_at >= start, ActivityLog.happened_at < end)
+                   .all())
+        for entry in entries:
+            db.delete(entry)
+        removed.activity = len(entries)
+
+    db.commit()
+    return removed
+
+
+def clear_day(db: Session, user_id: int, day: date, what: str = WHAT_ALL) -> Removed:
+    """Убрать всё записанное за один календарный день семьи."""
+    start, end = day_bounds_utc(day)
+    return _clear_window(db, user_id, start, end, what)
+
+
+def clear_period(db: Session, user_id: int, period: str = "day", what: str = WHAT_ALL,
+                 today: date = None) -> Removed:
+    """Убрать записи за тот же период, каким считается статистика.
+
+    Окно то же, что у `period_stats`: «день» — сегодняшний, «неделя» — последние
+    семь суток вместе с сегодняшними. Иначе человек убирал бы не то, что видит.
+    """
+    span = PERIODS.get(period, 1)
+    today = today or local_today()
+    start, _ = day_bounds_utc(today - timedelta(days=span - 1))
+    _, end = day_bounds_utc(today)
+    return _clear_window(db, user_id, start, end, what)
 
 
 def recent_meal_titles(db: Session, user_id: int, days: int = 14, limit: int = 25) -> List[str]:

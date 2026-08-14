@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
-from app.agent.llm import LLMClient, LLMUnavailable, client as default_client
+from app.agent.llm import ESTIMATE, LLMClient, LLMUnavailable, client as default_client
 from app.agent.prompts import BOARD_EVENTS_SYSTEM
 from app.core.clock import to_local, to_utc, utc_now
 from app.core.logging import get_logger
@@ -137,7 +137,9 @@ def extract_events(text: str, instruction: str = None, types: Sequence = (),
         + f"Время записи: {to_local(at):%Y-%m-%d %H:%M}.\n\n"
         f"Запись:\n{text.strip()}"
     )
-    raw = llm.json_completion(BOARD_EVENTS_SYSTEM, prompt)
+    # Вынуть из записи величину с единицей и временем — та же работа с числами,
+    # что и оценка тарелки, поэтому и ручка размышления у них общая.
+    raw = llm.json_completion(BOARD_EVENTS_SYSTEM, prompt, task=ESTIMATE)
     known = {t.name.lower(): t for t in types}
     parsed = [_coerce(item, known, at, text)
               for item in (raw.get("events") or [])[:MAX_EVENTS] if isinstance(item, dict)]

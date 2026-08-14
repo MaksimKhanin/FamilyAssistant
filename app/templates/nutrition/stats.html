@@ -1,5 +1,10 @@
 {% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
 {% block content %}
+
+{% if notice %}
+  <div class="card" style="margin-bottom:12px">{{ notice }}</div>
+{% endif %}
 
 <div class="segment" style="margin-bottom:16px">
   {% for value, label in period_labels.items() %}
@@ -54,6 +59,90 @@
       </div>
     {% endfor %}
   </div>
+</div>
+
+{# Строки, из которых сложился график. Столбик без них нечем поправить: человек
+   видит лишние 900 ккал и не знает, что именно записано дважды. #}
+<div class="card stack" style="margin-bottom:16px">
+  <div class="row">
+    <span class="card-title">Что записано</span>
+    {% if can_edit %}
+      {# На телефоне подсказка отжимает заголовок в две строки, а крестик и так
+         говорит сам за себя — там она лишняя. #}
+      <span class="tiny spacer no-mobile">крестик убирает запись, и цифры пересчитываются</span>
+    {% endif %}
+  </div>
+
+  {% for entry in records %}
+    <div class="stack" style="gap:8px">
+      <div class="row wrap" style="gap:10px">
+        <span style="font-weight:600">
+          {% if entry.day == stats.today.day %}Сегодня{% else %}{{ entry.day.strftime("%d.%m") }}{% endif %}
+        </span>
+        <span class="tiny spacer">
+          {{ entry.consumed }} получено{% if entry.burned %} · {{ entry.burned }} потрачено{% endif %}
+        </span>
+        {% if can_edit %}
+          <form method="post" action="/nutrition/stats/day/{{ entry.day.isoformat() }}/clear"
+                hx-confirm="Убрать всё за {{ entry.day.strftime('%d.%m') }} — {{ entry.count }} {{ entry.count|plural('запись', 'записи', 'записей') }}? Это не отменить.">
+            <input type="hidden" name="period" value="{{ period }}">
+            <button class="btn ghost small" type="submit">Убрать день</button>
+          </form>
+        {% endif %}
+      </div>
+
+      {% for meal in entry.meals %}
+        <div class="row" style="gap:10px">
+          <span class="tiny" style="width:42px;flex:none">{{ meal.eaten_at|ru_time }}</span>
+          <div style="flex:1;min-width:0">
+            <div>{{ meal.title }}</div>
+            <div class="tiny">{{ meal.status_label }}{% if meal.portion %} · {{ meal.portion }}{% endif %}</div>
+          </div>
+          <span class="muted">{{ meal.kcal }}</span>
+          {% if can_edit %}
+            <form method="post" action="/nutrition/meal/{{ meal.id }}/discard"
+                  hx-confirm="Удалить запись «{{ meal.title }}»?">
+              <input type="hidden" name="back" value="/nutrition/stats?period={{ period }}">
+              <button class="btn ghost small" type="submit" title="Удалить запись">
+                {{ ic.icon("close", 13) }}
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      {% for move in entry.activity %}
+        <div class="row" style="gap:10px">
+          <span class="tiny" style="width:42px;flex:none">{{ move.happened_at|ru_time }}</span>
+          <div style="flex:1;min-width:0">
+            <div>{{ move.label }}</div>
+            <div class="tiny">{{ move.value|int }} {{ move.unit }}</div>
+          </div>
+          <span class="muted" style="color:var(--ok)">−{{ move.kcal }}</span>
+          {% if can_edit %}
+            <form method="post" action="/nutrition/activity/{{ move.id }}/discard"
+                  hx-confirm="Удалить запись «{{ move.label }}»?">
+              <input type="hidden" name="back" value="/nutrition/stats?period={{ period }}">
+              <button class="btn ghost small" type="submit" title="Удалить запись">
+                {{ ic.icon("close", 13) }}
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">За этот период записей нет — убирать нечего.</p>
+  {% endfor %}
+
+  {% if records and can_edit %}
+    <form class="row wrap" style="gap:10px" method="post" action="/nutrition/stats/clear"
+          hx-confirm="Убрать все записи {{ period_windows[period] }}? Это {{ records|sum(attribute='count') }} {{ records|sum(attribute='count')|plural('запись', 'записи', 'записей') }} вместе со снимками тарелок, и вернуть их будет нельзя.">
+      <input type="hidden" name="period" value="{{ period }}">
+      <button class="btn ghost small" type="submit">Убрать все записи {{ period_windows[period] }}</button>
+      <span class="tiny">записи исчезнут насовсем, цифры пересчитаются</span>
+    </form>
+  {% endif %}
 </div>
 
 <div class="grid auto-300">

@@ -66,6 +66,16 @@ class LLMSettings:
     #: не размышление, а подробный промпт (см. MEAL_TEXT_SYSTEM). Если ваша модель
     #: думает дёшево — поставьте low, механизм на месте.
     reasoning_estimate: str = "off"
+    #: И отдельно — подбор под ограничения: идеи питания на несколько дней. Это
+    #: единственная задача ассистента, где ответ надо не вспомнить и не прикинуть,
+    #: а собрать: уложиться в норму, свести цель, не подать то, что человеку нельзя,
+    #: и не повторить вчерашнее. Здесь размышление и работает, поэтому по умолчанию
+    #: `medium`, а не `off`, — в отличие от чата и оценок.
+    #:
+    #: Плата — секунды и токены на одном экране, куда и так приходят не спеша.
+    #: Медленной модели дома поставьте `low` или `off`: идеи соберутся и без мыслей,
+    #: просто площе.
+    reasoning_plan: str = "medium"
     #: Произвольные поля запроса для нестандартных провайдеров, JSON из LLM_EXTRA_BODY.
     #: Перекрывают всё, что подставил пресет.
     extra_body: dict = field(default_factory=dict)
@@ -203,6 +213,7 @@ def load_settings() -> Settings:
             request_timeout=float(os.environ.get("LLM_TIMEOUT", "60")),
             reasoning=os.environ.get("LLM_REASONING", "off").strip().lower(),
             reasoning_estimate=os.environ.get("LLM_REASONING_ESTIMATE", "off").strip().lower(),
+            reasoning_plan=os.environ.get("LLM_REASONING_PLAN", "medium").strip().lower(),
             extra_body=_json_env("LLM_EXTRA_BODY"),
             stub=_flag("LLM_STUB", False),
         ),

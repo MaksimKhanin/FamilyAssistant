@@ -48,6 +48,24 @@ def read_and_discard(path: Optional[str]) -> Optional[bytes]:
     return data
 
 
+def discard(path: Optional[str]) -> bool:
+    """Убрать файл, который больше некому показать.
+
+    Нужна там, где строка с путём уходит из базы: удалили запись о еде — снимок
+    тарелки на диске становится мусором, который никто уже не найдёт. Молчит на
+    отсутствующем файле: удаление записи не должно падать из-за того, что кадр
+    исчез раньше неё.
+    """
+    if not path:
+        return False
+    try:
+        Path(path).unlink(missing_ok=True)
+        return True
+    except OSError as e:
+        logger.warning(f"Не удалось удалить {path}: {e}")
+        return False
+
+
 def is_inside_media_root(path: str) -> bool:
     """Guard for routes that serve files by path from the database."""
     try:
