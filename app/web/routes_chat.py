@@ -19,7 +19,6 @@ from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import ChatMessage, User
 from app.core.templating import render, ru_date
-from app.web import day as day_service
 from app.web.context import screen_context
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -74,13 +73,12 @@ def screen(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """Разговор как экран: шапка с профилем и цифрами дня, лента, ввод."""
+    """Разговор как экран: шапка с профилем, лента, ввод."""
     context = screen_context(request, db, current, viewed,
                              title="Разговор", subtitle="Скажите словами — остальное подберёт ассистент")
     context.update(
         messages=_history(db, current),
         suggestions=SUGGESTIONS,
-        tiles=day_service.day_header(db, current, viewed, context["enabled_modules"]),
     )
     return render(request, "chat.html", context)
 
