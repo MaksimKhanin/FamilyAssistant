@@ -32,6 +32,16 @@ AUTONOMY_LEVELS = {
     3: "Максимально самостоятельно",
 }
 
+#: Оформление панели. Два полноценных набора токенов в style.css; человек
+#: выбирает своё на экране «Профиль и агент», и выбор его личный — вечером за
+#: домом смотрит один, а днём за столом сидит другой.
+THEME_WARM = "warm"       # светлое, бумажное — для дня
+THEME_DARK = "dark"       # ночное — для вечера и проверок дома
+THEMES = {
+    THEME_DARK: "Ночное",
+    THEME_WARM: "Тёплое",
+}
+
 #: Connector permission levels (screen «Коннекторы»).
 CONN_OFF = "off"
 CONN_READ = "read"
@@ -70,6 +80,9 @@ class User(Base):
 
     avatar_slot = Column(Integer, nullable=False, default=0)    # индекс палитры аватара 0..4
     autonomy = Column(Integer, nullable=False, default=1)
+    #: Оформление панели — личное, а не семейное: акцент семьи (FamilySettings)
+    #: остаётся общим, а фон и контраст каждый выбирает под своё время суток.
+    theme = Column(String(8), nullable=False, default=THEME_WARM, server_default=THEME_WARM)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     family = relationship("Family", back_populates="members")

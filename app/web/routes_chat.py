@@ -1,8 +1,13 @@
-"""«Спросить ассистента» — the chat panel.
+"""Разговор с ассистентом — главный экран панели и выдвижная панель на компьютере.
 
 The same conversation as in Telegram: both channels write to `chat_messages` and
 both go through `Agent.respond`. The panel is HTMX — a message posts a form and
 gets rendered message bubbles back, including the tool traces and action cards.
+
+Экран (`/chat`) и панель (`/chat/panel`) — одна и та же переписка в двух рамах.
+На телефоне разговор занимает весь экран: именно ради него приложение и
+открывают, а оверлей поверх чего-то каждый раз требовал сначала попасть на это
+«что-то». На компьютере сбоку есть место, и панель остаётся.
 """
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
@@ -13,6 +18,8 @@ from app.core.auth import get_current_user, get_viewed_user
 from app.core.db import get_db
 from app.core.models import ChatMessage, User
 from app.core.templating import render
+from app.web import day as day_service
+from app.web.context import screen_context
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -36,6 +43,24 @@ def _history(db: Session, user: User):
     )
     return [{"role": m.role, "text": m.content, "at": m.created_at, **message_payload(m)}
             for m in reversed(rows)]
+
+
+@router.get("", response_class=HTMLResponse)
+def screen(
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Разговор как экран: шапка с профилем и цифрами дня, лента, ввод."""
+    context = screen_context(request, db, current, viewed,
+                             title="Разговор", subtitle="Скажите словами — остальное подберёт ассистент")
+    context.update(
+        messages=_history(db, current),
+        suggestions=SUGGESTIONS,
+        tiles=day_service.day_header(db, current, viewed, context["enabled_modules"]),
+    )
+    return render(request, "chat.html", context)
 
 
 @router.get("/panel", response_class=HTMLResponse)

@@ -1,23 +1,29 @@
 {% import "partials/icons.html" as ic %}
 <!doctype html>
-<html lang="ru">
+{# Оформление приезжает атрибутом, а не скриптом: тема должна быть известна
+   первому же кадру, иначе ночью на секунду вспыхивает белый фон. #}
+<html lang="ru" data-theme="{{ theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{{ title }} · Семейный ассистент</title>
 
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="{{ accent }}">
+  {# Цвет статусбара — по фону приложения, а не по акценту: иначе на Android
+     полоса сверху не совпадает с шапкой экрана. #}
+  <meta name="theme-color" content="{{ '#0F1214' if theme == 'dark' else '#F7F4EF' }}">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Ассистент">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="{{ 'black-translucent' if theme == 'dark' else 'default' }}">
   <link rel="apple-touch-icon" href="{{ static_url('icons/apple-touch-icon.png') }}">
   <link rel="icon" href="{{ static_url('icons/favicon-32.png') }}" sizes="32x32">
 
   <link rel="stylesheet" href="{{ static_url('style.css') }}">
   <script src="{{ static_url('htmx.min.js') }}" defer></script>
   <script src="{{ static_url('app.js') }}" defer></script>
-  <style>:root { --acc: {{ accent }}; }</style>
+  {# Акцент семьи перебивает акцент оформления — но только если семья его
+     выбирала. Иначе цвет остаётся тот, что задан темой. #}
+  {% if accent %}<style>:root { --acc: {{ accent }}; }</style>{% endif %}
 </head>
 {# hx-boost: переход подменяет тело документа вместо перезагрузки страницы.
    Без JavaScript атрибут не значит ничего, и панель работает как обычный сайт —
@@ -26,7 +32,9 @@
 {# Полоса прогресса и панель чата переживают переход: hx-preserve оставляет
    существующий узел на месте вместо того, чтобы рисовать его заново. #}
 <div id="nav-progress" hx-preserve="true"></div>
-<div class="layout">
+{# Класс каркаса ставит экран, а не body: тело документа подменяется целиком,
+   и класс на нём не менялся бы при переходе. #}
+<div class="layout {% block shell_class %}{% endblock %}">
   <div class="drawer-backdrop" id="drawer-backdrop" onclick="panel.closeDrawer()"></div>
 
   <aside class="sidebar" id="sidebar">
@@ -41,9 +49,9 @@
       </button>
     </div>
 
-    <button class="nav-item accent" type="button" onclick="panel.openChat()">
-      {{ ic.icon("chat") }} Спросить ассистента
-    </button>
+    <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
+      {{ ic.icon("chat") }} Разговор
+    </a>
 
     {% for group in nav_groups %}
       {% if group.title %}<div class="nav-group-title">{{ group.title }}</div>{% endif %}
@@ -72,9 +80,13 @@
       </div>
       <div class="header-right">
         <span class="badge neutral no-mobile">{{ "Глава семьи" if current_user.is_head else "Участник" }}</span>
-        <button class="btn no-mobile" type="button" onclick="panel.openChat()">
-          {{ ic.icon("chat", 15) }} Спросить ассистента
-        </button>
+        {# На самом экране разговора кнопка не нужна и работать бы не стала:
+           вторая копия переписки в выдвижной панели дала бы два #chat-body. #}
+        {% if active_path != '/chat' %}
+          <button class="btn no-mobile" type="button" onclick="panel.openChat()">
+            {{ ic.icon("chat", 15) }} Спросить ассистента
+          </button>
+        {% endif %}
         <div class="row" style="gap:6px">
           {% for member in avatars %}
             <form method="post" action="/switch-member/{{ member.id }}">
@@ -95,17 +107,28 @@
   </main>
 </div>
 
-<nav class="bottom-nav only-mobile">
-  {% for item in quick_nav %}
+{# Нижняя панель — три пункта: «Дом», «Разговор», «Знания». Разговор посередине
+   и всегда на месте: он есть даже когда оба модуля выключены, поэтому берётся
+   не из навигации, а стоит здесь сам по себе. #}
+{% macro nav_slot(item) -%}
+  {% if item %}
     <a class="{% if active_path == item.url %}active{% endif %}" href="{{ item.url }}">
-      {{ ic.icon(item.icon, 20) }}
+      {{ ic.icon(item.icon, 22) }}
       <span>{{ item.short_label }}</span>
       {% if item.badge_key and badges.get(item.badge_key) %}<i class="dot"></i>{% endif %}
     </a>
-  {% endfor %}
-  <button type="button" onclick="panel.openChat()">
-    {{ ic.icon("chat", 20) }}<span>Спросить</span>
-  </button>
+  {% else %}
+    {# Выключенный модуль не отдаёт пункта — но место за собой оставляет, иначе
+       «Разговор» съезжает из центра. #}
+    <span></span>
+  {% endif %}
+{%- endmacro %}
+<nav class="bottom-nav">
+  {{ nav_slot(quick_nav[0]) }}
+  <a class="talk {% if active_path == '/chat' %}active{% endif %}" href="/chat">
+    <i>{{ ic.icon("chat", 24) }}</i><span>Разговор</span>
+  </a>
+  {{ nav_slot(quick_nav[1]) }}
 </nav>
 
 <div class="chat-backdrop" id="chat-backdrop" onclick="panel.closeChat()"></div>

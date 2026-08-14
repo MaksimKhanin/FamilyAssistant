@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block shell_class %}screen-chat{% endblock %}
+{% block content %}
+
+{# Разговор как экран: шапка (не растёт), лента (тянется и прокручивается),
+   подвал с вводом (не растёт). Нижняя панель каркаса стоит под ним — экран
+   заканчивается ровно на её высоте (--nav-h). #}
+<section class="chat-screen" id="chat">
+  <div class="chat-head">
+    <div class="chat-head-row">
+      <div class="brand-mark" style="width:34px;height:34px;border-radius:12px">С</div>
+      <div>
+        <div class="chat-title">Ассистент</div>
+        <div class="chat-state"><i></i>на связи · {{ viewed_user.display_name }}</div>
+      </div>
+      {# Аватар справа ведёт туда же, куда на компьютере ведёт сайдбар: «кто я»
+         и «что ассистенту можно» — теперь один экран. #}
+      <a class="icon-btn spacer" href="/settings/profile" aria-label="Профиль и агент">
+        {{ ic.icon("user", 19) }}
+      </a>
+    </div>
+
+    {# Шапка дня. Плитки исчезают вместе с выключенным модулем, а «День» —
+       ещё и тогда, когда чужие цифры смотрящему не открыты. #}
+    {% if tiles.day or tiles.home %}
+      <div class="day-tiles">
+        {% if tiles.day %}
+          <a class="day-tile" href="/nutrition/stats">
+            <div class="cap">День</div>
+            <div class="val"><b>{{ tiles.day.consumed }}</b><span>/ {{ tiles.day.norm }}</span></div>
+            <div class="bar"><i style="width:{{ tiles.day.percent }}%"></i></div>
+          </a>
+        {% endif %}
+        {% if tiles.home %}
+          <a class="day-tile" href="/security/events">
+            <div class="cap">Дом</div>
+            <div class="val">
+              <b>{{ tiles.home.anomalies or tiles.home.events }}</b>
+              <span>{{ (tiles.home.anomalies or tiles.home.events)|plural("событие", "события", "событий") }}</span>
+            </div>
+            {% if tiles.home.anomalies %}
+              <div class="note">стоит взглянуть</div>
+            {% else %}
+              <div class="cap">всё спокойно</div>
+            {% endif %}
+          </a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {# Первый из трёх сигналов ожидания: полоса под шапкой. #}
+    <div class="chat-progress"><i></i></div>
+  </div>
+
+  <div class="chat-body" id="chat-body">
+    {% if not messages %}
+      <div class="chat-daysep">Сегодня</div>
+      <div class="bubble assistant">
+        Здравствуйте. Расскажите, что съели, спросите про дом или попросите что-нибудь запомнить.
+      </div>
+      {# Подсказки только в пустой ленте: в подвале они отнимали строку и мешали
+         печатать, а нужны ровно один раз — когда говорить ещё не о чем. #}
+      <div class="chat-hints">
+        {% for suggestion in suggestions %}
+          <button class="chip" type="button"
+                  onclick="panel.suggest(this.textContent)">{{ suggestion }}</button>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% include "partials/chat_messages.html" %}
+    {% include "partials/chat_thinking.html" %}
+  </div>
+
+  {% include "partials/chat_form.html" %}
+</section>
+
+{% endblock %}

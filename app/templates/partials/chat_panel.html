@@ -1,42 +1,34 @@
+{# Разговор в выдвижной панели — то же, что на экране /chat, но сбоку от другого
+   экрана. Остаётся только компьютеру: на телефоне разговор занял весь экран. #}
 {% import "partials/icons.html" as ic %}
 <div class="chat-head">
-  <div class="brand-mark" style="width:34px;height:34px">{{ ic.icon("chat", 16) }}</div>
-  <div>
-    <div style="font-weight:600">Ассистент</div>
-    <div class="tiny">разговор один — и здесь, и с телефона</div>
+  <div class="chat-head-row">
+    <div class="brand-mark" style="width:34px;height:34px;border-radius:12px">С</div>
+    <div>
+      <div class="chat-title">Ассистент</div>
+      <div class="chat-state"><i></i>разговор один — и здесь, и с телефона</div>
+    </div>
+    <button class="icon-btn spacer" type="button" onclick="panel.closeChat()"
+            aria-label="Закрыть">{{ ic.icon("close", 16) }}</button>
   </div>
-  <button class="btn ghost small spacer" type="button" onclick="panel.closeChat()">{{ ic.icon("close", 14) }}</button>
+  <div class="chat-progress"><i></i></div>
 </div>
 
 <div class="chat-body" id="chat-body">
   {% if not messages %}
+    <div class="chat-daysep">Сегодня</div>
     <div class="bubble assistant">
       Здравствуйте. Расскажите, что съели, спросите про дом или попросите что-нибудь запомнить.
     </div>
+    <div class="chat-hints">
+      {% for suggestion in suggestions %}
+        <button class="chip" type="button"
+                onclick="panel.suggest(this.textContent)">{{ suggestion }}</button>
+      {% endfor %}
+    </div>
   {% endif %}
   {% include "partials/chat_messages.html" %}
+  {% include "partials/chat_thinking.html" %}
 </div>
 
-<form class="chat-foot" id="chat-form" hx-post="/chat/send" hx-target="#chat-body" hx-swap="beforeend"
-      hx-encoding="multipart/form-data" hx-disabled-elt="#chat-input, #chat-send">
-  <div class="row wrap" style="gap:6px">
-    {% for suggestion in suggestions %}
-      <button class="chip" type="button"
-              onclick="document.getElementById('chat-input').value='{{ suggestion }}'">{{ suggestion }}</button>
-    {% endfor %}
-  </div>
-  <div class="thinking"><span class="pulse-dot"></span>думает и подбирает инструмент…</div>
-  <div class="row" style="gap:8px">
-    <textarea class="field" id="chat-input" name="message" rows="1"
-              placeholder="Напишите, как в мессенджере" style="min-height:42px"
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.form.requestSubmit();}"></textarea>
-    <button class="btn" type="submit" id="chat-send"
-            style="width:42px;height:42px;border-radius:50%;padding:0">
-      {{ ic.icon("send", 18) }}
-    </button>
-  </div>
-  <p class="tiny">
-    Агент сам выбирает инструмент. Что он делает без спроса — настраивается на экране
-    <a href="/settings/agent" style="color:var(--acc)">«Агент и инструменты»</a>.
-  </p>
-</form>
+{% include "partials/chat_form.html" %}

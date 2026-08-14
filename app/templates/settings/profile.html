@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 
+{# Один экран вместо двух: «кто я» и «что ассистенту можно» — это одно и то же
+   про себя, а разделение заставляло ходить туда-обратно. Карточки идут столбцом
+   и на телефоне читаются сверху вниз одним движением. #}
+
 {% if error %}
   <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
     <p class="muted" style="color:var(--alarm-text)">{{ error }}</p>
@@ -12,9 +16,9 @@
 {% endif %}
 
 <div class="two-col">
-  <form class="card stack" method="post" action="/settings/profile">
-    <div class="row" style="gap:12px">
-      <span class="avatar" style="width:52px;height:52px;font-size:18px;
+  <div class="stack" style="gap:14px">
+    <div class="card tight row" style="gap:12px">
+      <span class="avatar" style="width:48px;height:48px;font-size:17px;
             background:{{ viewed_avatar.bg }};color:{{ viewed_avatar.fg }}">{{ viewed_avatar.initial }}</span>
       <div>
         <div class="card-title">{{ viewed_user.display_name }}</div>
@@ -25,42 +29,103 @@
       </div>
     </div>
 
-    <div>
-      <div class="label">Цель</div>
-      <div class="row wrap" style="gap:6px;margin-top:6px">
-        {% for value, label in goal_labels.items() %}
-          <label class="chip {% if profile.goal == value %}active{% endif %}">
-            <input type="radio" name="goal" value="{{ value }}" style="margin-right:4px"
-                   {% if profile.goal == value %}checked{% endif %}
-                   {% if not can_edit %}disabled{% endif %}>{{ label }}
-          </label>
+    {# Оформление — своё у каждого, поэтому меняется без оглядки на «от лица». #}
+    <div class="card tight stack">
+      <div class="card-title">Оформление</div>
+      <div class="segment wide">
+        {% for value, label in themes.items() %}
+          <form method="post" action="/settings/profile/theme">
+            <input type="hidden" name="theme" value="{{ value }}">
+            <button class="{% if current_theme == value %}on{% endif %}" type="submit">{{ label }}</button>
+          </form>
         {% endfor %}
       </div>
+      <p class="tiny">Тёмное — для вечера и ночных проверок дома. Тёплое — светлое,
+        бумажное, для дня.</p>
     </div>
 
-    <div>
+    {# Четыре полоски вместо ползунка: ползунок на телефоне промахивался мимо
+       деления, а уровней всего четыре — их видно все сразу. #}
+    <div class="card tight stack">
       <div class="row">
-        <span class="label">Суточная норма</span>
-        <span class="spacer stepper-value" id="kcal-label">{{ profile.daily_kcal }}</span>
+        <span class="card-title">Самостоятельность</span>
+        <span class="spacer" style="color:var(--acc);font-weight:600">{{ autonomy_levels[autonomy] }}</span>
       </div>
-      <input type="range" name="daily_kcal" min="1200" max="3400" step="50" value="{{ profile.daily_kcal }}"
-             oninput="document.getElementById('kcal-label').textContent = this.value"
-             {% if not can_edit %}disabled{% endif %}>
-      <p class="tiny">Ориентир, а не диагноз: ассистент использует его только чтобы показать баланс дня.</p>
+      <div class="steps">
+        {% for level in autonomy_levels %}
+          <form method="post" action="/settings/agent/autonomy">
+            <input type="hidden" name="autonomy" value="{{ level }}">
+            <button class="{% if level <= autonomy %}on{% endif %}" type="submit"
+                    aria-label="{{ autonomy_levels[level] }}"
+                    {% if not can_edit %}disabled{% endif %}></button>
+          </form>
+        {% endfor %}
+      </div>
+      <p class="tiny">0 — всё спрашивает · 3 — максимально самостоятельно.
+        У каждого инструмента ниже это можно переопределить отдельно.</p>
     </div>
 
-    {% if can_edit %}<button class="btn" type="submit">Сохранить</button>{% endif %}
-  </form>
+    <div class="card tight stack">
+      <div class="card-title">Инструменты</div>
+      {% for row in tools %}
+        {% if not loop.first %}<div class="divider" style="margin:2px 0"></div>{% endif %}
+        <div class="tool-row">
+          <div style="font-weight:500">
+            {{ row.spec.title }}
+            {% if not row.module_enabled %}<span class="badge neutral">модуль выключен</span>{% endif %}
+          </div>
+          <div class="mono">{{ row.spec.name }}</div>
+          <div class="segment wide small" style="margin-top:6px">
+            {% for value, label in [("auto", "Сам"), ("ask", "Спросит"), ("off", "Выкл")] %}
+              <form method="post" action="/settings/agent/tools/{{ row.spec.name }}">
+                <input type="hidden" name="mode" value="{{ value }}">
+                <button class="{% if row.mode == value %}on{% endif %}" type="submit"
+                        {% if not can_edit %}disabled{% endif %}>{{ label }}</button>
+              </form>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
 
-  <div class="stack">
-    <div class="card stack" id="push-card">
+    <form class="card tight stack" method="post" action="/settings/profile">
+      <div class="card-title">Питание</div>
+      <div>
+        <div class="label">Цель</div>
+        <div class="row wrap" style="gap:6px;margin-top:6px">
+          {% for value, label in goal_labels.items() %}
+            <label class="chip {% if profile.goal == value %}active{% endif %}">
+              <input type="radio" name="goal" value="{{ value }}" style="margin-right:4px"
+                     {% if profile.goal == value %}checked{% endif %}
+                     {% if not can_edit %}disabled{% endif %}>{{ label }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div>
+        <div class="row">
+          <span class="label">Суточная норма</span>
+          <span class="spacer stepper-value" id="kcal-label">{{ profile.daily_kcal }}</span>
+        </div>
+        <input type="range" name="daily_kcal" min="1200" max="3400" step="50" value="{{ profile.daily_kcal }}"
+               oninput="document.getElementById('kcal-label').textContent = this.value"
+               {% if not can_edit %}disabled{% endif %}>
+        <p class="tiny">Ориентир, а не диагноз: ассистент использует его только чтобы показать баланс дня.</p>
+      </div>
+
+      {% if can_edit %}<button class="btn" type="submit">Сохранить</button>{% endif %}
+    </form>
+  </div>
+
+  <div class="stack" style="gap:14px">
+    <div class="card tight stack" id="push-card">
       <div class="row">
         <span class="card-title">Уведомления на телефон</span>
         <span class="badge neutral spacer" id="push-state">проверяю…</span>
       </div>
       <p class="muted" id="push-hint">
-        Ассистент напишет, только если дома что-то действительно требует взгляда,
-        или когда придёт время напоминания.
+        Только когда дома правда стоит взглянуть — или когда придёт время напоминания.
       </p>
       <div class="row wrap" style="gap:8px">
         <button class="btn" type="button" id="push-toggle" hidden></button>
@@ -74,8 +139,44 @@
       </p>
     </div>
 
+    <div class="card tight stack">
+      <div class="card-title">Расписания</div>
+      {% for job in jobs %}
+        <div class="row">
+          <div>
+            <div style="font-weight:600">{{ job.label }}</div>
+            <div class="tiny">в {{ job.at_time }}</div>
+          </div>
+          <form class="spacer" method="post" action="/settings/agent/jobs/{{ job.kind }}">
+            <input type="hidden" name="enabled" value="{{ 'off' if job.enabled else 'on' }}">
+            <button class="toggle {% if job.enabled %}on{% endif %}" type="submit"
+                    {% if not can_edit %}disabled{% endif %}><span></span></button>
+          </form>
+        </div>
+      {% endfor %}
+    </div>
+
+    {# Лог агента — на подложке, а не карточкой: это не настройка, а отчёт. #}
+    <div class="card tight stack" style="background:var(--surface-3);border-color:transparent">
+      <div class="card-title">Что агент делал сегодня</div>
+      {% for action in recent_actions %}
+        <div>
+          <div class="tiny">{{ action.created_at|ru_time }}</div>
+          <div class="mono" style="color:var(--acc);font-size:12.5px">{{ action.tool }}</div>
+          <div class="muted">
+            {{ action.summary|truncate(90) }} ·
+            {% if action.mode == "confirmed" %}спросил → разрешено
+            {%- elif action.mode in ("schedule", "event") %}по расписанию
+            {%- else %}сам{% endif %}
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Сегодня агент ничего не делал сам.</p>
+      {% endfor %}
+    </div>
+
     {% if current_user.id == viewed_user.id %}
-      <form class="card stack" method="post" action="/settings/profile/password">
+      <form class="card tight stack" method="post" action="/settings/profile/password">
         <div class="card-title">Сменить пароль</div>
         <p class="muted">Свой пароль вы меняете сами — глава семьи его не видит.</p>
         <input class="field" type="password" name="current_password" placeholder="Текущий пароль"
@@ -88,7 +189,7 @@
       </form>
     {% endif %}
 
-    <div class="card stack">
+    <div class="card tight stack">
       <div class="card-title">Модули</div>
       {% for module in module_list %}
         <div class="row">
@@ -107,17 +208,6 @@
           </form>
         </div>
       {% endfor %}
-    </div>
-
-    <div class="card stack" style="border-style:dashed">
-      <div class="card-title">Место под новые модули</div>
-      <div class="row">
-        <div style="flex:1">
-          <div style="font-weight:600;color:var(--text-3)">Финансы</div>
-          <div class="tiny">Пример: новый модуль выглядит ровно так же — название, описание и тумблер</div>
-        </div>
-        <button class="toggle" disabled><span></span></button>
-      </div>
     </div>
   </div>
 </div>

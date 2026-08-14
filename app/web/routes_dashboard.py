@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.core import family as family_service
 from app.core.access import access_matrix
-from app.core.auth import can_see_figures, get_current_user, get_viewed_user
+from app.core.auth import get_current_user, get_viewed_user
 from app.core.clock import local_now
 from app.core.db import get_db
 from app.core.models import User
 from app.core.templating import render
+from app.web import day as day_service
 from app.web.context import avatar, screen_context
 
 router = APIRouter(tags=["dashboard"])
@@ -35,30 +36,20 @@ def dashboard(
     context = screen_context(request, db, current, viewed,
                              title="Главная", subtitle="Спокойный обзор дня — питание и дом")
 
-    nutrition_on = "nutrition" in context["enabled_modules"]
-    security_on = "security" in context["enabled_modules"]
+    enabled = context["enabled_modules"]
+    nutrition_on = "nutrition" in enabled
+    security_on = "security" in enabled
 
-    day = None
-    profile = None
+    # Те же цифры и по тем же правилам приватности показывает шапка разговора —
+    # поэтому считает их общий хелпер, а не два разных экрана (app/web/day.py).
+    day, profile = day_service.nutrition_day(db, current, viewed, enabled)
+    home = day_service.home_summary(db, viewed, enabled)
+
     steps_today = 0
-    if nutrition_on and can_see_figures(current, viewed):
+    if day is not None:
         from app.modules.nutrition import service as nutrition_service
-        stats = nutrition_service.period_stats(db, viewed.id, "day")
-        day = stats.today
-        profile = nutrition_service.get_profile(db, viewed.id)
         steps_today = sum(int(a.value) for a in nutrition_service.activity_for_day(db, viewed.id)
                           if a.kind == "steps")
-
-    home = None
-    if security_on:
-        from app.modules.security import service as security_service
-        cameras = security_service.list_cameras(db, viewed.family_id)
-        home = {
-            "cameras_total": len(cameras),
-            "cameras_notifying": sum(1 for c in cameras if c.notify_enabled),
-            "anomalies": security_service.anomaly_count(db, viewed.family_id, days=1),
-            "events": len(security_service.list_events(db, viewed.family_id, days=1)),
-        }
 
     context.update(
         greeting=_greeting(local_now().hour),

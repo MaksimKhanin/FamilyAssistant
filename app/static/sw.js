@@ -5,16 +5,22 @@
  * стили, скрипт и иконки, чтобы приложение открывалось мгновенно.
  */
 
-const CACHE = 'family-assistant-v2';
+const CACHE = 'family-assistant-v3';
+// Кириллица каждого шрифта — первой: панель по-русски, и латиница нужна ей
+// только под имена инструментов.
 const SHELL = [
   '/static/style.css',
   '/static/app.js',
   '/static/htmx.min.js',
   '/static/icons/icon-192.png',
-  '/static/fonts/manrope-cyrillic.woff2',
-  '/static/fonts/manrope-latin.woff2',
-  '/static/fonts/playfair-display-cyrillic.woff2',
-  '/static/fonts/playfair-display-latin.woff2',
+  '/static/fonts/onest-cyrillic.woff2',
+  '/static/fonts/onest-latin.woff2',
+  '/static/fonts/literata-cyrillic.woff2',
+  '/static/fonts/literata-latin.woff2',
+  '/static/fonts/ibm-plex-mono-cyrillic.woff2',
+  '/static/fonts/golos-text-cyrillic.woff2',
+  '/static/fonts/golos-text-latin.woff2',
+  '/static/fonts/jetbrains-mono-cyrillic.woff2',
 ];
 
 self.addEventListener('install', event => {

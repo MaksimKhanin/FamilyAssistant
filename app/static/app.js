@@ -148,6 +148,10 @@
   }
 
   function openChat() {
+    // На телефоне разговор — экран, а не панель, и на нём же можно уже стоять:
+    // вторая копия переписки в панели дала бы два узла с id="chat-body", и
+    // htmx отправлял бы ответы модели неизвестно в который из них.
+    if (document.getElementById('chat')) return;
     loadChat();
     setChatOpen(true);
   }
@@ -182,12 +186,29 @@
   /* ================================ чат ================================= */
 
   // Чат ведёт себя как мессенджер: лента всегда прокручена вниз.
+  // Именно scrollTop, а не scrollIntoView: последний прокручивает заодно и
+  // документ, и на телефоне экран уезжал бы вместе с лентой.
   function scrollChat() {
     const body = document.getElementById('chat-body');
     if (body) body.scrollTop = body.scrollHeight;
   }
 
   document.body.addEventListener('htmx:afterSwap', scrollChat);
+
+  /** Ожидание ответа модели: три сигнала разом, все от одного класса.
+   *
+   *  Раньше «думает…» жило внутри подвала и показывалось по .htmx-request —
+   *  на телефоне это оказывалось под клавиатурой или ниже сгиба, и ожидание
+   *  читалось как зависшее приложение. Теперь индикатор переезжает в конец
+   *  ленты, сразу под только что отправленное сообщение. */
+  function setThinking(on) {
+    const root = document.getElementById('chat') || document.getElementById('chat-panel');
+    if (root) root.classList.toggle('is-thinking', on);
+    const indicator = document.getElementById('chat-thinking');
+    const body = document.getElementById('chat-body');
+    // В конец — после пузыря, который только что дорисовал браузер.
+    if (on && indicator && body) body.appendChild(indicator);
+  }
 
   // Сообщение показывается сразу, не дожидаясь ответа: ответ идёт секунды, и
   // всё это время человек видел свой текст в поле ввода и не понимал, ушло ли
@@ -206,6 +227,7 @@
       bubble.textContent = text;
       document.getElementById('chat-body').appendChild(bubble);
     }
+    setThinking(true);
     scrollChat();
   });
 
@@ -221,9 +243,22 @@
       input.value = sending;
     }
     sending = '';
+    setThinking(false);
+    // Выбранный снимок уже ушёл; не сбросить поле — и он уехал бы второй раз
+    // вместе со следующим сообщением.
+    const photo = document.getElementById('chat-photo');
+    if (photo) photo.value = '';
     scrollChat();
     input.focus();
   });
+
+  /** Подсказка из пустой ленты: подставляем в поле, отправляет человек. */
+  function suggest(text) {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    input.value = text.trim();
+    input.focus();
+  }
 
   /* ============================== переходы ============================== */
 
@@ -311,6 +346,10 @@
     if (document.getElementById('push-state')) paintPushCard();
 
     collapseSectionStrip();
+
+    // Разговор открывается на последнем сообщении, а не на начале истории:
+    // без этого и лента, и индикатор ожидания оказываются ниже сгиба.
+    scrollChat();
 
     // Лента доски ведёт себя как мессенджер: открывается на свежем.
     const feed = document.querySelector('[data-feed]');
@@ -515,12 +554,6 @@
 
   /* ===================== мелочи отдельных экранов ======================= */
 
-  /** Ползунок самостоятельности: подпись рядом с ним. */
-  function autonomyLabel(input) {
-    const levels = JSON.parse(input.dataset.levels);
-    document.getElementById('autonomy-label').textContent = levels[input.value];
-  }
-
   /** Приглашение на экране онбординга: ссылка приходит аргументом. */
   function copyInvite(url, button) {
     const done = () => { button.textContent = 'Ссылка скопирована';
@@ -561,8 +594,8 @@
   }
 
   window.panel = {
-    openChat, closeChat, openDrawer, closeDrawer,
-    autonomyLabel, copyInvite, copyInviteField, step, showMode, recalc,
+    openChat, closeChat, openDrawer, closeDrawer, suggest,
+    copyInvite, copyInviteField, step, showMode, recalc,
   };
 
   // Первая загрузка и каждый последующий переход проходят через это.
