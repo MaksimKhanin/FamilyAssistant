@@ -123,7 +123,10 @@
     <span></span>
   {% endif %}
 {%- endmacro %}
-<nav class="bottom-nav">
+{# on-chat: на самом экране разговора кнопка никуда не ведёт, и кричать ей не о
+   чем — она гаснет до обычной плитки, оставляя акцент только подписи «вы
+   здесь». Заодно из-под поля ввода уходит второй акцентный квадрат. #}
+<nav class="bottom-nav {% if active_path == '/chat' %}on-chat{% endif %}">
   {{ nav_slot(quick_nav[0]) }}
   <a class="talk {% if active_path == '/chat' %}active{% endif %}" href="/chat">
     <i>{{ ic.icon("chat", 24) }}</i><span>Разговор</span>

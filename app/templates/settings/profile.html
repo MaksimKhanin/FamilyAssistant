@@ -40,7 +40,12 @@
       <div class="card-title">Оформление</div>
       <div class="segment wide">
         {% for value, label in themes.items() %}
-          <form method="post" action="/settings/profile/theme">
+          {# Единственная форма в панели, которая ходит без hx-boost. Оформление
+             живёт атрибутом на <html> и цветом статусбара в <head>, а переход
+             подменяет только тело документа (ADR-0001) — цвета остались бы
+             прежними, и человек видел бы, что кнопка «не работает». Смена
+             оформления и должна перерисовывать документ целиком. #}
+          <form method="post" action="/settings/profile/theme" hx-boost="false">
             <input type="hidden" name="theme" value="{{ value }}">
             <button class="{% if current_theme == value %}on{% endif %}" type="submit">{{ label }}</button>
           </form>

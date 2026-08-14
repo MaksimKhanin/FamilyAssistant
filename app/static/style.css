@@ -398,6 +398,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
     display: grid; place-items: center;
   }
   .bottom-nav .talk.active i { background: var(--acc); color: var(--on-acc); }
+  /* На самом экране разговора плитка гаснет: она ведёт туда, где человек уже
+     стоит, и висела акцентным квадратом прямо под полем ввода — рядом с такой
+     же акцентной кнопкой отправки. Подпись остаётся акцентной: «вы здесь». */
+  .bottom-nav.on-chat .talk i { background: var(--surface-2); color: var(--text-2); }
   .bottom-nav .talk svg { width: 24px; height: 24px; }
 
   .chat-panel { width: 100%; border-radius: 0; }
@@ -1064,13 +1068,28 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 
 /* Самостоятельность полосками вместо ползунка: ползунок на телефоне
    промахивался, а уровней всего четыре — их видно все сразу. */
-.steps { display: flex; gap: 6px; }
+/* Полоски видны тонкими, но нажимаются во всю высоту строки: сама полоска
+   рисуется псевдоэлементом, а кнопка вокруг неё держит 44px площади нажатия.
+   Полоской в 6px кнопка быть не может — в неё нельзя попасть пальцем, и
+   выглядит она полосой прогресса, а не выбором. Отрицательные поля возвращают
+   строку к прежней высоте: нажимаемое поле заходит на пустоту вокруг, где
+   больше ничего нет. */
+.steps { display: flex; gap: 6px; margin: -13px 0; }
 .steps form { flex: 1; display: flex; }
 .steps button {
-  flex: 1; height: 6px; border-radius: 99px; border: none; padding: 0;
-  background: var(--surface-2); cursor: pointer;
+  flex: 1; border: none; padding: 19px 0; background: none; cursor: pointer;
+  display: flex; align-items: center;
 }
-.steps button.on { background: var(--acc); }
+.steps button::before {
+  content: ""; display: block; flex: 1; height: 6px; border-radius: 99px;
+  background: var(--surface-2); transition: background .15s;
+}
+.steps button.on::before { background: var(--acc); }
+/* Наведение обводкой, а не заливкой: подложка полоски полупрозрачная, и любой
+   color-mix с акцентом даёт по ней грязный бурый. */
+.steps button:not([disabled]):hover::before {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--acc) 35%, transparent);
+}
 .steps button[disabled] { cursor: default; }
 
 .tool-row { display: flex; flex-direction: column; gap: 4px; }
