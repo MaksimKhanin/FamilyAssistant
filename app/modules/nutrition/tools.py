@@ -221,6 +221,9 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     description="""
     Подтвердить черновик приёма пищи или поправить его. Передавай только те поля,
     которые человек назвал; остальные останутся как есть.
+    meal_id не обязателен: без него правится самая свежая запись — а это почти
+    всегда та, о которой идёт речь. Номер нужен, только когда он звучал в разговоре
+    и человек возвращается к записи постарше.
     Если человек уточнил вес или способ приготовления (а не сами цифры) — передай
     weight_g и cooking, и оценка пересчитается сама. Не выдумывай калории вместо него.
     Если человек назвал цифры — передай их, запись пометится как скорректированная вручную.
@@ -228,7 +231,8 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     parameters={
         "type": "object",
         "properties": {
-            "meal_id": {"type": "integer"},
+            "meal_id": {"type": "integer",
+                        "description": "Номер записи; без него — самая свежая"},
             "kcal": {"type": "integer"},
             "protein": {"type": "integer"},
             "fat": {"type": "integer"},
@@ -241,25 +245,32 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
                         "description": "Способ приготовления, если человек уточнил его — "
                                        "цифры пересчитаются"},
         },
-        "required": ["meal_id"],
     },
     # Этот инструмент сам по себе и есть подтверждение: человек только что сказал
     # «да» или назвал верную цифру. Спрашивать разрешения на его «да» — абсурд.
     auto_from=0,
 )
-def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int = None,
+def confirm_meal(ctx: ToolContext, meal_id: int = None, kcal: int = None, protein: int = None,
                  fat: int = None, carbs: int = None, title: str = None,
                  weight_g: float = None, cooking: str = None) -> ToolResult:
     corrections = {"kcal": kcal, "protein": protein, "fat": fat, "carbs": carbs, "title": title}
     recounted = None
 
+    # Номер записи модель знать не обязана: в историю разговора едет только текст
+    # реплик, а `meal_id` живёт в ответе инструмента и до следующего хода не
+    # доживает. Требовать его — значит требовать невозможного, и на поправку
+    # «пицца была 20 см» ассистенту остаётся выдумывать цифры. Поэтому без номера
+    # правится самая свежая запись — как в delete_meal.
+    draft = (service.get_meal(ctx.db, ctx.subject.id, meal_id) if meal_id
+             else service.last_meal(ctx.db, ctx.subject.id))
+    if draft is None:
+        return ToolResult(summary="Такой записи нет.", ok=False)
+    meal_id = draft.id
+
     # Человек ответил на вопрос про вес или готовку, а цифр не назвал — значит их
     # надо пересчитать. Иначе ответ «было 400 грамм» ничего не меняет, и вопрос,
     # который ассистент только что задал, оказывается пустой вежливостью.
     if (weight_g or cooking) and kcal is None:
-        draft = service.get_meal(ctx.db, ctx.subject.id, meal_id)
-        if draft is None:
-            return ToolResult(summary="Такой записи нет.", ok=False)
         described = _describe(draft.raw_input or draft.title, weight_g, cooking)
         context = _person_context(ctx)
         recounted = _refined_by_web(
@@ -295,6 +306,8 @@ def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int 
     Название пиши так, как товар ищут: марка, название, размер или вес упаковки —
     «пицца Пепперони Додо 25 см», а не «пицца».
     Если человек это съел, вызывай log_meal: он сам сходит за составом и запишет.
+    Если он поправляет уже записанное («пицца была 20 см») — это confirm_meal:
+    там состав тоже ищется, но цифры доедут до записи, а не останутся в ответе.
     Ответ — цифры с этикетки; назови их вместе с тем, где они нашлись.
     """,
     parameters={
