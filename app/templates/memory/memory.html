@@ -43,22 +43,32 @@
 {% endif %}
 
 {% if active_section %}
-  <div class="row wrap" style="gap:8px;margin-bottom:16px">
+  {# Действия раздела — одним рядом равных кнопок; на телефоне то, что они
+     открывают, приезжает снизу отдельным окном, а не всплывашкой у края. #}
+  <div class="board-actions" style="margin-bottom:16px">
     <form method="post" action="/memory/sections/{{ active_section.id }}/pin">
       <button class="btn ghost small" type="submit">
         {{ "Открепить" if active_section.pinned else "Закрепить" }}
       </button>
     </form>
-    <details class="strip-pop">
+    <details class="sheet">
       <summary class="btn ghost small">Переименовать</summary>
-      <form class="pop stack" method="post" action="/memory/sections/{{ active_section.id }}/rename">
-        <input class="field" name="name" value="{{ active_section.name }}" required maxlength="128">
-        <button class="btn small" type="submit">Сохранить</button>
-      </form>
+      <div class="sheet-panel">
+        <div class="sheet-title">Переименовать раздел
+          <button class="sheet-close" type="button" data-sheet-close aria-label="Закрыть">✕</button>
+        </div>
+        <form class="stack" method="post" action="/memory/sections/{{ active_section.id }}/rename">
+          <input class="field" name="name" value="{{ active_section.name }}" required maxlength="128">
+          <button class="btn small" type="submit">Сохранить</button>
+        </form>
+      </div>
     </details>
-    <details class="strip-pop">
+    <details class="sheet">
       <summary class="btn ghost small" style="color:var(--alarm-text)">Удалить</summary>
-      <div class="pop stack">
+      <div class="sheet-panel">
+        <div class="sheet-title">Удалить раздел
+          <button class="sheet-close" type="button" data-sheet-close aria-label="Закрыть">✕</button>
+        </div>
         <p class="tiny" style="margin:0">Раздел «{{ active_section.name }}» и его доски будут удалены.</p>
         <form method="post" action="/memory/sections/{{ active_section.id }}/delete">
           <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить раздел</button>
@@ -95,58 +105,71 @@
 
     <div class="card stack">
       {% if active_board %}
-        <div class="row wrap" style="gap:8px">
+        {# Имя доски строкой, под ним ряд равных кнопок: на телефоне три подписи
+           в одну строку с именем не помещались и ломали шапку. Каждая кнопка
+           открывает не всплывашку у края экрана, а окно — снизу на телефоне
+           и рядом с кнопкой на компьютере. #}
+        <div class="board-head">
           <div class="card-title" style="margin:0">{{ active_board.name }}</div>
-          <span class="spacer"></span>
-          <details class="strip-pop">
-            <summary class="btn ghost small">Настроить</summary>
-            <div class="pop stack" style="right:0;min-width:280px">
-              <form class="stack" method="post" action="/memory/boards/{{ active_board.id }}/update">
-                <input class="field" name="name" value="{{ active_board.name }}" required maxlength="128">
-                <textarea class="field" name="instruction" rows="3"
-                          placeholder="Инструкция ассистенту">{{ active_board.instruction or "" }}</textarea>
-                {% if sections|length > 1 %}
-                  <select class="field" name="section_id">
-                    {% for section in sections %}
-                      <option value="{{ section.id }}"
-                              {% if section.id == active_section.id %}selected{% endif %}>{{ section.name }}</option>
-                    {% endfor %}
-                  </select>
-                {% endif %}
-                <button class="btn small" type="submit">Сохранить</button>
-              </form>
-              <form method="post" action="/memory/boards/{{ active_board.id }}/delete">
-                <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить доску</button>
-              </form>
-            </div>
-          </details>
-          {# Словарь величин доски: пока он пуст, записи не разбираются вовсе.
-             Заводит его тот, кто ведёт лог, — иначе на плашку уточнения под
-             своей записью ему нечем было бы ответить (тикет #30). #}
-          {% if board_right != "view" %}
-            <details class="strip-pop">
-              <summary class="btn ghost small">Величины</summary>
-              <div class="pop stack" style="right:0;min-width:280px">
-                {% for event_type in event_types %}
-                  <p class="tiny" style="margin:0">{{ event_type.name }}{% if event_type.unit %} — {{ event_type.unit }}{% endif %}</p>
-                {% else %}
-                  <p class="tiny" style="margin:0">Пока пусто: без величин ассистент
-                    не разбирает записи этой доски на цифры.</p>
-                {% endfor %}
-                <form class="row" style="gap:8px" method="post"
-                      action="/memory/boards/{{ active_board.id }}/types/add">
-                  <input class="field" name="name" placeholder="кормление" required
-                         maxlength="64" style="flex:1">
-                  <input class="field" name="unit" placeholder="мл" maxlength="16" style="width:80px">
-                  <button class="btn small" type="submit">Добавить</button>
+          <div class="board-actions">
+            <details class="sheet">
+              <summary class="btn ghost small">Настроить</summary>
+              <div class="sheet-panel">
+                <div class="sheet-title">Настроить доску
+                  <button class="sheet-close" type="button" data-sheet-close aria-label="Закрыть">✕</button>
+                </div>
+                <form class="stack" method="post" action="/memory/boards/{{ active_board.id }}/update">
+                  <input class="field" name="name" value="{{ active_board.name }}" required maxlength="128">
+                  <textarea class="field" name="instruction" rows="3"
+                            placeholder="Инструкция ассистенту">{{ active_board.instruction or "" }}</textarea>
+                  {% if sections|length > 1 %}
+                    <select class="field" name="section_id">
+                      {% for section in sections %}
+                        <option value="{{ section.id }}"
+                                {% if section.id == active_section.id %}selected{% endif %}>{{ section.name }}</option>
+                      {% endfor %}
+                    </select>
+                  {% endif %}
+                  <button class="btn small" type="submit">Сохранить</button>
+                </form>
+                <form method="post" action="/memory/boards/{{ active_board.id }}/delete">
+                  <button class="btn small" type="submit" style="background:var(--alarm-text)">Удалить доску</button>
                 </form>
               </div>
             </details>
-          {% endif %}
-          {# Состав доступа меняет только владелец; «всем» — живое правило (тикет #28). #}
-          <details class="strip-pop">
-            <summary class="btn ghost small">Доступ</summary>
-            <div class="pop stack" style="right:0;min-width:280px">
+            {# Словарь величин доски: пока он пуст, записи не разбираются вовсе.
+               Заводит его тот, кто ведёт лог, — иначе на плашку уточнения под
+               своей записью ему нечем было бы ответить (тикет #30). #}
+            {% if board_right != "view" %}
+              <details class="sheet">
+                <summary class="btn ghost small">Величины</summary>
+                <div class="sheet-panel">
+                  <div class="sheet-title">Величины доски
+                    <button class="sheet-close" type="button" data-sheet-close aria-label="Закрыть">✕</button>
+                  </div>
+                  {% for event_type in event_types %}
+                    <p class="tiny" style="margin:0">{{ event_type.name }}{% if event_type.unit %} — {{ event_type.unit }}{% endif %}</p>
+                  {% else %}
+                    <p class="tiny" style="margin:0">Пока пусто: без величин ассистент
+                      не разбирает записи этой доски на цифры.</p>
+                  {% endfor %}
+                  <form class="row wrap" style="gap:8px" method="post"
+                        action="/memory/boards/{{ active_board.id }}/types/add">
+                    <input class="field" name="name" placeholder="кормление" required
+                           maxlength="64" style="flex:1;min-width:120px">
+                    <input class="field" name="unit" placeholder="мл" maxlength="16" style="width:80px">
+                    <button class="btn small" type="submit">Добавить</button>
+                  </form>
+                </div>
+              </details>
+            {% endif %}
+            {# Состав доступа меняет только владелец; «всем» — живое правило (тикет #28). #}
+            <details class="sheet">
+              <summary class="btn ghost small">Доступ</summary>
+              <div class="sheet-panel">
+                <div class="sheet-title">Доступ к доске
+                  <button class="sheet-close" type="button" data-sheet-close aria-label="Закрыть">✕</button>
+                </div>
               {% for user, right in audience.shares %}
                 <form class="row" style="gap:8px" method="post"
                       action="/memory/boards/{{ active_board.id }}/unshare">
@@ -193,8 +216,9 @@
                   <button class="btn small" type="submit">Поделиться</button>
                 </form>
               {% endif %}
-            </div>
-          </details>
+              </div>
+            </details>
+          </div>
         </div>
         {% include "memory/_feed.html" %}
       {% elif boards %}
@@ -225,7 +249,7 @@
       </div>
       <div class="card stack">
         {% if active_board %}
-          <div class="row wrap" style="gap:8px">
+          <div class="board-head">
             <div class="card-title" style="margin:0">{{ active_board.name }}</div>
           </div>
           {% include "memory/_feed.html" %}
