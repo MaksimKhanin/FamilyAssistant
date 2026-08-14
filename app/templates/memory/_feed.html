@@ -12,7 +12,11 @@
   </div>
 {% endif %}
 
-{% if audience %}
+{# Состав доступа — строкой, но только когда есть о чём говорить: у доски,
+   которую никому не отдавали, «Доступ: Марина — владелец» это шум над лентой,
+   а владельца видно в окне «Доступ». #}
+{% set foreign_board = not audience.owner or audience.owner.id != current_user.id if audience else false %}
+{% if audience and (audience.shares or audience.all_right or foreign_board) %}
   <p class="tiny">
     Доступ: {{ audience.owner.display_name if audience.owner else "бывший участник" }} — владелец
     {%- for user, right in audience.shares %} · {{ user.display_name }} — {{ right_labels[right] }}{% endfor %}
@@ -40,10 +44,19 @@
       <div class="entry {% if entry.by_assistant %}by-assistant{% endif %}"
            data-entry data-entry-id="{{ entry.id }}"
            {% if editable %}data-editable{% endif %}>
-        <span class="entry-author{% if entry.by_assistant %} assistant{% elif entry.author_id is none %} gone{% endif %}"
-          >{%- if entry.by_assistant %}Ассистент{% elif entry.author_id is none %}бывший участник{% else %}{{ author_names.get(entry.author_id, "участник") }}{% endif -%}</span>
-        <span class="entry-at">{{ entry.created_at|ru_time }}</span>
-        {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
+        {# Автор, время и — своей записи — «Изменить» в одной строке: отдельным
+           рядом кнопка отнимала у каждой записи третью строку, и лента из
+           переписки превращалась в список карточек. #}
+        <div class="entry-head">
+          <span class="entry-author{% if entry.by_assistant %} assistant{% elif entry.author_id is none %} gone{% endif %}"
+            >{%- if entry.by_assistant %}Ассистент{% elif entry.author_id is none %}бывший участник{% else %}{{ author_names.get(entry.author_id, "участник") }}{% endif -%}</span>
+          <span class="entry-at">{{ entry.created_at|ru_time }}</span>
+          {% if entry.edited_at %}<span class="entry-edited">изменено</span>{% endif %}
+          {% if editable %}
+            <button class="entry-edit-btn" type="button" data-entry-edit-btn
+                    data-entry-actions>Изменить</button>
+          {% endif %}
+        </div>
         <div class="entry-body" data-entry-body>{{ entry.text }}</div>
         {% if editable %}
           {# Плашка уточнения: ассистент разобрал величину неуверенно, и в счёт
@@ -65,14 +78,14 @@
               <button class="btn small" type="submit">Уточнить</button>
             </form>
           {% endfor %}
-          {# Правка открывается кнопкой под записью, а не сама собой: поле ввода
-             под каждой своей записью превращало ленту в стопку форм. Долгое
-             нажатие и правая кнопка ведут туда же — это второй путь, не
-             единственный. #}
-          <div class="entry-actions" data-entry-actions>
-            <button class="btn ghost small" type="button" data-entry-edit-btn>Изменить</button>
-          </div>
-          <form class="stack" style="gap:8px;margin-top:4px" method="post"
+          {# Правка открывается кнопкой в строке записи, а не сама собой: поле
+             ввода под каждой своей записью превращало ленту в стопку форм.
+             Долгое нажатие и правая кнопка ведут туда же — это второй путь, не
+             единственный.
+             Класс формы — свой, а не общий .stack: у .stack есть собственный
+             display, а он перебивает браузерное [hidden], и форма правки висела
+             под каждой записью постоянно. #}
+          <form class="entry-edit" method="post"
                 action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
             <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>
             <div class="row" style="gap:8px">
@@ -96,8 +109,7 @@
     <input class="field" name="text" placeholder="Написать на доску…" required autocomplete="off">
     <button class="chat-send" type="submit" aria-label="Записать">{{ ic.icon("send", 21) }}</button>
   </form>
-  <p class="tiny">«Изменить» — под своей записью. Правая кнопка или долгое нажатие
-    на записи — ещё и удалить, скопировать.</p>
+  <p class="tiny">Долгое нажатие на записи — удалить или скопировать.</p>
 {% else %}
   {# Вместо неработающей формы — объяснение, к кому идти за доступом. #}
   <div class="readonly-note">Только просмотр. Писать сюда может разрешить
