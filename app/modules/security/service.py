@@ -24,13 +24,26 @@ from app.core import media as media_module
 from app.core.clock import days_ago_start_utc, to_local, utc_now
 from app.core.logging import get_logger
 from app.modules.security.models import (
-    VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL, Camera, MediaItem, SecurityEvent,
+    RESOLUTION_OURS, RESOLUTION_SEEN, VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL,
+    Camera, MediaItem, SecurityEvent,
 )
 
 logger = get_logger("security")
 
 #: Сколько файлов на странице архива. Держим кратным сетке, чтобы последний ряд не рвался.
 PAGE_SIZE = 24
+
+#: Глубина ленты событий. Столько же считает и «непросмотренных» на экране: цифра
+#: должна сходиться с тем, что человек видит перед собой.
+FEED_DAYS = 7
+
+#: Периоды, которыми человек мыслит, когда наводит порядок: «просмотрено всё»,
+#: «просмотрено всё, что старше двух дней». Число — возраст события в сутках.
+SEEN_PERIODS = [(0, "всё"), (1, "старше суток"), (2, "старше двух дней"), (7, "старше недели")]
+#: То же для архива, но без «всего»: файлы удаляются насовсем, и пункта
+#: «стереть весь архив одной кнопкой» в панели быть не должно.
+PURGE_PERIODS = [(1, "старше суток"), (2, "старше двух дней"),
+                 (7, "старше недели"), (30, "старше месяца")]
 
 #: Классы, из-за которых вообще имеет смысл кого-то беспокоить.
 NOTABLE_CLASSES = ("person",)
@@ -136,7 +149,7 @@ def record_event(db: Session, family_id: int, camera: Camera, happened_at: datet
     return event
 
 
-def list_events(db: Session, family_id: int, only: str = "all", days: int = 7,
+def list_events(db: Session, family_id: int, only: str = "all", days: int = FEED_DAYS,
                 limit: int = 60) -> List[SecurityEvent]:
     query = (
         db.query(SecurityEvent)
@@ -166,12 +179,53 @@ def anomaly_count(db: Session, family_id: int, days: int = 1) -> int:
     )
 
 
+def _unseen(db: Session, family_id: int, older_than_days: int = 0, within_days: int = None):
+    """Тревоги, которые никто ещё не разобрал; `older_than_days` отсекает свежие.
+
+    Возраст здесь скользящий, а не календарный: «старше двух дней» человек
+    произносит про сорок восемь часов, а не про позавчерашнюю полночь.
+    """
+    query = (
+        db.query(SecurityEvent)
+        .filter(SecurityEvent.family_id == family_id,
+                SecurityEvent.verdict.in_((VERDICT_ANOMALY, VERDICT_CHECK)),
+                SecurityEvent.resolution.is_(None))
+    )
+    if older_than_days > 0:
+        query = query.filter(SecurityEvent.happened_at < utc_now() - timedelta(days=older_than_days))
+    if within_days:
+        query = query.filter(SecurityEvent.happened_at >= days_ago_start_utc(within_days - 1))
+    return query
+
+
+def unseen_count(db: Session, family_id: int, older_than_days: int = 0,
+                 within_days: int = None) -> int:
+    """Сколько тревог висит неразобранными. `within_days` ограничивает глубиной ленты."""
+    return _unseen(db, family_id, older_than_days, within_days).count()
+
+
+def mark_seen(db: Session, family_id: int, older_than_days: int = 0) -> int:
+    """«Посмотрел, вопросов нет» — сразу по всей ленте. Возвращает, скольких коснулось.
+
+    Разбирать тревоги по одной семья не станет: к вечеру их десяток, и значок
+    в навигации горит не потому, что дома что-то не так, а потому, что до него
+    не дошли руки. Записи при этом остаются на месте — гаснет только «непросмотренное».
+    """
+    changed = _unseen(db, family_id, older_than_days).update(
+        {SecurityEvent.resolution: RESOLUTION_SEEN, SecurityEvent.resolved_at: utc_now()},
+        synchronize_session=False,
+    )
+    if changed:
+        db.commit()
+    return changed
+
+
 def mark_ours(db: Session, family_id: int, event_id: int) -> Optional[SecurityEvent]:
     """«Это свои, всё хорошо» — снимает тревогу, не удаляя запись."""
     event = get_event(db, family_id, event_id)
     if event is None:
         return None
-    event.resolution = "ours"
+    event.resolution = RESOLUTION_OURS
     event.resolved_at = utc_now()
     db.commit()
     return event

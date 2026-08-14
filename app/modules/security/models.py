@@ -29,6 +29,15 @@ VERDICT_ANOMALY = "anomaly"    # похоже на постороннего
 
 VERDICT_LABELS = {VERDICT_NORMAL: "штатно", VERDICT_CHECK: "проверить", VERDICT_ANOMALY: "аномалия"}
 
+# --- reactions ------------------------------------------------------------
+#: «Это свои» — семья знает, кто это был.
+RESOLUTION_OURS = "ours"
+#: «Посмотрел, вопросов нет» — тревогу разобрали, но кто это был, не уточняли.
+#: Этим закрываются пачки: разбирать десяток ночных срабатываний по одному никто не станет.
+RESOLUTION_SEEN = "checked"
+
+RESOLUTION_LABELS = {RESOLUTION_OURS: "свои", RESOLUTION_SEEN: "просмотрено"}
+
 
 class Camera(Base):
     __tablename__ = "cameras"
@@ -86,6 +95,10 @@ class SecurityEvent(Base):
     @property
     def verdict_label(self) -> str:
         return VERDICT_LABELS.get(self.verdict, self.verdict)
+
+    @property
+    def resolution_label(self) -> str:
+        return RESOLUTION_LABELS.get(self.resolution, "")
 
     @property
     def is_anomaly(self) -> bool:

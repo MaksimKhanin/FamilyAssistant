@@ -8,6 +8,26 @@
   {% endfor %}
 </div>
 
+{% if unseen %}
+  {# Разбирать тревоги по одной никто не будет, а значок в навигации горит, пока
+     хоть одна не разобрана. Отсюда — «просмотрено» пачкой и выбор возраста. #}
+  <div class="card row wrap" style="gap:12px;align-items:center;margin-bottom:16px">
+    <div style="flex:1;min-width:200px">
+      <div style="font-weight:600">Непросмотренных — {{ unseen }}</div>
+      <div class="tiny">Записи останутся в ленте — погаснет только значок.</div>
+    </div>
+    <form class="row wrap" style="gap:8px" method="post" action="/security/events/seen">
+      <input type="hidden" name="only" value="{{ active_filter }}">
+      <select class="field" name="older_than" style="width:auto" aria-label="Что считать просмотренным">
+        {% for value, label in seen_periods %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn small" type="submit">Просмотрено</button>
+    </form>
+  </div>
+{% endif %}
+
 <div class="stack">
   {% for event in events %}
     {% set camera = cameras.get(event.camera_id) %}
@@ -28,7 +48,10 @@
           <span class="badge {% if event.verdict == 'anomaly' %}alarm
                              {%- elif event.verdict == 'check' %}estimate
                              {%- else %}neutral{% endif %}">{{ event.verdict_label }}</span>
-          {% if event.resolution == "ours" %}<span class="badge ok">свои</span>{% endif %}
+          {% if event.resolution %}
+            <span class="badge {{ 'ok' if event.resolution == 'ours' else 'neutral' }}">
+              {{ event.resolution_label }}</span>
+          {% endif %}
         </div>
         <div class="tiny">{{ event.happened_at|ru_datetime }} · {{ event.reason }}</div>
       </div>

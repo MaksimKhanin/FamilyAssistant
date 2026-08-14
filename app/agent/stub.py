@@ -22,11 +22,28 @@ RULES = [
     ("log_activity", ("шаг", "прошёл", "прошел", "тренировк", "пробежал", "велосипед", "прогулял")),
     ("get_nutrition_stats", ("сколько сегодня", "статистик", "баланс", "калори", "норм")),
     ("recall", ("что ты помнишь", "что помнишь", "вспомни", "из памяти", "память")),
+    # Уборка идёт раньше показа: «пометь просмотренными события» тоже содержит «событ».
+    ("mark_events_seen", ("просмотрен", "прочитан", "я всё видел", "я все видел",
+                          "убери уведомл", "не маяч", "погаси значок")),
+    ("clear_archive", ("почисти архив", "очисти архив", "удали стар", "убери стар",
+                       "удали запис", "освободи мест")),
     ("get_security_log", ("дом", "камер", "ночью", "событ", "тревог", "калитк")),
     ("suggest_meal_plan", ("план", "идеи", "что приготовить", "предложи")),
 ]
 
 ACTIVITY_KINDS = [("шаг", "steps"), ("тренировк", "workout"), ("велосипед", "bike"), ("прогул", "walk")]
+
+#: Сроки, которые человек называет словами, а не цифрой: «всё старше двух дней».
+WORD_DAYS = [("месяц", 30), ("недел", 7), ("трёх дн", 3), ("трех дн", 3),
+             ("двух дн", 2), ("двух сут", 2), ("сутк", 1), ("вчера", 1)]
+
+
+def _days_from(text: str, default: int) -> int:
+    numbers = re.findall(r"\d+", text)
+    if numbers:
+        return int(numbers[0])
+    lowered = text.lower()
+    return next((days for word, days in WORD_DAYS if word in lowered), default)
 
 
 def _last_user_text(messages: List[dict]) -> str:
@@ -79,6 +96,13 @@ def _arguments_for(name: str, text: str) -> Dict[str, Any]:
         lowered = text.lower()
         period = "week" if "недел" in lowered else "today"
         return {"period": period, "only": "anomaly" if "тревог" in lowered else "all"}
+
+    if name == "mark_events_seen":
+        # Без срока — «всё просмотрено»: так эту фразу и произносят.
+        return {"older_than_days": _days_from(text, 0)}
+
+    if name == "clear_archive":
+        return {"older_than_days": _days_from(text, 7)}
 
     return {}
 

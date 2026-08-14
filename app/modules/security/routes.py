@@ -12,8 +12,8 @@ from app.core.access import is_module_enabled
 from app.core.auth import get_current_user, get_viewed_user
 from app.core.db import get_db
 from app.core.models import User
-from app.core.templating import render
-from app.modules.security import control, service, thumbnails
+from app.core.templating import counted, filesize, render
+from app.modules.security import control, retention, service, thumbnails
 from app.modules.security.models import Camera
 from app.web.context import screen_context
 
@@ -132,8 +132,24 @@ def events_screen(
         filters=FILTERS,
         active_filter=only,
         alert=service.get_event(db, viewed.family_id, event_id) if event_id else None,
+        unseen=service.unseen_count(db, viewed.family_id, within_days=service.FEED_DAYS),
+        seen_periods=service.SEEN_PERIODS,
     )
     return render(request, "security/events.html", context)
+
+
+@router.post("/events/seen")
+def mark_seen(
+    older_than: int = Form(0),
+    only: str = Form("all"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """«Всё это я видел» — пачкой, чтобы значок не горел из-за десятка ночных срабатываний."""
+    service.mark_seen(db, viewed.family_id, older_than_days=max(0, older_than))
+    only = only if only in dict(FILTERS) else "all"
+    return RedirectResponse(f"/security/events?only={only}", status_code=303)
 
 
 @router.post("/events/{event_id}/ours")
@@ -154,6 +170,7 @@ def archive_screen(
     camera: str = None,
     only: str = "all",
     page: int = 1,
+    notice: str = None,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -196,8 +213,42 @@ def archive_screen(
         next_url=page_url(page + 1) if has_more else None,
         base_url=page_url(1),
         stats=service.media_stats(db, viewed.family_id),
+        purge_periods=service.PURGE_PERIODS,
+        notice=notice,
     )
     return render(request, "security/archive.html", context)
+
+
+@router.post("/archive/purge")
+def purge_archive(
+    older_than: int = Form(...),
+    camera: str = Form(""),
+    only: str = Form("all"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Убрать старые записи, не дожидаясь срока хранения камеры."""
+    if not is_module_enabled(db, viewed.id, "security"):
+        raise HTTPException(status_code=404)
+
+    selected = next((c for c in service.list_cameras(db, viewed.family_id) if c.slug == camera), None)
+    result = retention.purge(db, viewed.family_id, older_than,
+                             camera_id=selected.id if selected else None)
+
+    params = {k: v for k, v in (("camera", selected.slug if selected else None),
+                                ("only", only if only in dict(ARCHIVE_FILTERS) and only != "all" else None),
+                                ("notice", _purged_notice(result))) if v}
+    return RedirectResponse(f"/security/archive?{urlencode(params)}", status_code=303)
+
+
+def _purged_notice(result: dict) -> str:
+    if not result["records"]:
+        return "Убирать было нечего — таких старых записей в архиве нет."
+    freed = filesize(result["bytes"])
+    return (f"Убрал {counted(result['records'], 'запись', 'записи', 'записей')}"
+            f"{f', освободилось {freed}' if freed else ''}. "
+            f"События в ленте остались, только без кадров.")
 
 
 @router.get("/media/{media_id}", response_class=HTMLResponse)
