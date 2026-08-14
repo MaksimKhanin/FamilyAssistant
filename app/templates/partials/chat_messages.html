@@ -1,5 +1,7 @@
 {# Bubbles, tool traces and action cards. Rendered both on panel open and after every send. #}
 {% for message in messages %}
+  {# Разделитель дня — только у истории: у ответа, прилетевшего сейчас, дня нет. #}
+  {% if message.daysep %}<div class="chat-daysep">{{ message.daysep }}</div>{% endif %}
   {% if message.role == "user" %}
     <div class="bubble user">{{ message.text }}</div>
   {% else %}

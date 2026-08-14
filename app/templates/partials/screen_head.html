@@ -1,0 +1,20 @@
+{% import "partials/icons.html" as ic %}
+
+{# Шапка вторичного экрана на телефоне: назад в разговор, имя экрана, профиль.
+   Разговор стал главным экраном, и обратно с «Знаний» или «Профиля» человек
+   идёт именно туда, а не в историю браузера — hx-boost подменяет тело
+   документа, и «назад» после нескольких переходов внутри экрана уводит не туда.
+
+   На компьютере этой шапки нет: там сбоку сайдбар и сверху шапка каркаса с
+   заголовком и аватарами семьи — возвращаться некуда, всё и так на виду. #}
+{% macro screen_head(title, back="/chat", profile=true) %}
+  <div class="screen-head-row">
+    <a class="icon-btn" href="{{ back }}" aria-label="В разговор">{{ ic.icon("chevron-left", 19) }}</a>
+    <div class="screen-title">{{ title }}</div>
+    {% if profile %}
+      <a class="icon-btn spacer" href="/settings/profile" aria-label="Профиль и агент">
+        {{ ic.icon("user", 19) }}
+      </a>
+    {% endif %}
+  </div>
+{% endmacro %}

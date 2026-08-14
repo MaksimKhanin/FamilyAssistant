@@ -488,14 +488,18 @@ textarea.field { font-size: 13.5px; resize: vertical; }
 .avatar.small { width: 28px; height: 28px; font-size: 11px; }
 .avatar.selected { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--acc); }
 
+/* 50×30 — размер из хендоффа: под палец, и по высоте совпадает с чипсами
+   в той же строке. `display` у класса перебивает браузерное [hidden], поэтому
+   скрытый тумблер (уведомления, пока браузер не ответил) прячем отдельно. */
 .toggle {
-  width: 46px; height: 27px; border-radius: 99px; background: var(--toggle-off);
-  border: none; cursor: pointer; padding: 3px; display: inline-flex;
+  width: 50px; height: 30px; border-radius: 99px; background: var(--toggle-off);
+  border: none; cursor: pointer; padding: 3px; display: inline-flex; flex: none;
 }
-.toggle span { width: 21px; height: 21px; border-radius: 50%; background: var(--knob); transition: transform .2s; }
+.toggle span { width: 24px; height: 24px; border-radius: 50%; background: var(--knob); transition: transform .2s; }
 .toggle.on { background: var(--ok); }
-.toggle.on span { transform: translateX(19px); }
+.toggle.on span { transform: translateX(20px); }
 .toggle[disabled] { cursor: not-allowed; opacity: .55; }
+.toggle[hidden], .badge[hidden] { display: none; }
 
 .progress { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .progress > i { display: block; height: 100%; background: var(--acc); border-radius: 99px; }
@@ -973,6 +977,32 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
    отнимали у телефона строку и мешали печатать. */
 .chat-hints { display: flex; flex-wrap: wrap; gap: 6px; align-self: flex-start; }
 
+/* ---------- шапка вторичного экрана ----------
+   «Знания» и «Профиль и агент» открывают из разговора — и возвращаются туда же
+   кнопкой слева. Общая шапка каркаса им на телефоне не нужна: заголовок она
+   повторяет, а кнопка меню и аватары семьи уводят от того, зачем пришли.
+   На компьютере всё наоборот — там шапка каркаса и сайдбар на месте, а этой
+   строки нет вовсе. */
+
+.screen-head-row { display: none; }
+.screen-title { font-family: var(--font-display); font-weight: 600; font-size: 17px; }
+
+@media (max-width: 900px) {
+  .screen-focus .header { display: none; }
+  .screen-focus .content { padding-top: 0; }
+
+  /* Шапка липнет к верху экрана вместе с полосой разделов: раздел — это то,
+     где ты находишься, и уезжать он не должен. Отрицательные поля тянут её
+     на всю ширину поверх полей .content. */
+  .screen-head {
+    position: sticky; top: 0; z-index: 20;
+    margin: 0 -16px 16px; padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+    background: var(--surface); border-bottom: 1px solid var(--line);
+  }
+  .screen-head-row { display: flex; align-items: center; gap: 12px; }
+  .screen-head .section-strip { margin: 14px 0 0; }
+}
+
 /* ---------- экран знаний на телефоне ----------
    Доски встают горизонтальной лентой: вертикальным списком до самих записей
    приходилось долго скроллить, а записи — это то, ради чего экран открывают. */
@@ -994,6 +1024,22 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
   }
   .feed { max-height: none; }
   .entry-body { font-size: 15px; }
+
+  /* Подвал доски стоит там же, где подвал разговора, — над нижней панелью.
+     Внутри ленты поле уезжало вверх вместе с записями, и чтобы дописать
+     строку, приходилось сначала прокрутить весь лог до конца. */
+  .screen-focus .composer {
+    position: fixed; left: 0; right: 0; z-index: 26;
+    bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
+    padding: 10px 14px; gap: 10px;
+    background: var(--surface); border-top: 1px solid var(--line);
+  }
+  /* Место под подвал забирает сам экран — но только когда подвал есть:
+     на доске «только для просмотра» его нет, и пустая полоса внизу была бы
+     ни к чему. */
+  .layout:has(.composer) .content {
+    padding-bottom: calc(var(--nav-h) + 82px + env(safe-area-inset-bottom));
+  }
 }
 
 .section-strip .chip { padding: 8px 13px; border-radius: 11px; font-size: 13px; }

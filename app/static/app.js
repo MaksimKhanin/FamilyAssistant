@@ -376,6 +376,7 @@
     const toggle = document.getElementById('push-toggle');
     const testButton = document.getElementById('push-test');
     if (!stateBadge) return;   // ушли с экрана, пока ходили за статусом
+    stateBadge.hidden = false;
 
     if (!state.supported) {
       stateBadge.textContent = 'недоступны';
@@ -393,11 +394,14 @@
       return;
     }
 
-    stateBadge.textContent = state.subscribed ? 'включены' : 'выключены';
-    stateBadge.className = 'badge spacer ' + (state.subscribed ? 'ok' : 'neutral');
+    // Дальше состояние показывает сам тумблер, и значок рядом повторял бы его
+    // словами. Он остаётся только там, где тумблера быть не может, — выше.
+    stateBadge.hidden = true;
     toggle.hidden = false;
-    toggle.textContent = state.subscribed ? 'Выключить на этом устройстве' : 'Включить на этом устройстве';
-    toggle.className = state.subscribed ? 'btn ghost' : 'btn';
+    toggle.className = 'toggle' + (state.subscribed ? ' on' : '');
+    const label = state.subscribed ? 'Выключить на этом устройстве' : 'Включить на этом устройстве';
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('aria-pressed', state.subscribed ? 'true' : 'false');
     testButton.hidden = !state.subscribed;
     toggle.onclick = () => (state.subscribed ? disable() : enable()).then(paintPushState);
     testButton.onclick = () => test().then(showTestResult);

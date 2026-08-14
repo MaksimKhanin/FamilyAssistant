@@ -1,9 +1,15 @@
 {% extends "base.html" %}
+{% import "partials/screen_head.html" as sh %}
+{# Профиль открывают из шапки разговора — и возвращаются туда же. #}
+{% block shell_class %}screen-focus{% endblock %}
 {% block content %}
 
 {# Один экран вместо двух: «кто я» и «что ассистенту можно» — это одно и то же
    про себя, а разделение заставляло ходить туда-обратно. Карточки идут столбцом
    и на телефоне читаются сверху вниз одним движением. #}
+
+{# Кнопки профиля справа нет: этот экран и есть профиль. #}
+<div class="screen-head">{{ sh.screen_head("Профиль и агент", profile=false) }}</div>
 
 {% if error %}
   <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
@@ -88,6 +94,54 @@
       {% endfor %}
     </div>
 
+    {# Уведомления идут сразу за инструментами: это последнее «что ассистенту
+       можно» — можно ли ему будить телефон. #}
+    <div class="card tight stack" id="push-card">
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <span class="card-title">Уведомления на телефон</span>
+          <p class="muted" id="push-hint" style="margin:2px 0 0">
+            Только когда дома правда стоит взглянуть — или когда придёт время напоминания.
+          </p>
+        </div>
+        {# Тумблер, а не кнопка со словами: строка читается так же, как строки
+           расписаний, и состояние видно, не читая. Значок рядом остаётся для
+           случаев, когда тумблера быть не может — браузер не умеет уведомлений,
+           запретил их или на сервере нет ключей. Всё это включает app.js:
+           состояние зависит от ответа браузера, а не от того, что знает сервер. #}
+        <button class="toggle" type="button" id="push-toggle" hidden><span></span></button>
+        <span class="badge neutral" id="push-state">проверяю…</span>
+      </div>
+      <div class="row wrap" style="gap:8px">
+        <button class="btn ghost small" type="button" id="push-test" hidden>Проверить</button>
+        <button class="btn ghost small" type="button" data-install-app hidden>Установить приложение</button>
+      </div>
+      <p class="tiny" id="push-devices">
+        {{ push_devices|counted("устройство", "устройства", "устройств") }} подключено
+      </p>
+    </div>
+
+    {# Лог агента — на подложке, а не карточкой: это не настройка, а отчёт. #}
+    <div class="card tight stack" style="background:var(--surface-3);border-color:transparent">
+      <div class="card-title">Что агент делал сегодня</div>
+      {% for action in recent_actions %}
+        <div>
+          <div class="tiny">{{ action.created_at|ru_time }}</div>
+          <div class="mono" style="color:var(--acc);font-size:12.5px">{{ action.tool }}</div>
+          <div class="muted">
+            {{ action.summary|truncate(90) }} ·
+            {% if action.mode == "confirmed" %}спросил → разрешено
+            {%- elif action.mode in ("schedule", "event") %}по расписанию
+            {%- else %}сам{% endif %}
+          </div>
+        </div>
+      {% else %}
+        <p class="muted">Сегодня агент ничего не делал сам.</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="stack" style="gap:14px">
     <form class="card tight stack" method="post" action="/settings/profile">
       <div class="card-title">Питание</div>
       <div>
@@ -116,28 +170,6 @@
 
       {% if can_edit %}<button class="btn" type="submit">Сохранить</button>{% endif %}
     </form>
-  </div>
-
-  <div class="stack" style="gap:14px">
-    <div class="card tight stack" id="push-card">
-      <div class="row">
-        <span class="card-title">Уведомления на телефон</span>
-        <span class="badge neutral spacer" id="push-state">проверяю…</span>
-      </div>
-      <p class="muted" id="push-hint">
-        Только когда дома правда стоит взглянуть — или когда придёт время напоминания.
-      </p>
-      <div class="row wrap" style="gap:8px">
-        <button class="btn" type="button" id="push-toggle" hidden></button>
-        {# Обработчики этих двух кнопок навешивает app.js: их состояние зависит
-           от того, что ответил браузер, а не от того, что знает сервер. #}
-        <button class="btn ghost" type="button" id="push-test" hidden>Проверить</button>
-        <button class="btn ghost" type="button" data-install-app hidden>Установить приложение</button>
-      </div>
-      <p class="tiny" id="push-devices">
-        {{ push_devices|counted("устройство", "устройства", "устройств") }} подключено
-      </p>
-    </div>
 
     <div class="card tight stack">
       <div class="card-title">Расписания</div>
@@ -153,25 +185,6 @@
                     {% if not can_edit %}disabled{% endif %}><span></span></button>
           </form>
         </div>
-      {% endfor %}
-    </div>
-
-    {# Лог агента — на подложке, а не карточкой: это не настройка, а отчёт. #}
-    <div class="card tight stack" style="background:var(--surface-3);border-color:transparent">
-      <div class="card-title">Что агент делал сегодня</div>
-      {% for action in recent_actions %}
-        <div>
-          <div class="tiny">{{ action.created_at|ru_time }}</div>
-          <div class="mono" style="color:var(--acc);font-size:12.5px">{{ action.tool }}</div>
-          <div class="muted">
-            {{ action.summary|truncate(90) }} ·
-            {% if action.mode == "confirmed" %}спросил → разрешено
-            {%- elif action.mode in ("schedule", "event") %}по расписанию
-            {%- else %}сам{% endif %}
-          </div>
-        </div>
-      {% else %}
-        <p class="muted">Сегодня агент ничего не делал сам.</p>
       {% endfor %}
     </div>
 
