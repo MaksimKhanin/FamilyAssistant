@@ -110,6 +110,17 @@
     window.addEventListener('load', () => ready().catch(() => {
       /* HTTP без TLS — service worker недоступен, панель работает как обычный сайт */
     }));
+
+    // Новый воркер забрал страницу — перезагружаем её один раз. Открытая панель
+    // осталась бы на прежних стилях и скрипте: PWA живёт вкладкой неделями, а
+    // переходы подменяют только тело документа, и <head> с ними не меняется.
+    const hadWorker = Boolean(navigator.serviceWorker.controller);
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadWorker || reloading) return;   // первая регистрация — обновлять нечего
+      reloading = true;
+      window.location.reload();
+    });
   }
 
   // Кнопка «Установить» появляется, только когда браузер сам считает это уместным.
@@ -540,11 +551,8 @@
   // Пункты меню и «Отмена» правки — делегированием: элементы новые на каждом экране.
   document.addEventListener('click', e => {
     const editButton = e.target.closest('[data-entry-edit-btn]');
-    const sheetCloser = e.target.closest('[data-sheet-close]');
     if (editButton) {
       openEntryEdit(editButton.closest('[data-entry]'));
-    } else if (sheetCloser) {
-      sheetCloser.closest('details.sheet').open = false;
     } else if (e.target.closest('[data-menu-edit]') && menuEntry) {
       openEntryEdit(menuEntry);
     } else if (e.target.closest('[data-menu-delete]') && menuEntry) {

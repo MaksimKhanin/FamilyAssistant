@@ -5,7 +5,7 @@
  * стили, скрипт и иконки, чтобы приложение открывалось мгновенно.
  */
 
-const CACHE = 'family-assistant-v3';
+const CACHE = 'family-assistant-v4';
 // Кириллица каждого шрифта — первой: панель по-русски, и латиница нужна ей
 // только под имена инструментов.
 const SHELL = [
@@ -42,19 +42,41 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || !url.pathname.startsWith('/static/')) return;
 
-  // Оболочка: отдаём из кеша, но обновляем в фоне. ignoreSearch — потому что
-  // ссылки несут версию в query (?v=хэш), а кеш хранит файл по чистому пути.
-  event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then(cached => {
-      const network = fetch(request).then(response => {
-        // Кладём по чистому пути, без ?v= — иначе копилась бы копия на каждую версию.
-        if (response.ok) caches.open(CACHE).then(cache => cache.put(url.origin + url.pathname, response.clone()));
-        return response;
-      }).catch(() => cached);
-      return cached || network;
-    })
-  );
+  // Ссылка на файл несёт версию его содержимого (?v=хэш, см. static_url), и
+  // кеш ищется по полному URL вместе с ней. Совпало — значит в кеше ровно тот
+  // файл, который просят, и сеть не нужна вовсе. Не совпало — файл изменился, и
+  // за ним идём в сеть.
+  //
+  // Раньше здесь искалось с ignoreSearch и отдавалось «из кеша, обновим в фоне»:
+  // после каждой выкладки браузер получал новую разметку со старыми стилями, и
+  // экран приезжал наполовину переехавшим. Свежесть оболочки важнее лишнего
+  // запроса: без совпадающей версии панель нарисована неправильно.
+  event.respondWith(caches.open(CACHE).then(async cache => {
+    const exact = await cache.match(request);
+    if (exact) return exact;
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        await dropOtherVersions(cache, url.pathname);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    } catch (error) {
+      // Сети нет: прошлая версия файла лучше пустого экрана.
+      const stale = await cache.match(request, { ignoreSearch: true });
+      if (stale) return stale;
+      throw error;
+    }
+  }));
 });
+
+/** Одна версия файла в кеше за раз: иначе копия копилась бы на каждую выкладку. */
+async function dropOtherVersions(cache, pathname) {
+  const keys = await cache.keys();
+  await Promise.all(
+    keys.filter(key => new URL(key.url).pathname === pathname).map(key => cache.delete(key))
+  );
+}
 
 self.addEventListener('push', event => {
   let payload = {};

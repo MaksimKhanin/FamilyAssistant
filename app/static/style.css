@@ -873,6 +873,18 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 
 .board-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .board-actions > form { display: flex; }
+.section-actions { display: flex; margin-bottom: 14px; }
+/* Имя раздела внутри кнопки не разгоняет её на весь экран: длинное имя
+   обрезается, а не переносится в три строки. */
+.section-actions > .sheet > summary {
+  max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+}
+
+/* Шапка доски: имя строкой, под ним ряд кнопок. На компьютере они встают в ту
+   же строку справа — там ширины хватает. */
+.board-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.board-head .card-title { font-size: 15px; }
+.board-head .board-actions { margin-left: auto; }
 
 .sheet { position: relative; flex: none; }
 .sheet > summary { list-style: none; cursor: pointer; user-select: none; }
@@ -901,9 +913,17 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 @media (max-width: 900px) {
   /* Кнопки — равным рядом: три подписи разной длины иначе прыгают по ширине
      и в одну строку с именем доски не помещаются вовсе. */
-  .board-actions { display: flex; gap: 8px; }
+  .board-head { flex-direction: column; align-items: stretch; gap: 8px; margin-bottom: 12px; }
+  .board-head .card-title { font-size: 17px; }
+  .board-head .board-actions { margin-left: 0; }
+  .board-actions { display: flex; gap: 6px; flex-wrap: nowrap; }
   .board-actions > .sheet, .board-actions > form { flex: 1 1 0; min-width: 0; }
   .board-actions > .sheet > summary, .board-actions > form > .btn { width: 100%; }
+  /* Рамка вокруг каждой кнопки на телефоне читалась как три поля ввода подряд;
+     заливка спокойнее и не спорит с карточками досок над ней. */
+  .board-actions .btn.ghost, .section-actions .btn.ghost {
+    background: var(--surface-2); border-color: transparent; min-height: 38px;
+  }
 
   .sheet[open]::before {
     content: ""; position: fixed; inset: 0; z-index: 55;
@@ -969,10 +989,19 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 .entry-at, .entry-edited { font-size: 11px; color: var(--text-4); margin-left: 6px; }
 .entry-body { white-space: pre-line; margin-top: 1px; }
 
-/* Кнопка «Изменить» под своей записью — тихая, но видимая: до неё правка
-   открывалась только долгим нажатием, о котором знал не каждый. */
-.entry-actions { display: flex; gap: 8px; margin-top: 4px; }
-.entry-actions .btn { padding: 4px 10px; font-size: 11px; }
+/* Строка записи: автор, время и — у своей записи — «Изменить» справа. Кнопка
+   тихая, словом, а не рамкой: до неё правка открывалась только долгим
+   нажатием, о котором знал не каждый, но и трёх обводок в ленте быть не должно.
+   Отрицательные поля возвращают строке высоту: площадь нажатия у кнопки
+   заходит на пустоту вокруг, где больше ничего нет. */
+.entry-head { display: flex; align-items: baseline; gap: 0; }
+.entry-edit-btn {
+  margin: -8px -6px -8px auto; padding: 8px 6px; flex: none;
+  background: none; border: none; cursor: pointer;
+  font-size: 11.5px; color: var(--text-3);
+}
+.entry-edit-btn:hover { color: var(--acc); }
+.entry-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 
 .composer { display: flex; gap: 8px; }
 .composer .field { flex: 1; }
