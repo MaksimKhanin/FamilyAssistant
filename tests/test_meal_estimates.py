@@ -139,6 +139,33 @@ def test_answering_the_weight_question_actually_moves_the_numbers(ctx, db, head,
     assert "400 г" in spy["text"]                       # уточнение дошло до оценщика
 
 
+def test_a_correction_finds_the_meal_without_being_told_its_number(ctx, db, head, spy):
+    """Сценарий из трейса: «съел пиццу» → «пицца была 20 см».
+
+    Номер записи модель знать не может — в историю разговора едет только текст
+    реплик, а `meal_id` остаётся в ответе инструмента. Пока номер был обязателен,
+    поправка упиралась в тупик, и ассистент выдумывал цифры со словом «Записал».
+    """
+    tools.log_meal(ctx, text="съел пиццу пепперони из Додо")
+    meal_id = db.query(service.Meal).filter(service.Meal.user_id == head.id).one().id
+
+    spy["estimate"] = MealEstimate(title="Пицца пепперони", kcal=650, protein=26, fat=30,
+                                   carbs=68, portion="20 см")
+    result = tools.confirm_meal(ctx, weight_g=440)       # без meal_id
+
+    assert result.ok
+    assert "650 ккал" in result.summary
+    assert db.get(service.Meal, meal_id).kcal == 650     # поправлена та самая запись
+
+
+def test_a_correction_without_any_meal_says_so(ctx):
+    """Пустая история — не повод молча создать запись из ниоткуда."""
+    result = tools.confirm_meal(ctx, weight_g=400)
+
+    assert not result.ok
+    assert "Такой записи нет" in result.summary
+
+
 def test_named_numbers_are_taken_as_they_are(ctx, db, head, spy):
     """Человек сказал цифру — она главнее любой оценки, пересчитывать нечего."""
     tools.log_meal(ctx, text="съел борщ")
