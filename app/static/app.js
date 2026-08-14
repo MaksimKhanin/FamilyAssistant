@@ -180,7 +180,10 @@
   }
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeChat(); closeDrawer(); }
+    if (e.key !== 'Escape') return;
+    closeChat();
+    closeDrawer();
+    document.querySelectorAll('details.sheet[open]').forEach(sheet => { sheet.open = false; });
   });
 
   /* ================================ чат ================================= */
@@ -517,13 +520,33 @@
     pressTimer = null;
   }));
 
+  /** Правка записи: вместо текста — поле, вместо кнопки «Изменить» — ничего. */
+  function openEntryEdit(entry) {
+    entry.querySelector('[data-entry-body]').hidden = true;
+    const actions = entry.querySelector('[data-entry-actions]');
+    if (actions) actions.hidden = true;
+    const form = entry.querySelector('[data-entry-edit]');
+    form.hidden = false;
+    form.querySelector('textarea').focus();
+  }
+
+  function closeEntryEdit(entry) {
+    entry.querySelector('[data-entry-edit]').hidden = true;
+    entry.querySelector('[data-entry-body]').hidden = false;
+    const actions = entry.querySelector('[data-entry-actions]');
+    if (actions) actions.hidden = false;
+  }
+
   // Пункты меню и «Отмена» правки — делегированием: элементы новые на каждом экране.
   document.addEventListener('click', e => {
-    if (e.target.closest('[data-menu-edit]') && menuEntry) {
-      menuEntry.querySelector('[data-entry-body]').hidden = true;
-      const form = menuEntry.querySelector('[data-entry-edit]');
-      form.hidden = false;
-      form.querySelector('textarea').focus();
+    const editButton = e.target.closest('[data-entry-edit-btn]');
+    const sheetCloser = e.target.closest('[data-sheet-close]');
+    if (editButton) {
+      openEntryEdit(editButton.closest('[data-entry]'));
+    } else if (sheetCloser) {
+      sheetCloser.closest('details.sheet').open = false;
+    } else if (e.target.closest('[data-menu-edit]') && menuEntry) {
+      openEntryEdit(menuEntry);
     } else if (e.target.closest('[data-menu-delete]') && menuEntry) {
       menuEntry.querySelector('[data-entry-delete]').requestSubmit();
     } else if (e.target.closest('[data-menu-copy]') && menuEntry) {
@@ -533,9 +556,7 @@
       if (navigator.clipboard) navigator.clipboard.writeText(text);
       else prompt('Скопируйте текст:', text);
     } else if (e.target.closest('[data-edit-cancel]')) {
-      const entry = e.target.closest('[data-entry]');
-      entry.querySelector('[data-entry-edit]').hidden = true;
-      entry.querySelector('[data-entry-body]').hidden = false;
+      closeEntryEdit(e.target.closest('[data-entry]'));
     }
   });
 
@@ -551,10 +572,34 @@
   }, true);
 
   // Выпадающие меню закрываются кликом мимо них.
-  document.addEventListener('click', () => {
+  document.addEventListener('click', e => {
     document.querySelectorAll('[data-strip-menu], [data-entry-menu]')
             .forEach(menu => { menu.hidden = true; });
+    // Окно доски — тоже: на телефоне мимо него это подложка во весь экран,
+    // и закрыть окно, ткнув в неё, привычнее, чем искать крестик. Нажатие на
+    // саму <summary> сюда не попадает: до переключения details ещё не открыт.
+    document.querySelectorAll('details.sheet[open]').forEach(sheet => {
+      if (!e.target.closest('.sheet-panel') && !sheet.querySelector('summary').contains(e.target)) {
+        sheet.open = false;
+      }
+    });
   });
+
+  // Открытым остаётся одно окно доски, и пока оно открыто, страница под ним не
+  // прокручивается: на телефоне окно занимает низ экрана, и прокрутка «сквозь»
+  // него уводила ленту записей неизвестно куда. Событие toggle не всплывает —
+  // отсюда фаза захвата.
+  document.addEventListener('toggle', e => {
+    if (!e.target.matches || !e.target.matches('details.sheet')) return;
+    if (e.target.open) {
+      document.querySelectorAll('details.sheet[open]').forEach(sheet => {
+        if (sheet !== e.target) sheet.open = false;
+      });
+    }
+    const phone = window.matchMedia('(max-width: 900px)').matches;
+    document.body.classList.toggle('no-scroll',
+      phone && Boolean(document.querySelector('details.sheet[open]')));
+  }, true);
 
   /* ===================== мелочи отдельных экранов ======================= */
 

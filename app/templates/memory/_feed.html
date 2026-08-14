@@ -65,6 +65,13 @@
               <button class="btn small" type="submit">Уточнить</button>
             </form>
           {% endfor %}
+          {# Правка открывается кнопкой под записью, а не сама собой: поле ввода
+             под каждой своей записью превращало ленту в стопку форм. Долгое
+             нажатие и правая кнопка ведут туда же — это второй путь, не
+             единственный. #}
+          <div class="entry-actions" data-entry-actions>
+            <button class="btn ghost small" type="button" data-entry-edit-btn>Изменить</button>
+          </div>
           <form class="stack" style="gap:8px;margin-top:4px" method="post"
                 action="/memory/entries/{{ entry.id }}/edit" data-entry-edit hidden>
             <textarea class="field" name="text" rows="2" required>{{ entry.text }}</textarea>
@@ -89,7 +96,8 @@
     <input class="field" name="text" placeholder="Написать на доску…" required autocomplete="off">
     <button class="chat-send" type="submit" aria-label="Записать">{{ ic.icon("send", 21) }}</button>
   </form>
-  <p class="tiny">Правая кнопка или долгое нажатие на записи — изменить, удалить, скопировать.</p>
+  <p class="tiny">«Изменить» — под своей записью. Правая кнопка или долгое нажатие
+    на записи — ещё и удалить, скопировать.</p>
 {% else %}
   {# Вместо неработающей формы — объяснение, к кому идти за доступом. #}
   <div class="readonly-note">Только просмотр. Писать сюда может разрешить

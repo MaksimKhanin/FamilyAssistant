@@ -426,6 +426,12 @@ body.no-scroll { overflow: hidden; }
 .spacer { margin-left: auto; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 
+/* Класс с собственным `display` перебивает браузерное [hidden], и спрятанное
+   разметкой оставалось на экране: так форма правки записи висела под каждой
+   своей записью постоянно. Правило общее — иначе его приходится повторять для
+   каждого нового класса (.chip, .pop, .toggle ниже — следы прежнего способа). */
+[hidden] { display: none !important; }
+
 .label { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--text-4); }
 .muted { color: var(--text-3); font-size: 12.5px; }
 .tiny { font-size: 11px; color: var(--text-4); }
@@ -857,6 +863,71 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 .pop[hidden] { display: none; }
 .pop .chip { display: flex; }
 
+/* ---------- окна доски: «Настроить», «Величины», «Доступ» ----------
+   Всплывашка у края экрана на телефоне не помещалась в рабочую область: она
+   считает ширину от кнопки, а кнопок в ряду три. Поэтому то же содержимое на
+   телефоне приезжает снизу отдельным окном во всю ширину, с подложкой и
+   крестиком, а на компьютере остаётся всплывашкой у своей кнопки.
+   Раму по-прежнему держит <details>: окно открывается и закрывается без
+   единой строчки кода, скрипт добавляет только закрытие мимо и по Esc. */
+
+.board-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.board-actions > form { display: flex; }
+
+.sheet { position: relative; flex: none; }
+.sheet > summary { list-style: none; cursor: pointer; user-select: none; }
+.sheet > summary::-webkit-details-marker { display: none; }
+
+.sheet-panel {
+  position: absolute; right: 0; z-index: 30; margin-top: 6px;
+  min-width: 300px; max-width: min(360px, 88vw); max-height: 70vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px;
+  padding: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.sheet-title {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-display); font-size: 14px;
+}
+.sheet-close {
+  margin-left: auto; width: 32px; height: 32px; flex: none; border-radius: 10px;
+  background: var(--surface-2); border: none; color: var(--text-2);
+  font-size: 13px; cursor: pointer;
+}
+.sheet-close:hover { color: var(--text); }
+
+@keyframes sheetIn { from { transform: translateY(16px); } to { transform: none; } }
+
+@media (max-width: 900px) {
+  /* Кнопки — равным рядом: три подписи разной длины иначе прыгают по ширине
+     и в одну строку с именем доски не помещаются вовсе. */
+  .board-actions { display: flex; gap: 8px; }
+  .board-actions > .sheet, .board-actions > form { flex: 1 1 0; min-width: 0; }
+  .board-actions > .sheet > summary, .board-actions > form > .btn { width: 100%; }
+
+  .sheet[open]::before {
+    content: ""; position: fixed; inset: 0; z-index: 55;
+    background: rgba(0, 0, 0, .42);
+  }
+  .sheet[open] > .sheet-panel {
+    position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 56;
+    margin: 0; min-width: 0; max-width: none; max-height: 82vh;
+    border: none; border-top: 1px solid var(--line); border-radius: 20px 20px 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    box-shadow: 0 -16px 50px rgba(0, 0, 0, .3);
+    animation: sheetIn .22s ease;
+  }
+  .sheet-title { font-size: 15px; }
+  /* Внутри окна всё в столбец: селекты доступа и поля величин рядом друг с
+     другом на телефоне сжимались до нечитаемых. */
+  .sheet-panel .row { flex-wrap: wrap; }
+  .sheet-panel .btn { min-height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet[open] > .sheet-panel { animation: none; }
+}
+
 /* ---------- экран знаний: доски раздела (тикет #26) ---------- */
 
 /* Список досок рядом с выбранной; на узком экране колонки складываются в одну. */
@@ -897,6 +968,11 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 .entry-author.gone { color: var(--text-4); font-weight: 500; font-style: italic; }
 .entry-at, .entry-edited { font-size: 11px; color: var(--text-4); margin-left: 6px; }
 .entry-body { white-space: pre-line; margin-top: 1px; }
+
+/* Кнопка «Изменить» под своей записью — тихая, но видимая: до неё правка
+   открывалась только долгим нажатием, о котором знал не каждый. */
+.entry-actions { display: flex; gap: 8px; margin-top: 4px; }
+.entry-actions .btn { padding: 4px 10px; font-size: 11px; }
 
 .composer { display: flex; gap: 8px; }
 .composer .field { flex: 1; }
