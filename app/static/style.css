@@ -386,17 +386,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
     width: 7px; height: 7px; border-radius: 50%; background: var(--alarm);
   }
 
-  /* Центральная кнопка приподнята — единственная тень во всей панели. */
+  /* Центральная кнопка чуть приподнята — ровно настолько, чтобы читаться
+     главной. Без тени: цветная тень под акцентом в ночном оформлении даёт
+     грязное пятно вокруг кнопки, а в тёплом — розоватый ореол; и в обоих она
+     наезжала на границу подвала, обрывая её. Подъём 8px вместо 14 по той же
+     причине — кнопка перестала залезать на чужую поверхность. */
   .bottom-nav .talk { padding: 0; }
   .bottom-nav .talk i {
-    width: 52px; height: 52px; border-radius: 18px; margin-top: -14px;
+    width: 50px; height: 50px; border-radius: 16px; margin-top: -8px;
     background: var(--surface-2); color: var(--text-2);
     display: grid; place-items: center;
   }
-  .bottom-nav .talk.active i {
-    background: var(--acc); color: var(--on-acc);
-    box-shadow: 0 10px 24px color-mix(in srgb, var(--acc) 26%, transparent);
-  }
+  .bottom-nav .talk.active i { background: var(--acc); color: var(--on-acc); }
   .bottom-nav .talk svg { width: 24px; height: 24px; }
 
   .chat-panel { width: 100%; border-radius: 0; }
