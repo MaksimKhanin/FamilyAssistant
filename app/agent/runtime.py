@@ -24,7 +24,7 @@ from app.agent import policy, registry, tracing
 from app.agent.llm import LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part
 from app.agent.prompts import system_prompt
 from app.agent.registry import ToolContext, ToolResult, ToolSpec
-from app.core import media
+from app.core import instructions, media
 from app.core.events import ACTION_PENDING, bus
 from app.core.logging import get_logger
 from app.core.models import (
@@ -149,7 +149,14 @@ class Agent:
         if image:
             user_content = [text_part(user_content), image_part(image, image_mime)]
 
-        system = system_prompt(subject, modules)
+        # Характер и памятки — того, за кого работает ассистент: весь системный
+        # промпт написан про него, от имени до нормы самостоятельности. Памятки
+        # едут только по включённым модулям — по тем же, что дали инструменты.
+        system = system_prompt(
+            subject, modules,
+            character=instructions.character(subject),
+            memos=instructions.for_prompt(db, subject.id, modules),
+        )
         if "memory" in modules:
             # Названия и инструкции досок — в промпт; содержимое остаётся за
             # read_board, автообогащения нет (спека #19). Доски — глазами того,

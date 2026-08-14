@@ -10,13 +10,14 @@ from app.agent import policy
 from app.core import accounts
 from app.core import connectors as connector_service
 from app.core import family as family_service
+from app.core import instructions
 from app.core import push
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
 from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ScheduledJob, User
 from app.core.templating import render
-from app.modules import togglable
+from app.modules import names as module_names, togglable
 from app.web.context import avatar, screen_context
 from app.web.routes_invite import invite_url
 
@@ -333,9 +334,18 @@ def profile_screen(
                              subtitle="Оформление, самостоятельность ассистента и режимы инструментов")
     module_list = togglable()
     since = datetime.utcnow() - timedelta(days=1)
+    # Памятка есть только у включённых областей: выключенный модуль не отдаёт ни
+    # экранов, ни инструментов — и поля, которое никуда не поедет, тоже.
+    memo_modules = instructions.memo_modules(
+        db, viewed.id, [name for name in module_names() if name in context["enabled_modules"]],
+    )
     context.update(
         profile=nutrition_service.get_profile(db, viewed.id),
         goal_labels=GOAL_LABELS,
+        character=instructions.character(viewed),
+        character_limit=instructions.CHARACTER_LIMIT,
+        memo_modules=memo_modules,
+        memo_limit=instructions.MEMO_LIMIT,
         push_devices=push.device_count(db, viewed.id),
         notice=notice,
         error=error,
@@ -391,6 +401,35 @@ def change_password(
         return RedirectResponse(f"/settings/profile?{urlencode({'error': str(e)})}", status_code=303)
     return RedirectResponse(f"/settings/profile?{urlencode({'notice': 'Пароль изменён.'})}",
                             status_code=303)
+
+
+@router.post("/profile/character")
+def update_character(
+    character: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Характер ассистента — свой у каждого, как и оформление."""
+    if can_act_as(current, viewed):
+        instructions.set_character(db, viewed, character)
+    return RedirectResponse("/settings/profile", status_code=303)
+
+
+@router.post("/profile/memo/{module}")
+def update_memo(
+    module: str,
+    memo: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Памятка одной области. Сохраняется по одной: полей на экране несколько,
+    но человек правит их по очереди, и общая кнопка «Сохранить» внизу заставляла
+    бы его помнить, что он трогал."""
+    if can_act_as(current, viewed) and module in module_names():
+        instructions.set_memo(db, viewed.id, module, memo)
+    return RedirectResponse("/settings/profile", status_code=303)
 
 
 @router.post("/profile")

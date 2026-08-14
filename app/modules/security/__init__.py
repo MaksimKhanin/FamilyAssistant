@@ -38,6 +38,9 @@ module = Module(
         NavItem(slug="cameras", label="Камеры", url="/security/cameras", icon="camera",
                 group="Безопасность"),
     ],
+    memo_hint=("Что учитывать, когда речь о доме: кто приходит и когда (уборщица по "
+               "средам, курьеры днём), когда дома обычно никого, о чём писать сразу, "
+               "а о чём не будить."),
     event_handlers={SECURITY_ANOMALY: [_on_anomaly]},
     per_user=False,
 )

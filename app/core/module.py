@@ -50,6 +50,10 @@ class Module:
     nav_items_for: Optional[Callable] = None
     #: Топики Event Bus → обработчики. Подписки регистрируются при сборке приложения.
     event_handlers: Dict[str, List[Callable]] = field(default_factory=dict)
+    #: О чём человеку писать в памятке этой области — подсказка под полем на экране
+    #: «Профиль и агент». Модуль без подсказки памятки не заводит: пустое поле без
+    #: объяснения человек всё равно не заполнит. См. app/core/instructions.py.
+    memo_hint: Optional[str] = None
     #: Личные данные (скоуп по user_id) или общие для семьи (скоуп по family_id).
     per_user: bool = True
     #: Модуль всегда включён и не показывается тумблером (например, «Память»).

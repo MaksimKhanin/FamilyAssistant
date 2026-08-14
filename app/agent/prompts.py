@@ -4,9 +4,13 @@ The tone rules are not decoration — they are a product requirement from the br
 warm, calm, never judgemental about food, never dramatic about the house. Estimates
 must be presented as estimates. Keep them here so there is one place to edit the
 assistant's character.
+
+Поверх этого ложится то, что человек написал о себе сам (`app/core/instructions.py`):
+характер задаёт манеру речи, памятки — что учитывать в отдельных областях. Сборка
+промпта из этих кусков — здесь, чтение их из базы — там.
 """
 from datetime import datetime
-from typing import List
+from typing import List, Sequence, Tuple
 
 from app.core.clock import local_now
 from app.core.models import AUTONOMY_LEVELS, User
@@ -57,7 +61,53 @@ MEAL_RULES = """\
 """
 
 
-def system_prompt(user: User, modules: List[str], now: datetime = None) -> str:
+def character_block(text: str) -> str:
+    """Роль, которую человек задал ассистенту, — и чего она не отменяет.
+
+    Тон выше написан один на всех: тёплый, спокойный, семейный. Кому-то он не
+    подходит, и это нормально — ассистент домашний, а не корпоративный. Поэтому
+    характер человека главнее правил тона, и сказать об этом модели нужно прямо:
+    иначе она послушно вернётся к «тепло и спокойно» через две реплики.
+
+    Главнее — но не во всём. Манера речи меняется целиком, а честность цифр не
+    меняется вовсе: характер, из-за которого ассистент начал бы выдумывать
+    калории или ставить диагнозы, — это уже не характер, а другой ассистент.
+    """
+    if not text:
+        return ""
+    return f"""\
+Характер, который задал тебе этот человек:
+«{text}»
+
+Играй его в каждой реплике: так ты говоришь, так обращаешься, так шутишь. Это описание
+важнее правил тона выше — где они расходятся, слушай его и не сбивайся обратно через
+пару фраз. Неизменным остаётся одно: не выдумывать данные, называть оценки оценками
+и не выдавать медицинских заключений. Характер меняет манеру, а не факты.
+"""
+
+
+def memos_block(memos: Sequence[Tuple[str, str]]) -> str:
+    """Памятки по областям — то, что человек просил учитывать.
+
+    Это его слова о себе, а не задание пересказать их вслух: человек, написавший
+    «нет желчного», ждёт, что ассистент это учтёт, а не что каждый ответ про еду
+    будет начинаться с напоминания о его болячках.
+    """
+    if not memos:
+        return ""
+    lines = "\n".join(f"- {title}: {text}" for title, text in memos)
+    return f"""\
+Что этот человек просил учитывать — его собственные слова:
+{lines}
+
+Держи это в уме, когда отвечаешь и когда выбираешь инструмент. Вслух не пересказывай
+и не напоминай человеку о том, что он сам про себя написал. Это не предписания врача,
+а его пожелания: сомневаешься — предложи, а не запрещай.
+"""
+
+
+def system_prompt(user: User, modules: List[str], now: datetime = None,
+                  character: str = "", memos: Sequence[Tuple[str, str]] = ()) -> str:
     now = now or local_now()
     autonomy = AUTONOMY_LEVELS.get(user.autonomy or 0, "Спрашивает про важное")
     who = f"{user.display_name}"
@@ -66,19 +116,25 @@ def system_prompt(user: User, modules: List[str], now: datetime = None) -> str:
 
     modules_line = ", ".join(modules) if modules else "нет подключённых модулей"
 
-    # Правила про еду — только тем, у кого включено питание: незачем занимать
-    # контекст того, кто модулем не пользуется.
-    meal_rules = f"{MEAL_RULES}\n" if "nutrition" in modules else ""
-
-    return (
-        f"{TONE}\n"
-        f"{TOOLS_RULES}\n"
-        f"{meal_rules}"
-        f"Сейчас: {now:%d.%m.%Y %H:%M}.\n"
-        f"Ты разговариваешь с: {who}. Семья: «{user.family.name if user.family else 'Семья'}».\n"
-        f"Включённые модули этого человека: {modules_line}.\n"
-        f"Настройка самостоятельности: «{autonomy}».\n"
-    )
+    # Характер идёт сразу за тоном, который он переопределяет; памятки — после
+    # правил работы, ближе к фактам: это уже не «как говорить», а «что учитывать».
+    blocks = [
+        TONE,
+        character_block(character),
+        TOOLS_RULES,
+        # Правила про еду — только тем, у кого включено питание: незачем занимать
+        # контекст того, кто модулем не пользуется. Памятки — тем же правилом:
+        # что попало в `memos`, решает вызывающий, а он спрашивает по модулям.
+        MEAL_RULES if "nutrition" in modules else "",
+        memos_block(memos),
+        (
+            f"Сейчас: {now:%d.%m.%Y %H:%M}.\n"
+            f"Ты разговариваешь с: {who}. Семья: «{user.family.name if user.family else 'Семья'}».\n"
+            f"Включённые модули этого человека: {modules_line}.\n"
+            f"Настройка самостоятельности: «{autonomy}».\n"
+        ),
+    ]
+    return "\n".join(block for block in blocks if block)
 
 
 #: Общая часть для оценки блюда — по фото и по описанию. Разложить на составляющие,
@@ -183,6 +239,8 @@ MEAL_PLAN_SYSTEM = """\
 
 Опирайся на историю питания и цель человека. Три дня, по 3-4 приёма пищи.
 Не используй слова «нельзя», «запрещено», «вредно».
+Сказано про ограничения, болезни или нелюбимое — обходи их молча: просто не
+предлагай того, что человеку не подходит, и не объясняй, почему не предложил.
 """
 
 EVENT_CLASSIFY_SYSTEM = """\

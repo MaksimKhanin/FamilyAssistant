@@ -80,6 +80,12 @@ class User(Base):
 
     avatar_slot = Column(Integer, nullable=False, default=0)    # индекс палитры аватара 0..4
     autonomy = Column(Integer, nullable=False, default=1)
+    #: Характер — свободное описание роли, которую ассистент играет для этого
+    #: человека. Личный, как оформление: одному нужен сухой секретарь, другому —
+    #: колкий собеседник, и это про манеру речи, а не про факты (app/core/instructions.py).
+    #: Колонка у участника, но характер тут ассистента — отсюда и имя: `character`
+    #: рядом с `display_name` читался бы как характер самого человека.
+    assistant_character = Column(Text, nullable=True)
     #: Оформление панели — личное, а не семейное: акцент семьи (FamilySettings)
     #: остаётся общим, а фон и контраст каждый выбирает под своё время суток.
     theme = Column(String(8), nullable=False, default=THEME_WARM, server_default=THEME_WARM)
@@ -101,6 +107,23 @@ class ModuleAccess(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     module = Column(String(32), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
+
+
+class ModuleMemo(Base):
+    """Памятка — что ассистенту учитывать в одной области, словами самого человека.
+
+    Про еду важно, что желчного нет и хочется набрать вес; про дом — что по средам
+    приходит уборщица. Строка на пару (человек, модуль), и в промпт она попадает
+    только там, где эта область в деле (app/core/instructions.py).
+    """
+    __tablename__ = "module_memos"
+    __table_args__ = (UniqueConstraint("user_id", "module", name="uq_module_memo"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    module = Column(String(32), nullable=False)
+    text = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class ToolPolicy(Base):

@@ -19,5 +19,8 @@ module = Module(
         NavItem(slug="activity", label="Активность", url="/nutrition/activity", icon="pulse", group="Питание"),
         NavItem(slug="plan", label="План питания", url="/nutrition/plan", icon="book", group="Питание"),
     ],
+    memo_hint=("Что учитывать, когда речь о еде: болезни и ограничения (нет желчного, "
+               "гастрит, аллергия на орехи), к чему вы идёте (сбросить, набрать, "
+               "держать вес), чего не едите и о чём просите не напоминать."),
     per_user=True,
 )

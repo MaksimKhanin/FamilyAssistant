@@ -55,6 +55,37 @@
         бумажное, для дня.</p>
     </div>
 
+    {# Характер стоит сразу за оформлением: и то и другое — про то, каким человек
+       видит ассистента, а не про то, что тому разрешено. #}
+    <form class="card tight stack" method="post" action="/settings/profile/character">
+      <div class="card-title">Характер ассистента</div>
+      <p class="muted">Кем ему быть для вас — своими словами. «Отвечай сухо и по делу»,
+        «неформально, с иронией». Это про манеру речи: цифры и оценки от характера
+        не меняются.</p>
+      <textarea class="field" name="character" rows="3" maxlength="{{ character_limit }}"
+                placeholder="Обычный тон панели: тепло и спокойно, как внимательный член семьи."
+                {% if not can_edit %}disabled{% endif %}>{{ character }}</textarea>
+      {% if can_edit %}
+        <div class="row">
+          <button class="btn" type="submit">Сохранить</button>
+          <span class="spacer tiny">Пустое поле — обычный тон.</span>
+        </div>
+      {% endif %}
+    </form>
+
+    {# Памятки: у каждой области своя, и уезжает она только туда. Поэтому поля
+       не сведены в одно — «нет желчного» нечего делать в разборе кадра с камеры. #}
+    {% for memo in memo_modules %}
+      <form class="card tight stack" method="post" action="/settings/profile/memo/{{ memo.name }}">
+        <div class="card-title">Памятка: {{ memo.title|lower }}</div>
+        <p class="muted">{{ memo.hint }}</p>
+        <textarea class="field" name="memo" rows="3" maxlength="{{ memo_limit }}"
+                  placeholder="Ассистент прочтёт это, когда речь зайдёт об этой области."
+                  {% if not can_edit %}disabled{% endif %}>{{ memo.text }}</textarea>
+        {% if can_edit %}<button class="btn ghost" type="submit">Сохранить</button>{% endif %}
+      </form>
+    {% endfor %}
+
     {# Четыре полоски вместо ползунка: ползунок на телефоне промахивался мимо
        деления, а уровней всего четыре — их видно все сразу. #}
     <div class="card tight stack">
