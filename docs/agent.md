@@ -76,8 +76,9 @@ reply = agent.respond(db, user, "съел суп и салат", image=None, cha
 | `log_meal`, `confirm_meal` | 0 | черновик и человеческое «да» к нему: подтверждение поверх подтверждения — абсурд |
 | `suggest_meal_plan`, `classify_event` | 1 | тратит модель, но ничего не меняет |
 | `log_activity`, `remember`, `set_reminder`, `write_entry` | 2 | пишет в личные данные |
+| `mark_events_seen` | 2 | гасит значок, ничего не теряя: событие остаётся в ленте вместе с вердиктом |
 | `create_board`, `track_board`, `show_stats` | 3 | заводит то, что останется жить: доску, регулярную цифру в сводке, экран в меню |
-| `delete_meal`, `delete_activity`, `forget` | 3 | необратимо |
+| `delete_meal`, `delete_activity`, `forget`, `clear_archive` | 3 | необратимо |
 | `notify_family` | 3 | пишет всей семье — по умолчанию всегда спросит |
 
 Ползунок по умолчанию стоит на 1 («спрашивает про важное»), так что новый человек

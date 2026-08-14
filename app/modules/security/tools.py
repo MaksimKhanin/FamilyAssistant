@@ -14,13 +14,19 @@ from app.agent.registry import ToolContext, ToolResult, tool
 from app.core import family as family_service
 from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
-from app.modules.security import service
+from app.core.templating import counted, filesize
+from app.modules.security import retention, service
 from app.modules.security.models import VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_LABELS, VERDICT_NORMAL, Camera
 
 MODULE = "security"
 logger = get_logger("security.tools")
 
 SEVERITIES = ("info", "attention", "alarm")
+
+
+def _days(count: int) -> str:
+    """«старше 1 дня», «старше 2 дней» — родительный падеж после «старше»."""
+    return counted(count, "дня", "дней", "дней")
 
 
 @tool(
@@ -64,6 +70,109 @@ def get_security_log(ctx: ToolContext, period: str = "today", only: str = "all")
             "at": latest.happened_at.strftime("%H:%M"),
         }
     return ToolResult(summary=summary, data={"total": len(events), "anomalies": len(notable)}, card=card)
+
+
+@tool(
+    name="mark_events_seen",
+    module=MODULE,
+    title="Отметить события просмотренными",
+    description="""
+    Погасить значок «непросмотренное» на событиях дома: «я всё видел», «убери
+    уведомления», «пометь просмотренным всё, что старше двух дней». Записи
+    остаются в ленте — снимается только пометка «никто не разобрал».
+    older_than_days: 0 — всё сразу, N — только то, что старше N суток.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "older_than_days": {
+                "type": "integer", "minimum": 0,
+                "description": "Возраст в сутках; 0 — пометить всё",
+            },
+        },
+    },
+    # Ничего не пропадает: событие остаётся в ленте вместе со своим вердиктом.
+    auto_from=2,
+)
+def mark_events_seen(ctx: ToolContext, older_than_days: int = 0) -> ToolResult:
+    older_than_days = max(0, older_than_days)
+    changed = service.mark_seen(ctx.db, ctx.family_id, older_than_days=older_than_days)
+    left = service.unseen_count(ctx.db, ctx.family_id)
+
+    if not changed:
+        return ToolResult(summary="Непросмотренных событий и так не было — значок не горит.",
+                          data={"marked": 0, "unseen_left": left})
+
+    period = "" if not older_than_days else f", что старше {_days(older_than_days)}"
+    tail = f" Осталось непросмотренных: {left}." if left else " Значок погас."
+    return ToolResult(
+        summary=f"Отметил просмотренным всё{period}: "
+                f"{counted(changed, 'событие', 'события', 'событий')}. "
+                f"В ленте они остались.{tail}",
+        data={"marked": changed, "unseen_left": left},
+    )
+
+
+@tool(
+    name="clear_archive",
+    module=MODULE,
+    title="Убрать старые записи с камер",
+    description="""
+    Удалить записи архива старше указанного срока: «почисти архив за месяц»,
+    «удали всё, что старше недели», «убери старые записи с калитки».
+    Файлы стираются с диска насовсем; события в ленте остаются, только без кадров.
+    older_than_days — сколько суток оставить нетронутыми, минимум 1.
+    camera — название камеры, если человек назвал одну; без него чистится весь архив.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "older_than_days": {"type": "integer", "minimum": 1,
+                                "description": "Убрать всё, что старше стольких суток"},
+            "camera": {"type": "string", "description": "Название камеры, если названа одна"},
+        },
+        "required": ["older_than_days"],
+    },
+    # Как и удаление еды: файлов потом не вернуть, поэтому спрашиваем на всех
+    # уровнях, кроме максимального.
+    auto_from=3,
+)
+def clear_archive(ctx: ToolContext, older_than_days: int, camera: str = None) -> ToolResult:
+    if older_than_days < 1:
+        return ToolResult(summary="Так я сотру и сегодняшние записи. Скажите срок от суток и больше.",
+                          ok=False)
+
+    selected = None
+    if camera:
+        selected = _find_camera(ctx, camera)
+        if selected is None:
+            known = ", ".join(f"«{c.label}»" for c in service.list_cameras(ctx.db, ctx.family_id))
+            return ToolResult(summary=f"Не нашёл камеру «{camera}». Есть: {known or 'ни одной'}.",
+                              ok=False)
+
+    result = retention.purge(ctx.db, ctx.family_id, older_than_days,
+                             camera_id=selected.id if selected else None)
+    where = f" у камеры «{selected.label}»" if selected else ""
+    if not result["records"]:
+        return ToolResult(summary=f"Записей старше {_days(older_than_days)}{where} в архиве нет — "
+                                  f"убирать было нечего.",
+                          data=result)
+
+    freed = filesize(result["bytes"])
+    return ToolResult(
+        summary=f"Убрал из архива{where} {counted(result['records'], 'запись', 'записи', 'записей')} "
+                f"старше {_days(older_than_days)}"
+                f"{f', освободилось {freed}' if freed else ''}. "
+                f"События в ленте остались, только без кадров.",
+        data=result,
+    )
+
+
+def _find_camera(ctx: ToolContext, name: str) -> Camera:
+    """Камера по тому, как её назвал человек: «калитка», «Калитка», слаг из ingest."""
+    wanted = name.strip().lower()
+    cameras = service.list_cameras(ctx.db, ctx.family_id)
+    return next((c for c in cameras if wanted in (c.label.lower(), c.slug.lower())), None)
 
 
 @tool(
@@ -227,5 +336,5 @@ def notify_on_anomaly(payload: dict):
         event.notified_at = datetime.utcnow()
 
 
-__all__ = ["get_security_log", "classify_event", "notify_family", "auto_review",
-           "notify_on_anomaly", "VERDICT_ANOMALY", "VERDICT_NORMAL"]
+__all__ = ["get_security_log", "mark_events_seen", "clear_archive", "classify_event",
+           "notify_family", "auto_review", "notify_on_anomaly", "VERDICT_ANOMALY", "VERDICT_NORMAL"]

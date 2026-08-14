@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if notice %}
+  <div class="card" style="margin-bottom:12px">{{ notice }}</div>
+{% endif %}
+
 <div class="row wrap" style="gap:8px;margin-bottom:12px">
   {% for value, label in archive_filters %}
     <a class="chip {% if active_filter == value %}active{% endif %}"
@@ -44,11 +48,29 @@
   </div>
 {% endif %}
 
-<p class="tiny" style="margin-top:18px;max-width:70ch">
-  Сейчас в архиве {{ stats.photos|counted("снимок", "снимка", "снимков") }}
-  и {{ stats.videos|counted("ролик", "ролика", "роликов") }}{% if stats.bytes %}, это {{ stats.bytes|filesize }}{% endif %}.
-  Записи удаляются автоматически — каждая камера хранит свой срок, обычно две недели.
-  Событие в ленте остаётся, даже когда его кадр уже стёрт.
-</p>
+<div class="card stack" style="margin-top:18px">
+  <div class="card-title">Порядок в архиве</div>
+  <p class="tiny" style="max-width:70ch">
+    Сейчас в архиве {{ stats.photos|counted("снимок", "снимка", "снимков") }}
+    и {{ stats.videos|counted("ролик", "ролика", "роликов") }}{% if stats.bytes %}, это {{ stats.bytes|filesize }}{% endif %}.
+    Записи удаляются автоматически — каждая камера хранит свой срок, обычно две недели.
+    Событие в ленте остаётся, даже когда его кадр уже стёрт.
+  </p>
+  <form class="row wrap" style="gap:8px;align-items:center"
+        method="post" action="/security/archive/purge"
+        hx-confirm="Убрать эти записи{% if selected_camera %} камеры «{{ selected_camera.label }}»{% endif %}? Файлы удалятся с диска насовсем — события в ленте останутся, но без кадров.">
+    <input type="hidden" name="camera" value="{{ selected_camera.slug if selected_camera else '' }}">
+    <input type="hidden" name="only" value="{{ active_filter }}">
+    <span class="tiny">Убрать записи</span>
+    <select class="field" name="older_than" style="width:auto" aria-label="Какие записи убрать">
+      {% for value, label in purge_periods %}
+        <option value="{{ value }}"{% if value == 7 %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn ghost small" type="submit">
+      Убрать{% if selected_camera %} у «{{ selected_camera.label }}»{% endif %}
+    </button>
+  </form>
+</div>
 
 {% endblock %}
