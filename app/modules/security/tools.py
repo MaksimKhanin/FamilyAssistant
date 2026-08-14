@@ -300,10 +300,11 @@ def auto_review(db, event_id: int, family_id: int):
     event = service.get_event(db, family_id, event_id)
     if event is None or event.verdict != VERDICT_CHECK:
         return
-    head = family_service.head_of_family(db, family_id)
-    if head is None:
+    # Инструменту нужен участник: у администратора ассистента нет (ADR-0007).
+    actor = family_service.any_member(db, family_id)
+    if actor is None:
         return
-    result = run_tool_directly(db, head, "classify_event", {"event_id": event_id}, mode="event")
+    result = run_tool_directly(db, actor, "classify_event", {"event_id": event_id}, mode="event")
     if not result.ok:
         logger.info(f"Событие {event_id} осталось с вердиктом правил: {result.summary}")
 

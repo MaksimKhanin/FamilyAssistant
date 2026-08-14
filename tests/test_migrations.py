@@ -1,4 +1,4 @@
-"""Прогон Alembic как внешнее поведение: команда `upgrade head` и итоговая схема.
+"""Прогон Alembic как внешнее поведение: команда `upgrade member` и итоговая схема.
 
 Тесты не заглядывают в файлы миграций — они запускают то же самое, что запустит
 эксплуатирующий, и смотрят на базу глазами инспектора SQLAlchemy.
@@ -20,7 +20,7 @@ def _upgrade_head(db_url: str):
 
 
 def test_upgrade_on_an_empty_database_creates_the_knowledge_tables(tmp_path):
-    """`alembic upgrade head` на пустой базе заводит разделы, доски, записи и доступ."""
+    """`alembic upgrade member` на пустой базе заводит разделы, доски, записи и доступ."""
     url = f"sqlite:///{tmp_path}/fresh.db"
     _upgrade_head(url)
 
@@ -63,7 +63,7 @@ def _schema_snapshot(url: str):
 
 
 def test_upgrade_on_a_database_born_from_create_all_converges_to_the_same_schema(tmp_path):
-    """`alembic upgrade head` на живой базе, созданной `create_all()`, ничего не ломает.
+    """`alembic upgrade member` на живой базе, созданной `create_all()`, ничего не ломает.
 
     Обе дороги — миграции с нуля и `create_all()` + миграции — обязаны приводить
     к одному и тому же состоянию схемы: это и есть контракт baseline-миграции.
@@ -83,7 +83,7 @@ def test_upgrade_on_a_database_born_from_create_all_converges_to_the_same_schema
 
 
 def test_running_the_upgrade_twice_changes_nothing(tmp_path):
-    """Повторный `upgrade head` — тихий no-op, а не ошибка «таблица уже есть»."""
+    """Повторный `upgrade member` — тихий no-op, а не ошибка «таблица уже есть»."""
     url = f"sqlite:///{tmp_path}/fresh.db"
     _upgrade_head(url)
     before = _schema_snapshot(url)
@@ -94,7 +94,7 @@ def test_running_the_upgrade_twice_changes_nothing(tmp_path):
 def test_create_all_deploys_an_empty_database_already_stamped_at_head(db):
     """Пустая база от `create_all()` сразу помечена головой миграций.
 
-    Без штампа первый же `alembic upgrade head` начал бы с baseline и в будущих
+    Без штампа первый же `alembic upgrade member` начал бы с baseline и в будущих
     миграциях спотыкался бы о таблицы, которые `create_all()` создал из моделей.
     """
     from app.core.config import settings
@@ -114,7 +114,7 @@ def test_create_all_deploys_an_empty_database_already_stamped_at_head(db):
     _upgrade_head(settings.database_url)   # и после штампа это тихий no-op
 
 
-def test_create_all_leaves_a_lived_in_database_to_migrations(db, head):
+def test_create_all_leaves_a_lived_in_database_to_migrations(db, member):
     """Живую базу `create_all()` не трогает — недостающее довозит только Alembic.
 
     Иначе сервис, поднятый до прогона миграций, убегал бы вперёд них, и каждой

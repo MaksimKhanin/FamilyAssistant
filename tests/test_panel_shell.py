@@ -39,11 +39,11 @@ def test_no_scripts_inside_swapped_body(template):
 
 
 def test_base_keeps_its_scripts_in_head():
-    """В каркасе скрипты допустимы, но только в <head> — он не подменяется."""
+    """В каркасе скрипты допустимы, но только в <member> — он не подменяется."""
     markup = BASE.read_text(encoding="utf-8")
-    head, _, body = markup.partition("</head>")
+    member, _, body = markup.partition("</member>")
 
-    assert "<script" in head, "каркас должен подключать htmx и app.js"
+    assert "<script" in member, "каркас должен подключать htmx и app.js"
     assert "<script" not in body, (
         "в <body> каркаса появился скрипт: он выполнится заново при каждом "
         "переходе. Место такому коду — в app/static/app.js."

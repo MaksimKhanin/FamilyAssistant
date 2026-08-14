@@ -152,7 +152,8 @@
 
   function loadChat() {
     const panelElement = document.getElementById('chat-panel');
-    if (chatLoading || panelElement.querySelector('#chat-body')) return;
+    // У администратора панели чата нет вовсе: разговор — участниковый экран.
+    if (!panelElement || chatLoading || panelElement.querySelector('#chat-body')) return;
     chatLoading = true;
     htmx.ajax('GET', '/chat/panel', { target: '#chat-panel', swap: 'innerHTML' })
         .finally(() => { chatLoading = false; });
@@ -175,8 +176,13 @@
    *  этих двух вещей нужно держать вместе, иначе панель остаётся висеть поверх
    *  нового экрана без возможности её закрыть. */
   function setChatOpen(open) {
-    document.getElementById('chat-panel').classList.toggle('open', open);
-    document.getElementById('chat-backdrop').classList.toggle('open', open);
+    const panelElement = document.getElementById('chat-panel');
+    const backdrop = document.getElementById('chat-backdrop');
+    // Без панели (админский каркас) закрывать нечего — и звать эту функцию
+    // всё равно будут: она вызывается после каждого перехода.
+    if (!panelElement || !backdrop) return;
+    panelElement.classList.toggle('open', open);
+    backdrop.classList.toggle('open', open);
     document.body.classList.toggle('no-scroll', open);
   }
 

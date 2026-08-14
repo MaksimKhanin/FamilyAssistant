@@ -156,6 +156,7 @@ class Agent:
             subject, modules,
             character=instructions.character(subject),
             memos=instructions.for_prompt(db, subject.id, modules),
+            autonomy=policy.dials(db, subject.family_id)[0],
         )
         if "memory" in modules:
             # Названия и инструкции досок — в промпт; содержимое остаётся за
@@ -306,7 +307,10 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
         return ToolResult(summary="Это действие уже неактуально.", ok=False)
 
     subject = db.get(User, pending.user_id)
-    if subject is None or (actor.id != subject.id and not actor.is_head):
+    # Подтверждает только тот, чей это разговор: чужое «да» больше не выдаётся
+    # никому — роль главы семьи, умевшая это, разделилась на админа и участника,
+    # и у администратора разговора нет вовсе (ADR-0007).
+    if subject is None or actor.id != subject.id:
         return ToolResult(summary="Подтвердить это действие может только сам человек.", ok=False)
 
     spec = registry.get(pending.tool)
@@ -317,9 +321,8 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
 
     arguments = json.loads(pending.arguments_json or "{}")
     image = media.read_and_discard(pending.attachment_path)
-    # Действие исполняется в контексте того, чей это был разговор: «да» главы
-    # семьи подтверждает чужую просьбу, но не переносит её данные к себе —
-    # инструменты знаний ходят по ctx.actor (ADR-0005).
+    # Действие исполняется в контексте того, чей это был разговор: инструменты
+    # знаний ходят по ctx.actor (ADR-0005).
     ctx = ToolContext(db=db, actor=subject, subject=subject, channel=channel,
                       attachments={"image": image} if image else {})
     result = registry.execute(spec, ctx, arguments)
@@ -342,7 +345,7 @@ def reject_action(db: Session, pending_id: int, actor: User) -> ToolResult:
     pending = db.get(PendingAction, pending_id)
     if pending is None or pending.status != "pending":
         return ToolResult(summary="Это действие уже неактуально.", ok=False)
-    if actor.id != pending.user_id and not actor.is_head:
+    if actor.id != pending.user_id:
         return ToolResult(summary="Отменить это действие может только сам человек.", ok=False)
 
     media.read_and_discard(pending.attachment_path)   # вложение больше не нужно

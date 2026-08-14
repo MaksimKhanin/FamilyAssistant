@@ -26,7 +26,7 @@
         </span>
         <div style="flex:1">
           <div style="font-weight:600">{{ row.user.display_name }}</div>
-          <div class="tiny">{{ row.user.relation or ("глава семьи" if row.user.is_head else "участник") }}</div>
+          <div class="tiny">{{ row.user.relation or ("администратор" if row.user.is_admin else "участник") }}</div>
         </div>
         {% if row.user.password_hash %}
           <span class="badge ok">заходит сам</span>

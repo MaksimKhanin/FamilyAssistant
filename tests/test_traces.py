@@ -5,7 +5,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent import tracing
+from app.agent import policy, tracing
 from app.agent.llm import LLMClient, LLMResponse, ToolCall
 from app.agent.runtime import Agent
 from app.core.auth import hash_password
@@ -33,21 +33,21 @@ def client(db):
 
 
 @pytest.fixture
-def as_head(client, head):
-    client.post("/login", data={"username": head.username, "password": "pw"}, follow_redirects=False)
+def as_admin(client, admin):
+    """Трейсы — админский экран: под участником он не откроется вовсе."""
+    client.post("/login", data={"username": admin.username, "password": "pw"}, follow_redirects=False)
     return client
 
 
 # --- запись ---------------------------------------------------------------
 
-def test_a_reply_becomes_a_run_with_the_tool_call_in_it(db, head):
-    head.autonomy = 3
-    db.commit()
+def test_a_reply_becomes_a_run_with_the_tool_call_in_it(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
 
-    _answer(db, head)
+    _answer(db, member)
 
     run = db.query(AgentRun).one()
-    assert run.user_id == head.id
+    assert run.user_id == member.id
     assert run.trigger.startswith("запомни")
     assert run.reply == "Запомнил."
     assert run.duration_ms >= 1
@@ -58,24 +58,24 @@ def test_a_reply_becomes_a_run_with_the_tool_call_in_it(db, head):
     assert "summary" in step.response_json
 
 
-def test_nothing_is_written_while_the_switch_is_off(db, head):
-    tracing.get_settings(db, head.family_id).enabled = False
+def test_nothing_is_written_while_the_switch_is_off(db, member):
+    tracing.get_settings(db, member.family_id).enabled = False
     db.commit()
 
-    _answer(db, head)
+    _answer(db, member)
 
     assert db.query(AgentRun).count() == 0
     assert db.query(AgentTraceStep).count() == 0
 
 
-def test_the_exact_request_to_the_model_is_kept(db, head, monkeypatch):
+def test_the_exact_request_to_the_model_is_kept(db, member, monkeypatch):
     """Ради этого экран и заводился: видно, что модель получила на самом деле."""
     answer = {"choices": [{"message": {"content": "Здравствуйте."}, "finish_reason": "stop"}],
               "usage": {"prompt_tokens": 31, "completion_tokens": 3, "total_tokens": 34}}
     monkeypatch.setattr(httpx, "post", lambda url, json=None, headers=None, timeout=None:
                         httpx.Response(200, json=answer, request=httpx.Request("POST", url)))
 
-    with tracing.run(db, head, head, "web", "привет"):
+    with tracing.run(db, member, member, "web", "привет"):
         LLMClient().chat([{"role": "system", "content": "ты ассистент"},
                           {"role": "user", "content": "привет"}])
 
@@ -89,9 +89,9 @@ def test_the_exact_request_to_the_model_is_kept(db, head, monkeypatch):
     assert (run.total_tokens, run.llm_calls) == (34, 1)
 
 
-def test_a_huge_value_is_trimmed_instead_of_bloating_the_base(db, head):
+def test_a_huge_value_is_trimmed_instead_of_bloating_the_base(db, member):
     """Фото в base64 — мегабайты; в трейсе от него нужен только факт."""
-    with tracing.run(db, head, head, "web", "фото") as recorder:
+    with tracing.run(db, member, member, "web", "фото") as recorder:
         recorder.tool("estimate_meal", {"image": "x" * 100_000}, {"ok": True})
 
     step = db.query(AgentTraceStep).one()
@@ -101,52 +101,50 @@ def test_a_huge_value_is_trimmed_instead_of_bloating_the_base(db, head):
 
 # --- сессии и сводки ------------------------------------------------------
 
-def test_replies_in_a_row_land_in_one_conversation(db, head):
-    head.autonomy = 3
-    db.commit()
+def test_replies_in_a_row_land_in_one_conversation(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
 
-    _answer(db, head)
-    _answer(db, head, "и ещё запомни")
+    _answer(db, member)
+    _answer(db, member, "и ещё запомни")
 
     sessions = {run.session_id for run in db.query(AgentRun).all()}
     assert len(sessions) == 1
 
 
-def test_a_long_pause_starts_a_new_conversation(db, head):
-    head.autonomy = 3
-    db.commit()
+def test_a_long_pause_starts_a_new_conversation(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
 
-    _answer(db, head)
+    _answer(db, member)
     old = db.query(AgentRun).one()
     old.created_at = datetime.utcnow() - tracing.SESSION_GAP - timedelta(minutes=1)
     db.commit()
 
-    _answer(db, head, "спустя час")
+    _answer(db, member, "спустя час")
 
     sessions = {run.session_id for run in db.query(AgentRun).all()}
     assert len(sessions) == 2
 
 
-def test_tokens_are_summed_per_person(db, head, member):
-    with tracing.run(db, head, head, "web", "раз") as recorder:
+def test_tokens_are_summed_per_person(db, member, other):
+    with tracing.run(db, member, member, "web", "раз") as recorder:
         recorder.llm({"model": "m"}, {}, usage={"prompt_tokens": 10, "completion_tokens": 5,
                                                 "total_tokens": 15})
-    with tracing.run(db, member, member, "telegram", "два") as recorder:
+    with tracing.run(db, other, other, "telegram", "два") as recorder:
         recorder.llm({"model": "m"}, {}, usage={"prompt_tokens": 1, "completion_tokens": 1,
                                                 "total_tokens": 2})
 
-    by_user = {row["name"]: row for row in tracing.by_user(db, head.family_id)}
-    assert by_user[head.display_name]["total_tokens"] == 15
-    assert by_user[member.display_name]["total_tokens"] == 2
-    assert by_user[head.display_name]["sessions"] == 1
+    by_user = {row["name"]: row for row in tracing.by_user(db, member.family_id)}
+    assert by_user[member.display_name]["total_tokens"] == 15
+    assert by_user[other.display_name]["total_tokens"] == 2
+    assert by_user[member.display_name]["sessions"] == 1
 
 
-def test_old_runs_are_forgotten(db, head):
-    tracing.get_settings(db, head.family_id).keep_runs = 2
+def test_old_runs_are_forgotten(db, member):
+    tracing.get_settings(db, member.family_id).keep_runs = 2
     db.commit()
 
     for number in range(4):
-        with tracing.run(db, head, head, "web", f"реплика {number}"):
+        with tracing.run(db, member, member, "web", f"реплика {number}"):
             pass
 
     triggers = [row.trigger for row in db.query(AgentRun).order_by(AgentRun.id).all()]
@@ -155,36 +153,32 @@ def test_old_runs_are_forgotten(db, head):
 
 # --- экран и выгрузка -----------------------------------------------------
 
-def test_the_screen_is_closed_to_everyone_but_the_head(client, db, member):
-    member.password_hash = hash_password("pw")
-    db.commit()
+def test_the_screen_is_closed_to_a_family_member(client, db, member):
+    """В трейсах лежат промпты всех домашних — участнику там делать нечего."""
     client.post("/login", data={"username": member.username, "password": "pw"}, follow_redirects=False)
 
     response = client.get("/settings/traces")
 
-    assert response.status_code == 200
-    assert "только для главы семьи" in response.text
+    assert response.status_code == 403
     assert "Токены по людям" not in response.text
 
 
-def test_the_head_sees_the_run_on_the_screen(as_head, db, head):
-    head.autonomy = 3
-    db.commit()
-    _answer(db, head)
+def test_the_administrator_sees_the_run_on_the_screen(as_admin, db, member):
+    policy.set_autonomy(db, member.family_id, 3)
+    _answer(db, member)
 
-    response = as_head.get("/settings/traces")
+    response = as_admin.get("/settings/traces")
 
     assert response.status_code == 200
     assert "Токены по людям" in response.text
     assert "remember" in response.text
 
 
-def test_export_returns_a_json_attachment_with_the_prompts(as_head, db, head):
-    head.autonomy = 3
-    db.commit()
-    _answer(db, head)
+def test_export_returns_a_json_attachment_with_the_prompts(as_admin, db, member):
+    policy.set_autonomy(db, member.family_id, 3)
+    _answer(db, member)
 
-    response = as_head.get("/settings/traces/export.json")
+    response = as_admin.get("/settings/traces/export.json")
 
     assert response.status_code == 200
     assert "attachment" in response.headers["content-disposition"]
@@ -194,23 +188,21 @@ def test_export_returns_a_json_attachment_with_the_prompts(as_head, db, head):
     assert data["by_user"][0]["total_tokens"] == 0        # FakeLLM токенов не отдаёт
 
 
-def test_export_can_be_narrowed_to_one_conversation(as_head, db, head):
-    head.autonomy = 3
-    db.commit()
-    _answer(db, head)
+def test_export_can_be_narrowed_to_one_conversation(as_admin, db, member):
+    policy.set_autonomy(db, member.family_id, 3)
+    _answer(db, member)
     session_id = db.query(AgentRun).one().session_id
 
-    response = as_head.get(f"/settings/traces/export.json?session_id={session_id}")
+    response = as_admin.get(f"/settings/traces/export.json?session_id={session_id}")
 
     assert [run["session_id"] for run in response.json()["runs"]] == [session_id]
 
 
-def test_clearing_wipes_the_prompts(as_head, db, head):
-    head.autonomy = 3
-    db.commit()
-    _answer(db, head)
+def test_clearing_wipes_the_prompts(as_admin, db, member):
+    policy.set_autonomy(db, member.family_id, 3)
+    _answer(db, member)
 
-    as_head.post("/settings/traces/clear", follow_redirects=False)
+    as_admin.post("/settings/traces/clear", follow_redirects=False)
 
     assert db.query(AgentRun).count() == 0
     assert db.query(AgentTraceStep).count() == 0

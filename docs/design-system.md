@@ -88,10 +88,13 @@ sidebar 246px  |  header (sticky)
 | Отдельная запись | `security/media.html` | `/security/media/{id}` |
 | Камеры | `security/cameras.html` | `/security/cameras` |
 | Коннекторы | `settings/connectors.html` | `/settings/connectors` |
-| Семья и модули | `settings/family.html` | `/settings/family` |
-| Профиль и агент | `settings/profile.html` | `/settings/profile` (сюда же ведёт `/settings/agent`) |
-| Модель и знания | `settings/model.html` | `/settings/model` |
-| Трейсы агента | `settings/traces.html` | `/settings/traces` |
+| Семья (состав, участнику) | `settings/family.html` | `/settings/family` |
+| Профиль и агент | `settings/profile.html` | `/settings/profile` |
+| Учётные записи (админ) | `settings/accounts.html` | `/settings/accounts` |
+| Агент и инструменты (админ) | `settings/agent.html` | `/settings/agent` |
+| Модель и знания (админ) | `settings/model.html` | `/settings/model` |
+| Трейсы агента (админ) | `settings/traces.html` | `/settings/traces` |
+| Не ваш экран | `denied.html` | любой чужой адрес |
 | Онбординг (3 шага) | `onboarding.html` | `/onboarding` |
 | Приглашение участника | `invite.html`, `invite_expired.html` | `/invite/{код}` |
 

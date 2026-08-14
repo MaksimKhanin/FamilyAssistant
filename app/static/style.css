@@ -356,6 +356,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
     padding: 18px 16px calc(var(--nav-h) + 18px + env(safe-area-inset-bottom));
   }
 
+  /* У администратора нижней панели нет (разговор — участниковый экран), и место
+     под неё внизу оставлять незачем: иначе экран заканчивается пустой полосой. */
+  .layout.admin .content {
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
   /* Нижняя панель — три пункта, и только они: «Дом», «Разговор», «Знания».
      Пять пунктов не влезали в подписи, а разговор — то, ради чего приложение
      открывают чаще всего, поэтому он в центре и всегда акцентный. Остальные
@@ -482,6 +488,12 @@ body.no-scroll { overflow: hidden; }
   border: none; background: none; cursor: pointer;
 }
 .segment .on { background: var(--surface); color: var(--text); font-weight: 600; }
+
+/* Раздел, который показан, но ещё не работает: «Коннекторы». Гасим содержимое
+   целиком, а не по кнопке — иначе часть экрана выглядит рабочей, а часть нет,
+   и человек пробует нажимать. Плашка над ним объясняет, почему так. */
+.in-progress { opacity: .55; filter: saturate(.4); }
+.in-progress button, .in-progress .toggle { cursor: not-allowed; }
 
 .field {
   width: 100%; padding: 10px 12px; border-radius: 11px;

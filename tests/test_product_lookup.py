@@ -25,8 +25,8 @@ def clean_cache():
 
 
 @pytest.fixture
-def ctx(db, head):
-    return ToolContext(db=db, actor=head, subject=head, channel="web", attachments={})
+def ctx(db, member):
+    return ToolContext(db=db, actor=member, subject=member, channel="web", attachments={})
 
 
 class FakeResponse:
@@ -241,12 +241,12 @@ def test_a_named_product_is_counted_by_its_label(ctx, estimator, found):
     assert result.data["sources"] == ["https://www.mars.com/mars-51"]
 
 
-def test_the_person_is_told_where_the_numbers_came_from(ctx, db, head, estimator, found):
+def test_the_person_is_told_where_the_numbers_came_from(ctx, db, member, estimator, found):
     """Цифра без источника ничем не отличается от выдуманной."""
     result = tools.log_meal(ctx, text="съел батончик марс")
 
     assert "mars.com" in result.summary
-    meal = db.query(tools.service.Meal).filter(tools.service.Meal.user_id == head.id).one()
+    meal = db.query(tools.service.Meal).filter(tools.service.Meal.user_id == member.id).one()
     assert "mars.com" in (meal.note or "")         # источник переживает разговор
 
 

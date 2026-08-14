@@ -9,6 +9,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from app.core import family as family_service
+from app.core import roles
 from app.core.access import enabled_modules
 from app.core.auth import can_act_as, can_see_figures
 from app.core.module import NavItem
@@ -24,7 +25,9 @@ AVATAR_PALETTE = [
     ("#EADFE9", "#75517A"),
 ]
 
-GROUP_ORDER = ["", "Питание", "Безопасность", "Настройки", "Администрирование"]
+#: Порядок групп в меню. «Администрирование» стоит первым, потому что видит его
+#: только администратор, и это вся его панель; у участника такой группы нет.
+GROUP_ORDER = ["", "Администрирование", "Питание", "Безопасность", "Настройки"]
 
 #: Акцент, с которым семья заводится, — цвет прежнего оформления. Пока его никто
 #: не трогал, акцент берётся из темы (терракота днём, янтарь ночью); как только
@@ -36,16 +39,29 @@ CORE_NAV = [
     NavItem(slug="dashboard", label="Главная", url="/", icon="grid"),
 ]
 
-SETTINGS_NAV = [
+#: Меню участника. Пункты админ-раздела здесь не перечислены и перечислены быть
+#: не могут: что кому открыто, знает `app/core/roles.py`, и навигация спрашивает
+#: у него, а не хранит второй список прав рядом.
+MEMBER_NAV = [
     NavItem(slug="connectors", label="Коннекторы", url="/settings/connectors", icon="plug", group="Настройки"),
     # Профиль и настройки агента — один экран: на телефоне их разделение
     # заставляло ходить туда-обратно между «кто я» и «что ему можно».
     NavItem(slug="profile", label="Профиль и агент", url="/settings/profile", icon="user", group="Настройки"),
-    NavItem(slug="family", label="Семья и модули", url="/settings/family", icon="users", group="Настройки"),
+    NavItem(slug="family", label="Семья", url="/settings/family", icon="users", group="Настройки"),
+]
+
+#: Меню администратора. Разговора, главной и модулей в нём нет — их у админской
+#: учётки не существует; профиль остался ради пароля и оформления.
+ADMIN_NAV = [
+    NavItem(slug="accounts", label="Учётные записи", url="/settings/accounts", icon="users",
+            group="Администрирование"),
+    NavItem(slug="agent", label="Агент и инструменты", url="/settings/agent", icon="wand",
+            group="Администрирование"),
     NavItem(slug="llm", label="Модель и знания", url="/settings/model", icon="brain",
-            group="Администрирование", head_only=True),
+            group="Администрирование"),
     NavItem(slug="traces", label="Трейсы агента", url="/settings/traces", icon="pulse",
-            group="Администрирование", head_only=True),
+            group="Администрирование"),
+    NavItem(slug="profile", label="Профиль", url="/settings/profile", icon="user", group="Настройки"),
 ]
 
 
@@ -71,20 +87,34 @@ def build_nav(db: Session, enabled: Set[str], current: User) -> List[dict]:
     (`nav_items_for`) — сегодня это табло. Спрашивают их про `current`, а не
     `viewed`: знания и всё, что из них растёт, исключены из режима «от лица»
     (ADR-0005), и переключение аватара в шапке чужих табло не показывает.
+
+    У администратора модульные пункты не зависят от тумблеров: тумблеры
+    включают модуль **участнику**, а админу модуль отдаёт не экран для жизни, а
+    экран настройки — камеры настраивают до того, как их кому-то включили.
     """
-    items: List[NavItem] = list(CORE_NAV)
-    for module in load_modules():
-        if not (module.always_on or module.name in enabled):
-            continue
-        items.extend(module.nav_items)
-        if module.nav_items_for is not None:
-            items.extend(module.nav_items_for(db, current))
-    items.extend(SETTINGS_NAV)
+    items: List[NavItem] = []
+    if current.is_admin:
+        items.extend(ADMIN_NAV)
+        for module in load_modules():
+            items.extend(module.nav_items)
+    else:
+        items.extend(CORE_NAV)
+        for module in load_modules():
+            if not (module.always_on or module.name in enabled):
+                continue
+            items.extend(module.nav_items)
+            if module.nav_items_for is not None:
+                items.extend(module.nav_items_for(db, current))
+        items.extend(MEMBER_NAV)
 
     groups: Dict[str, List[NavItem]] = {}
+    seen: Set[str] = set()
     for item in items:
-        if item.head_only and not current.is_head:
+        # Пункт показывается ровно тогда, когда экран за ним открылся бы: список
+        # прав в панели один, и живёт он в `roles`.
+        if not roles.visible_nav(current, item.url) or item.url in seen:
             continue
+        seen.add(item.url)
         groups.setdefault(item.group, []).append(item)
 
     ordered = [g for g in GROUP_ORDER if g in groups]
@@ -125,6 +155,8 @@ def badges(db: Session, viewed: User, enabled: Set[str]) -> Dict[str, int]:
 
 def screen_context(request: Request, db: Session, current: User, viewed: User,
                    title: str, subtitle: str = "") -> dict:
+    # Семья — это участники: администратора нет ни в полосе аватаров, ни в
+    # списках, куда семья смотрит (app/core/family.py).
     members = family_service.members(db, viewed.family_id)
     settings_row = family_service.get_settings(db, viewed.family_id)
 
@@ -146,8 +178,11 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
         # режим «от лица» меняет данные экрана, а не глаза человека перед ним.
         "theme": current.theme if current.theme in THEMES else THEME_WARM,
         "members": members,
-        "avatars": [avatar(m) for m in members],
+        # Переключаться между людьми может только участник: у администратора
+        # чужих экранов нет, и полоса аватаров ему ничего не открывает.
+        "avatars": [] if current.is_admin else [avatar(m) for m in members],
         "viewed_avatar": avatar(viewed),
+        "is_admin": current.is_admin,
         "nav_groups": nav_groups,
         "quick_nav": build_quick_nav(nav_groups),
         "badges": badges(db, viewed, enabled),

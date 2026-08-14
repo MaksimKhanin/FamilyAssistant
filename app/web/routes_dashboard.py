@@ -60,7 +60,7 @@ def dashboard(
         steps_today=steps_today,
         home=home,
         ring_degrees=_ring_degrees(day, profile),
-        family_strip=_family_strip(db, current, viewed) if current.is_head else None,
+        family_strip=_family_strip(db, current, viewed),
     )
     return render(request, "dashboard.html", context)
 

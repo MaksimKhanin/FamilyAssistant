@@ -45,22 +45,22 @@ def test_the_same_moment_in_utc_would_have_looked_ordinary(moscow, db, family):
     assert naive.verdict == VERDICT_NORMAL       # ровно та ошибка, которую чиним
 
 
-def test_late_meal_counts_towards_the_right_day(moscow, db, head):
+def test_late_meal_counts_towards_the_right_day(moscow, db, member):
     """Ужин в 23:30 по-местному — это сегодняшний ужин, а не завтрашний завтрак."""
     supper = datetime(2026, 8, 9, 20, 30)        # 23:30 в Москве
-    nutrition.create_draft(db, head.id, MealEstimate("Ужин", 600, 30, 20, 60), eaten_at=supper)
+    nutrition.create_draft(db, member.id, MealEstimate("Ужин", 600, 30, 20, 60), eaten_at=supper)
 
-    stats = nutrition.period_stats(db, head.id, "day", today=date(2026, 8, 9))
+    stats = nutrition.period_stats(db, member.id, "day", today=date(2026, 8, 9))
     assert stats.consumed == 600
 
-    meals = nutrition.meals_for_day(db, head.id, day=date(2026, 8, 9))
+    meals = nutrition.meals_for_day(db, member.id, day=date(2026, 8, 9))
     assert [m.title for m in meals] == ["Ужин"]
 
 
-def test_meal_after_local_midnight_belongs_to_the_next_day(moscow, db, head):
+def test_meal_after_local_midnight_belongs_to_the_next_day(moscow, db, member):
     night_snack = datetime(2026, 8, 9, 22, 0)    # 01:00 десятого в Москве
-    nutrition.create_draft(db, head.id, MealEstimate("Ночной перекус", 200, 5, 8, 25),
+    nutrition.create_draft(db, member.id, MealEstimate("Ночной перекус", 200, 5, 8, 25),
                            eaten_at=night_snack)
 
-    assert nutrition.period_stats(db, head.id, "day", today=date(2026, 8, 9)).consumed == 0
-    assert nutrition.period_stats(db, head.id, "day", today=date(2026, 8, 10)).consumed == 200
+    assert nutrition.period_stats(db, member.id, "day", today=date(2026, 8, 9)).consumed == 0
+    assert nutrition.period_stats(db, member.id, "day", today=date(2026, 8, 10)).consumed == 200

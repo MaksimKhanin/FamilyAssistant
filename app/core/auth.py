@@ -1,11 +1,14 @@
 """Login with signed session cookies, plus the «acting as» switch.
 
-The web panel lets whoever is logged in look at the panel through another family
-member's eyes (the avatar row in the header). That is a display convenience for a
-household of five, not a privilege escalation path: other people's nutrition
-figures stay hidden (see `can_see_figures`), and anything the agent *does* is done
-on behalf of the selected member only when the logged-in user is the head of the
-family or the member themselves.
+The web panel lets a family member look at the panel through another member's
+eyes (the avatar row in the header). It is a display convenience for a household
+of five and nothing more: other people's nutrition figures stay hidden (see
+`can_see_figures`), and nothing can be *changed* on someone else's behalf — since
+the head of the family became a plain administrator (ADR-0007), acting for
+another person has no owner, and `can_act_as` is identity only.
+
+Администратора этот переключатель не касается вовсе: он не участник семьи, чужих
+экранов у него нет, и смотреть ими он не может.
 """
 from typing import Optional
 
@@ -69,9 +72,18 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+def session_user(request: Request, db: Session) -> Optional[User]:
+    """Кто вошёл — по одной куке и одному запросу, без FastAPI-зависимостей.
+
+    Нужно гейту ролей (`app/web/gate.py`): он работает раньше роутов, и `Depends`
+    там взять неоткуда.
+    """
     data = _read_session(request)
     return db.get(User, data["uid"]) if data else None
+
+
+def get_optional_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
+    return session_user(request, db)
 
 
 def get_viewed_user(
@@ -81,24 +93,32 @@ def get_viewed_user(
 ) -> User:
     """The family member whose screens are being shown (avatar row in the header)."""
     raw = request.cookies.get(ACTING_COOKIE)
-    if not raw or not raw.isdigit():
+    if not raw or not raw.isdigit() or current.is_admin:
         return current
     viewed = db.get(User, int(raw))
-    if viewed is None or viewed.family_id != current.family_id:
+    # Админская учётка не «просматривается»: своих экранов у неё нет, и подставлять
+    # её вместо участника значило бы показать пустоту вместо чужого дня.
+    if viewed is None or viewed.family_id != current.family_id or viewed.is_admin:
         return current
     return viewed
 
 
 def can_act_as(current: User, viewed: User) -> bool:
-    """May `current` change data / run tools on behalf of `viewed`?"""
-    return current.id == viewed.id or current.is_head
+    """May `current` change data / run tools on behalf of `viewed`?
+
+    Только сам за себя. Раньше это умел глава семьи, но роль главы разделилась
+    на администратора и участника (ADR-0007), а у администратора нет ни разговора,
+    ни модулей — значит, действовать за другого стало некому.
+    """
+    return current.id == viewed.id
 
 
 def can_see_figures(current: User, viewed: User) -> bool:
     """Nutrition numbers are private: only the person themselves sees their calories.
 
-    The head of the family sees who logged something and when, but not the figures —
-    this mirrors the `showOthersCalories: false` default in the design package.
+    Остальные видят, что человек сегодня что-то записал и когда, но не сколько —
+    это `showOthersCalories: false` из дизайн-пакета. Администратора вопрос не
+    касается: экранов питания у него нет.
     """
     return current.id == viewed.id
 

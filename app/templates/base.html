@@ -34,7 +34,7 @@
 <div id="nav-progress" hx-preserve="true"></div>
 {# Класс каркаса ставит экран, а не body: тело документа подменяется целиком,
    и класс на нём не менялся бы при переходе. #}
-<div class="layout {% block shell_class %}{% endblock %}">
+<div class="layout {% if is_admin %}admin{% endif %} {% block shell_class %}{% endblock %}">
   <div class="drawer-backdrop" id="drawer-backdrop" onclick="panel.closeDrawer()"></div>
 
   <aside class="sidebar" id="sidebar">
@@ -49,9 +49,13 @@
       </button>
     </div>
 
-    <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
-      {{ ic.icon("chat") }} Разговор
-    </a>
+    {# Разговора у администратора нет: ассистент отвечает участнику, а админская
+       учётка — служебная (ADR-0007). #}
+    {% if not is_admin %}
+      <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
+        {{ ic.icon("chat") }} Разговор
+      </a>
+    {% endif %}
 
     {% for group in nav_groups %}
       {% if group.title %}<div class="nav-group-title">{{ group.title }}</div>{% endif %}
@@ -66,7 +70,11 @@
     {% endfor %}
 
     <div class="assistant-card">
-      <span class="pulse-dot"></span>Ассистент на связи
+      {% if is_admin %}
+        <span class="pulse-dot"></span>Настройки для всей семьи
+      {% else %}
+        <span class="pulse-dot"></span>Ассистент на связи
+      {% endif %}
     </div>
   </aside>
 
@@ -79,10 +87,10 @@
         {% if subtitle %}<p class="subtitle">{{ subtitle }}</p>{% endif %}
       </div>
       <div class="header-right">
-        <span class="badge neutral no-mobile">{{ "Глава семьи" if current_user.is_head else "Участник" }}</span>
+        <span class="badge neutral no-mobile">{{ "Администратор" if is_admin else "Участник" }}</span>
         {# На самом экране разговора кнопка не нужна и работать бы не стала:
            вторая копия переписки в выдвижной панели дала бы два #chat-body. #}
-        {% if active_path != '/chat' %}
+        {% if not is_admin and active_path != '/chat' %}
           <button class="btn no-mobile" type="button" onclick="panel.openChat()">
             {{ ic.icon("chat", 15) }} Спросить ассистента
           </button>
@@ -126,18 +134,23 @@
 {# on-chat: на самом экране разговора кнопка никуда не ведёт, и кричать ей не о
    чем — она гаснет до обычной плитки, оставляя акцент только подписи «вы
    здесь». Заодно из-под поля ввода уходит второй акцентный квадрат. #}
-<nav class="bottom-nav {% if active_path == '/chat' %}on-chat{% endif %}">
-  {{ nav_slot(quick_nav[0]) }}
-  <a class="talk {% if active_path == '/chat' %}active{% endif %}" href="/chat">
-    <i>{{ ic.icon("chat", 24) }}</i><span>Разговор</span>
-  </a>
-  {{ nav_slot(quick_nav[1]) }}
-</nav>
+{# Нижняя панель держится на «Разговоре» посередине, поэтому у администратора её
+   нет вовсе: без разговора остались бы два пустых места по краям. Его экраны
+   живут в выдвижном меню — их немного, и ходит он туда редко. #}
+{% if not is_admin %}
+  <nav class="bottom-nav {% if active_path == '/chat' %}on-chat{% endif %}">
+    {{ nav_slot(quick_nav[0]) }}
+    <a class="talk {% if active_path == '/chat' %}active{% endif %}" href="/chat">
+      <i>{{ ic.icon("chat", 24) }}</i><span>Разговор</span>
+    </a>
+    {{ nav_slot(quick_nav[1]) }}
+  </nav>
 
-<div class="chat-backdrop" id="chat-backdrop" onclick="panel.closeChat()"></div>
-{# Переписка тянется по первому открытию панели, а не вместе с каждым экраном:
-   раньше она перезапрашивалась при любом переходе, даже когда чат закрыт. #}
-<aside class="chat-panel" id="chat-panel" hx-preserve="true"></aside>
+  <div class="chat-backdrop" id="chat-backdrop" onclick="panel.closeChat()"></div>
+  {# Переписка тянется по первому открытию панели, а не вместе с каждым экраном:
+     раньше она перезапрашивалась при любом переходе, даже когда чат закрыт. #}
+  <aside class="chat-panel" id="chat-panel" hx-preserve="true"></aside>
+{% endif %}
 
 {% if request.query_params.get("welcome") %}
   <div class="toast" id="toast">Готово — всё настроено</div>

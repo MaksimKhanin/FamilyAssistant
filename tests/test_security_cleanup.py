@@ -43,10 +43,10 @@ def client(db):
 
 
 @pytest.fixture
-def as_head(client, db, head):
-    head.password_hash = hash_password("pw")
+def as_member(client, db, member):
+    member.password_hash = hash_password("pw")
     db.commit()
-    client.post("/login", data={"username": head.username, "password": "pw"},
+    client.post("/login", data={"username": member.username, "password": "pw"},
                 follow_redirects=False)
     return client
 
@@ -123,7 +123,7 @@ def test_a_family_decision_does_not_get_overwritten(db, family, gate):
     assert ours.resolution == RESOLUTION_OURS
 
 
-def test_the_neighbours_alarms_are_not_yours_to_dismiss(db, family, gate, head):
+def test_the_neighbours_alarms_are_not_yours_to_dismiss(db, family, gate, member):
     """Лента общая на семью, но не на сервер: чужая тревога остаётся непросмотренной."""
     from app.core.models import Family
 
@@ -140,10 +140,10 @@ def test_the_neighbours_alarms_are_not_yours_to_dismiss(db, family, gate, head):
     assert theirs.resolution is None
 
 
-def test_the_button_on_the_screen_marks_and_comes_back(as_head, db, family, gate):
+def test_the_button_on_the_screen_marks_and_comes_back(as_member, db, family, gate):
     _alarm(db, family.id, gate)
 
-    response = as_head.post("/security/events/seen", data={"older_than": 0, "only": "anomaly"},
+    response = as_member.post("/security/events/seen", data={"older_than": 0, "only": "anomaly"},
                             follow_redirects=False)
 
     assert response.status_code == 303
@@ -151,13 +151,13 @@ def test_the_button_on_the_screen_marks_and_comes_back(as_head, db, family, gate
     assert service.unseen_count(db, family.id) == 0
 
 
-def test_the_screen_offers_the_button_only_while_there_is_something_to_mark(as_head, db,
+def test_the_screen_offers_the_button_only_while_there_is_something_to_mark(as_member, db,
                                                                            family, gate):
-    assert "Непросмотренных" not in as_head.get("/security/events").text
+    assert "Непросмотренных" not in as_member.get("/security/events").text
 
     _alarm(db, family.id, gate)
 
-    assert "Непросмотренных" in as_head.get("/security/events").text
+    assert "Непросмотренных" in as_member.get("/security/events").text
 
 
 # --- уборка архива ----------------------------------------------------------
@@ -221,10 +221,10 @@ def test_today_is_never_swept_away(db, family, gate):
     assert db.query(MediaItem).count() == 1
 
 
-def test_the_button_on_the_archive_screen_cleans_and_says_what_it_did(as_head, db, family, gate):
+def test_the_button_on_the_archive_screen_cleans_and_says_what_it_did(as_member, db, family, gate):
     _stored(db, family.id, gate, "old.jpg", days_ago=9)
 
-    response = as_head.post("/security/archive/purge",
+    response = as_member.post("/security/archive/purge",
                             data={"older_than": 7, "camera": "", "only": "all"},
                             follow_redirects=True)
 
@@ -235,11 +235,11 @@ def test_the_button_on_the_archive_screen_cleans_and_says_what_it_did(as_head, d
 
 # --- то же самое словами ----------------------------------------------------
 
-def test_the_assistant_marks_events_seen_by_age(db, family, gate, head):
+def test_the_assistant_marks_events_seen_by_age(db, family, gate, member):
     fresh = _alarm(db, family.id, gate, hours_ago=10)
     _alarm(db, family.id, gate, hours_ago=60)
 
-    result = tools.mark_events_seen(_ctx(db, head), older_than_days=2)
+    result = tools.mark_events_seen(_ctx(db, member), older_than_days=2)
 
     assert result.ok and result.data == {"marked": 1, "unseen_left": 1}
     assert "старше 2 дней" in result.summary
@@ -247,49 +247,49 @@ def test_the_assistant_marks_events_seen_by_age(db, family, gate, head):
     assert fresh.resolution is None
 
 
-def test_the_assistant_says_plainly_when_there_was_nothing_to_mark(db, family, gate, head):
-    result = tools.mark_events_seen(_ctx(db, head))
+def test_the_assistant_says_plainly_when_there_was_nothing_to_mark(db, family, gate, member):
+    result = tools.mark_events_seen(_ctx(db, member))
 
     assert result.ok and result.data["marked"] == 0
     assert "не было" in result.summary
 
 
-def test_the_assistant_cleans_the_archive_of_one_camera_by_name(db, family, gate, yard, head):
+def test_the_assistant_cleans_the_archive_of_one_camera_by_name(db, family, gate, yard, member):
     _stored(db, family.id, gate, "gate.jpg", days_ago=40)
     _stored(db, family.id, yard, "yard.jpg", days_ago=40)
 
-    result = tools.clear_archive(_ctx(db, head), older_than_days=30, camera="калитка")
+    result = tools.clear_archive(_ctx(db, member), older_than_days=30, camera="калитка")
 
     assert result.ok and result.data["records"] == 1
     assert [i.filename for i in db.query(MediaItem).all()] == ["yard.jpg"]
 
 
-def test_the_assistant_does_not_guess_which_camera_was_meant(db, family, gate, head):
+def test_the_assistant_does_not_guess_which_camera_was_meant(db, family, gate, member):
     _stored(db, family.id, gate, "gate.jpg", days_ago=40)
 
-    result = tools.clear_archive(_ctx(db, head), older_than_days=30, camera="гараж")
+    result = tools.clear_archive(_ctx(db, member), older_than_days=30, camera="гараж")
 
     assert not result.ok
     assert "Калитка" in result.summary
     assert db.query(MediaItem).count() == 1
 
 
-def test_the_assistant_refuses_to_wipe_the_whole_archive(db, family, gate, head):
+def test_the_assistant_refuses_to_wipe_the_whole_archive(db, family, gate, member):
     """«Удали всё» — не срок. Инструмент не додумывает и не стирает сегодняшнее."""
     _stored(db, family.id, gate, "now.jpg", days_ago=0)
 
-    result = tools.clear_archive(_ctx(db, head), older_than_days=0)
+    result = tools.clear_archive(_ctx(db, member), older_than_days=0)
 
     assert not result.ok
     assert db.query(MediaItem).count() == 1
 
 
-def test_the_count_on_the_screen_matches_the_feed_in_front_of_you(as_head, db, family, gate):
+def test_the_count_on_the_screen_matches_the_feed_in_front_of_you(as_member, db, family, gate):
     """Лента показывает неделю — значит и «непросмотренных» считается за неделю."""
     _alarm(db, family.id, gate, hours_ago=24 * 30)
     _alarm(db, family.id, gate, hours_ago=2)
 
-    assert "Непросмотренных — 1" in as_head.get("/security/events").text
+    assert "Непросмотренных — 1" in as_member.get("/security/events").text
     assert service.unseen_count(db, family.id) == 2      # но убрать можно и давнее
 
 

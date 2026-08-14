@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agent import policy
 from app.agent.llm import LLMResponse, ToolCall
 from app.agent.registry import ToolContext
 from app.agent.runtime import Agent
@@ -31,66 +32,65 @@ def at(delta: timedelta) -> str:
 
 # --- инструмент: абсолютное время или отказ --------------------------------
 
-def test_a_valid_absolute_time_creates_a_reminder(db, head):
-    result = set_reminder(ctx(db, head), text="позвонить врачу", at=at(timedelta(days=1)))
+def test_a_valid_absolute_time_creates_a_reminder(db, member):
+    result = set_reminder(ctx(db, member), text="позвонить врачу", at=at(timedelta(days=1)))
 
     assert result.ok
     reminder = db.query(Reminder).one()
-    assert reminder.user_id == head.id
+    assert reminder.user_id == member.id
     assert reminder.text == "позвонить врачу"
     assert reminder.remind_at > datetime.utcnow()
     assert reminder.reminded_at is None
 
 
-def test_unparseable_time_creates_nothing_and_asks_to_clarify(db, head):
-    result = set_reminder(ctx(db, head), text="про школу", at="в пятницу утром")
+def test_unparseable_time_creates_nothing_and_asks_to_clarify(db, member):
+    result = set_reminder(ctx(db, member), text="про школу", at="в пятницу утром")
 
     assert not result.ok
     assert "переспроси" in result.summary.lower()
     assert db.query(Reminder).count() == 0
 
 
-def test_nonsense_clock_time_is_rejected(db, head):
-    result = set_reminder(ctx(db, head), text="про школу", at="2026-08-13T25:00")
+def test_nonsense_clock_time_is_rejected(db, member):
+    result = set_reminder(ctx(db, member), text="про школу", at="2026-08-13T25:00")
 
     assert not result.ok
     assert db.query(Reminder).count() == 0
 
 
-def test_a_bare_date_without_a_time_is_rejected(db, head):
+def test_a_bare_date_without_a_time_is_rejected(db, member):
     """«15 августа» без часов — это день, а не момент: полночь не выдумываем."""
-    result = set_reminder(ctx(db, head), text="про школу",
+    result = set_reminder(ctx(db, member), text="про школу",
                           at=at(timedelta(days=1))[:10])
 
     assert not result.ok
     assert db.query(Reminder).count() == 0
 
 
-def test_past_time_is_rejected(db, head):
-    result = set_reminder(ctx(db, head), text="вчерашнее", at=at(timedelta(hours=-1)))
+def test_past_time_is_rejected(db, member):
+    result = set_reminder(ctx(db, member), text="вчерашнее", at=at(timedelta(hours=-1)))
 
     assert not result.ok
     assert db.query(Reminder).count() == 0
 
 
-def test_time_beyond_a_year_is_rejected(db, head):
-    result = set_reminder(ctx(db, head), text="через три года", at=at(timedelta(days=400)))
+def test_time_beyond_a_year_is_rejected(db, member):
+    result = set_reminder(ctx(db, member), text="через три года", at=at(timedelta(days=400)))
 
     assert not result.ok
     assert db.query(Reminder).count() == 0
 
 
-def test_the_assistant_reasks_instead_of_creating_a_timeless_reminder(db, head):
+def test_the_assistant_reasks_instead_of_creating_a_timeless_reminder(db, member):
     """Модель не назвала времени — инструмент отказал, ассистент переспросил."""
-    head.autonomy = 3
-    db.commit()
+    policy.set_autonomy(db, member.family_id, 3)
 
     llm = FakeLLM([
         LLMResponse(tool_calls=[ToolCall(id="c1", name="set_reminder",
                                          arguments={"text": "позвонить врачу"})]),
         LLMResponse(content="Когда напомнить?"),
     ])
-    reply = Agent(llm).respond(db, head, "напомни позвонить врачу")
+    reply = Agent(llm).respond(db, member, "напомни позвонить врачу")
 
     assert reply.text == "Когда напомнить?"
     assert reply.traces[0].status == "failed"
@@ -99,13 +99,13 @@ def test_the_assistant_reasks_instead_of_creating_a_timeless_reminder(db, head):
 
 # --- ретеншен сработавших ---------------------------------------------------
 
-def test_purge_removes_only_long_fired_reminders(db, head):
+def test_purge_removes_only_long_fired_reminders(db, member):
     now = datetime.utcnow()
-    keep_active = Reminder(user_id=head.id, text="живое", remind_at=now + timedelta(days=1))
-    keep_fresh = Reminder(user_id=head.id, text="недавнее",
+    keep_active = Reminder(user_id=member.id, text="живое", remind_at=now + timedelta(days=1))
+    keep_fresh = Reminder(user_id=member.id, text="недавнее",
                           remind_at=now - timedelta(days=1),
                           reminded_at=now - timedelta(days=1))
-    drop_stale = Reminder(user_id=head.id, text="давнее",
+    drop_stale = Reminder(user_id=member.id, text="давнее",
                           remind_at=now - timedelta(days=10),
                           reminded_at=now - timedelta(days=service.FIRED_RETENTION_DAYS + 1))
     db.add_all([keep_active, keep_fresh, drop_stale])
@@ -127,22 +127,22 @@ def client(db):
 
 
 @pytest.fixture
-def as_head(client, head):
-    client.post("/login", data={"username": head.username, "password": "pw"},
+def as_member(client, member):
+    client.post("/login", data={"username": member.username, "password": "pw"},
                 follow_redirects=False)
     return client
 
 
-def test_the_screen_shows_active_and_recently_fired(db, head, as_head):
+def test_the_screen_shows_active_and_recently_fired(db, member, as_member):
     now = datetime.utcnow()
     db.add_all([
-        Reminder(user_id=head.id, text="полить цветы", remind_at=now + timedelta(hours=2)),
-        Reminder(user_id=head.id, text="про врача", remind_at=now - timedelta(hours=2),
+        Reminder(user_id=member.id, text="полить цветы", remind_at=now + timedelta(hours=2)),
+        Reminder(user_id=member.id, text="про врача", remind_at=now - timedelta(hours=2),
                  reminded_at=now - timedelta(hours=2)),
     ])
     db.commit()
 
-    page = as_head.get("/reminders")
+    page = as_member.get("/reminders")
 
     assert page.status_code == 200
     assert "полить цветы" in page.text
@@ -150,7 +150,7 @@ def test_the_screen_shows_active_and_recently_fired(db, head, as_head):
     assert "сработало" in page.text.lower()
 
 
-def test_reminders_is_its_own_nav_item(db, head, as_head):
-    page = as_head.get("/")
+def test_reminders_is_its_own_nav_item(db, member, as_member):
+    page = as_member.get("/")
 
     assert 'href="/reminders"' in page.text

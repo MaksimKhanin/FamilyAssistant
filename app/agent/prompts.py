@@ -109,9 +109,12 @@ def memos_block(memos: Sequence[Tuple[str, str]]) -> str:
 
 
 def system_prompt(user: User, modules: List[str], now: datetime = None,
-                  character: str = "", memos: Sequence[Tuple[str, str]] = ()) -> str:
+                  character: str = "", memos: Sequence[Tuple[str, str]] = (),
+                  autonomy: int = 1) -> str:
     now = now or local_now()
-    autonomy = AUTONOMY_LEVELS.get(user.autonomy or 0, "Спрашивает про важное")
+    # Самостоятельность приезжает параметром, а не берётся у человека: она одна
+    # на семью и её задаёт администратор (ADR-0007).
+    autonomy = AUTONOMY_LEVELS.get(autonomy or 0, "Спрашивает про важное")
     who = f"{user.display_name}"
     if user.relation:
         who += f" ({user.relation})"

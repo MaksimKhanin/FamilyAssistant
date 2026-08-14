@@ -1,7 +1,7 @@
 """Переезд заметок на доски и в напоминания (тикет #33, спека #19).
 
 Тест не заглядывает в файл миграции: он засевает базу, дожившую до переезда,
-заметками всех четырёх видов и запускает `alembic upgrade head` — ровно то, что
+заметками всех четырёх видов и запускает `alembic upgrade member` — ровно то, что
 запустит эксплуатирующий, — а потом смотрит на результат глазами обычных запросов.
 """
 from pathlib import Path
@@ -48,7 +48,7 @@ def lived_in(tmp_path):
         conn.execute(sa.text(
             "INSERT INTO users (id, family_id, username, display_name, role, avatar_slot, "
             "                   autonomy, created_at) "
-            "VALUES (1, 1, 'marina', 'Марина', 'head', 0, 1, '2026-01-01 00:00:00')"))
+            "VALUES (1, 1, 'marina', 'Марина', 'member', 0, 1, '2026-01-01 00:00:00')"))
         for number, note in enumerate(NOTES):
             kind, text, source, pinned, when_text, remind_at, reminded_at = note
             conn.execute(sa.text(
@@ -183,7 +183,7 @@ def _seeded(url: str, section_activity: str = "2026-02-01 00:00:00"):
         conn.execute(sa.text(
             "INSERT INTO users (id, family_id, username, display_name, role, avatar_slot, "
             "                   autonomy, created_at) "
-            "VALUES (1, 1, 'marina', 'Марина', 'head', 0, 1, '2026-01-01 00:00:00')"))
+            "VALUES (1, 1, 'marina', 'Марина', 'member', 0, 1, '2026-01-01 00:00:00')"))
         conn.execute(sa.text(
             "INSERT INTO sections (user_id, name, pinned, last_activity_at, created_at) "
             "VALUES (1, 'Личное', 0, :active, '2026-02-01 00:00:00')"), {"active": section_activity})

@@ -1,4 +1,17 @@
-"""Настройки: коннекторы, агент и инструменты, семья и модули, профиль, модель и знания."""
+"""Настройки — и участниковые, и админские.
+
+Разделены они не проверками внутри роутов, а адресами: что кому открыто, знает
+`app/core/roles.py`, а следит за этим один заслон (`app/web/gate.py`). Отсюда и
+два экрана про одно и то же:
+
+  * `/settings/family` — «Семья» глазами участника: кто в доме и кому что
+    включено, без единой кнопки;
+  * `/settings/accounts` — «Учётные записи» глазами администратора: завести,
+    переименовать, выдать ссылку, сменить роль, удалить, включить модули.
+
+Экран профиля один на обе роли, но у администратора на нём только пароль и
+оформление: характера, памяток и самостоятельности у служебной учётки нет.
+"""
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
@@ -50,9 +63,16 @@ def connectors_screen(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
+    """Каталог коннекторов — витрина без товара.
+
+    Уровни доступа и сам экран готовы, настоящих интеграций пока нет: тумблер
+    ничего не подключал бы, а обещал. Поэтому экран показывается погашенным и с
+    плашкой — так честнее, чем прятать его совсем: контракт «что именно человек
+    разрешил сервису» уже зафиксирован и никуда не денется.
+    """
     context = screen_context(request, db, current, viewed,
                              title="Коннекторы",
-                             subtitle="Подключения личные у каждого — начинать стоит с «только читает»")
+                             subtitle="Раздел в разработке — подключений пока нет")
     context.update(
         connectors=connector_service.overview(db, viewed.id),
         permission_labels=connector_service.PERMISSION_LABELS,
@@ -62,39 +82,63 @@ def connectors_screen(
 
 
 @router.post("/connectors/{service}")
-def update_connector(
-    service: str,
-    action: str = Form(...),
-    permission: str = Form(None),
+def update_connector(service: str):
+    """Пока экран в разработке, менять нечего: тумблеры на нём погашены."""
+    return RedirectResponse("/settings/connectors", status_code=303)
+
+
+# --- агент и инструменты (администратор, на всю семью) --------------------
+
+@router.get("/agent", response_class=HTMLResponse)
+def agent_screen(
+    request: Request,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if can_act_as(current, viewed):
-        try:
-            if action == "toggle":
-                rows = connector_service.rows_for(db, viewed.id)
-                connected = bool(rows.get(service) and rows[service].connected)
-                connector_service.set_connected(db, viewed.id, service, not connected)
-            elif action == "permission" and permission:
-                connector_service.set_permission(db, viewed.id, service, permission)
-        except ValueError:
-            pass
-    return RedirectResponse("/settings/connectors", status_code=303)
+    """Самостоятельность ассистента и режимы инструментов — одни на всю семью.
 
-
-# --- агент и инструменты --------------------------------------------------
-
-@router.get("/agent")
-def agent_screen():
-    """Экран переехал в «Профиль и агент».
-
-    Разделение «кто я» и «что ассистенту можно» заставляло ходить туда-обратно:
-    самостоятельность и режимы инструментов — это тоже про себя. Маршрут остаётся
-    ради ссылок, которые уже разошлись по уведомлениям и закладкам.
+    Раньше этот экран был личным и жил внутри «Профиля»; теперь он админский и
+    задаёт правила сразу для всех (ADR-0007). «Насколько ассистенту можно
+    действовать без спроса» — это про доверие в доме, а не про настроение
+    отдельного человека, и разными у домашних эти дырки быть не должны.
     """
-    return RedirectResponse("/settings/profile", status_code=308)
+    context = screen_context(request, db, current, viewed,
+                             title="Агент и инструменты",
+                             subtitle="Насколько ассистент самостоятелен — одинаково для всех")
+    context.update(
+        autonomy=family_service.get_settings(db, current.family_id).autonomy or 0,
+        autonomy_levels=AUTONOMY_LEVELS,
+        tools=policy.policy_overview(db, current.family_id),
+    )
+    return render(request, "settings/agent.html", context)
 
+
+@router.post("/agent/autonomy")
+def set_autonomy(
+    autonomy: int = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    policy.set_autonomy(db, current.family_id, autonomy)
+    return RedirectResponse("/settings/agent", status_code=303)
+
+
+@router.post("/agent/tools/{tool_name}")
+def set_tool_mode(
+    tool_name: str,
+    mode: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    try:
+        policy.set_mode(db, current.family_id, tool_name, mode)
+    except ValueError:
+        pass
+    return RedirectResponse("/settings/agent", status_code=303)
+
+
+# --- расписания участника -------------------------------------------------
 
 def _jobs(db: Session, user: User):
     existing = {j.kind: j for j in db.query(ScheduledJob).filter(ScheduledJob.user_id == user.id)}
@@ -107,36 +151,7 @@ def _jobs(db: Session, user: User):
     return result
 
 
-@router.post("/agent/autonomy")
-def set_autonomy(
-    autonomy: int = Form(...),
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-    viewed: User = Depends(get_viewed_user),
-):
-    if can_act_as(current, viewed) and 0 <= autonomy <= 3:
-        viewed.autonomy = autonomy
-        db.commit()
-    return RedirectResponse("/settings/profile", status_code=303)
-
-
-@router.post("/agent/tools/{tool_name}")
-def set_tool_mode(
-    tool_name: str,
-    mode: str = Form(...),
-    db: Session = Depends(get_db),
-    current: User = Depends(get_current_user),
-    viewed: User = Depends(get_viewed_user),
-):
-    if can_act_as(current, viewed):
-        try:
-            policy.set_mode(db, viewed, tool_name, mode)
-        except ValueError:
-            pass
-    return RedirectResponse("/settings/profile", status_code=303)
-
-
-@router.post("/agent/jobs/{kind}")
+@router.post("/profile/jobs/{kind}")
 def toggle_job(
     kind: str,
     enabled: str = Form("off"),
@@ -158,10 +173,42 @@ def toggle_job(
     return RedirectResponse("/settings/profile", status_code=303)
 
 
-# --- семья и модули -------------------------------------------------------
+# --- семья глазами участника ----------------------------------------------
 
 @router.get("/family", response_class=HTMLResponse)
 def family_screen(
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Кто в семье и кому что включено — и ни одной кнопки.
+
+    Учётными записями распоряжается администратор (`/settings/accounts`), но
+    знать, кто есть в доме, участнику нужно: с этими людьми он делится досками.
+    """
+    module_list = togglable()
+    members = family_service.members(db, viewed.family_id)
+    matrix = access_matrix(db, viewed.family_id, [m.name for m in module_list])
+
+    context = screen_context(request, db, current, viewed,
+                             title="Семья",
+                             subtitle="Кто пользуется ассистентом в доме")
+    context.update(
+        module_list=module_list,
+        members_info=[{
+            "user": member,
+            "avatar": avatar(member),
+            "modules": [m.title for m in module_list if matrix.get(member.id, {}).get(m.name)],
+        } for member in members],
+    )
+    return render(request, "settings/family.html", context)
+
+
+# --- учётные записи (администратор) ---------------------------------------
+
+@router.get("/accounts", response_class=HTMLResponse)
+def accounts_screen(
     request: Request,
     notice: str = None,
     error: str = None,
@@ -171,8 +218,8 @@ def family_screen(
     viewed: User = Depends(get_viewed_user),
 ):
     context = screen_context(request, db, current, viewed,
-                             title="Семья и модули",
-                             subtitle="Кто есть в семье, кому что включено и как они заходят")
+                             title="Учётные записи",
+                             subtitle="Кто заходит в панель, кому что включено и кто здесь администратор")
     module_list = togglable()
     invited_user = db.get(User, invited) if invited else None
 
@@ -184,7 +231,6 @@ def family_screen(
         module_list=module_list,
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]),
         members_info=members_info,
-        can_toggle=current.is_head,
         notice=notice,
         error=error,
         # Ссылка показывается один раз, сразу после выпуска: копировать её больше неоткуда.
@@ -193,16 +239,16 @@ def family_screen(
                      else None),
         invited_user=invited_user,
     )
-    return render(request, "settings/family.html", context)
+    return render(request, "settings/accounts.html", context)
 
 
 def _back(notice: str = None, error: str = None, invited: int = None) -> RedirectResponse:
     params = {k: v for k, v in (("notice", notice), ("error", error), ("invited", invited)) if v}
     query = "?" + urlencode(params) if params else ""
-    return RedirectResponse(f"/settings/family{query}", status_code=303)
+    return RedirectResponse(f"/settings/accounts{query}", status_code=303)
 
 
-@router.post("/family/module")
+@router.post("/accounts/module")
 def toggle_module(
     user_id: int = Form(...),
     module: str = Form(...),
@@ -210,14 +256,14 @@ def toggle_module(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """Модули включает только глава семьи — это вся ролевая модель MVP."""
+    """Модули включает администратор — и включает их участнику, а не себе."""
     target = db.get(User, user_id)
-    if current.is_head and target is not None and target.family_id == current.family_id:
+    if target is not None and target.family_id == current.family_id and target.is_member:
         set_module_enabled(db, user_id, module, enabled == "on")
     return _back()
 
 
-@router.post("/family/member")
+@router.post("/accounts/member")
 def add_member(
     display_name: str = Form(...),
     relation: str = Form(""),
@@ -232,7 +278,7 @@ def add_member(
                  invited=member.id)
 
 
-@router.post("/family/member/{user_id}/rename")
+@router.post("/accounts/member/{user_id}/rename")
 def rename_member(
     user_id: int,
     display_name: str = Form(...),
@@ -247,22 +293,27 @@ def rename_member(
     return _back(notice="Сохранил.")
 
 
-@router.post("/family/member/{user_id}/role")
+@router.post("/accounts/member/{user_id}/role")
 def set_member_role(
     user_id: int,
-    head: str = Form("off"),
+    admin: str = Form("off"),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    """Сделать учётку административной или вернуть её в участники.
+
+    Роль меняет учётку целиком: у администратора нет ни разговора, ни модулей,
+    у участника — админ-раздела. Записи при этом остаются, поэтому шаг обратим.
+    """
     try:
-        member = accounts.set_head(db, current, user_id, head == "on")
+        member = accounts.set_admin(db, current, user_id, admin == "on")
     except accounts.AccountError as e:
         return _back(error=str(e))
-    role = "глава семьи" if member.is_head else "участник"
+    role = "администратор" if member.is_admin else "участник"
     return _back(notice=f"{member.display_name} теперь {role}.")
 
 
-@router.post("/family/member/{user_id}/invite")
+@router.post("/accounts/member/{user_id}/invite")
 def issue_invite(
     user_id: int,
     db: Session = Depends(get_db),
@@ -278,7 +329,7 @@ def issue_invite(
                  invited=member.id)
 
 
-@router.post("/family/member/{user_id}/revoke")
+@router.post("/accounts/member/{user_id}/revoke")
 def revoke_invite(
     user_id: int,
     db: Session = Depends(get_db),
@@ -291,7 +342,7 @@ def revoke_invite(
     return _back(notice=f"Ссылка для {member.display_name} отозвана.")
 
 
-@router.post("/family/member/{user_id}/delete")
+@router.post("/accounts/member/{user_id}/delete")
 def delete_member(
     user_id: int,
     db: Session = Depends(get_db),
@@ -304,15 +355,15 @@ def delete_member(
     return _back(notice=f"Удалил: {name}. Записи и переписка тоже.")
 
 
-@router.post("/family/name")
+@router.post("/accounts/name")
 def rename_family(
     name: str = Form(...),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    if current.is_head and current.family is not None:
+    if current.family is not None:
         family_service.rename(db, current.family, name)
-    return RedirectResponse("/settings/family", status_code=303)
+    return RedirectResponse("/settings/accounts", status_code=303)
 
 
 # --- профиль --------------------------------------------------------------
@@ -329,9 +380,19 @@ def profile_screen(
     from app.modules.nutrition import service as nutrition_service
     from app.modules.nutrition.models import GOAL_LABELS
 
+    # Экран один на обе роли, но у администратора на нём только то, что есть у
+    # любой учётки: пароль и оформление. Личного у служебной учётки нет.
+    if current.is_admin:
+        context = screen_context(request, db, current, viewed,
+                                 title="Профиль",
+                                 subtitle="Пароль и оформление панели")
+        context.update(themes=THEMES, current_theme=current.theme,
+                       notice=notice, error=error)
+        return render(request, "settings/profile.html", context)
+
     context = screen_context(request, db, current, viewed,
                              title="Профиль и агент",
-                             subtitle="Оформление, самостоятельность ассистента и режимы инструментов")
+                             subtitle="Оформление, характер ассистента и памятки по областям")
     module_list = togglable()
     since = datetime.utcnow() - timedelta(days=1)
     # Памятка есть только у включённых областей: выключенный модуль не отдаёт ни
@@ -353,15 +414,16 @@ def profile_screen(
         notice=notice,
         error=error,
         module_list=module_list,
+        # Модули человек видит, но не переключает: их включает администратор.
         matrix=access_matrix(db, viewed.family_id, [m.name for m in module_list]).get(viewed.id, {}),
-        can_toggle=current.is_head,
         themes=THEMES,
         # Оформление меняет себе тот, кто смотрит: режим «от лица» переключает
         # данные экрана, а не глаза человека перед телефоном.
         current_theme=current.theme,
-        autonomy=viewed.autonomy or 0,
+        # Самостоятельность на экране только показана: задаёт её администратор
+        # сразу для всей семьи (ADR-0007).
+        autonomy=family_service.get_settings(db, viewed.family_id).autonomy or 0,
         autonomy_levels=AUTONOMY_LEVELS,
-        tools=policy.policy_overview(db, viewed),
         jobs=_jobs(db, viewed),
         job_labels=JOB_LABELS,
         recent_actions=(
@@ -396,7 +458,7 @@ def change_password(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """Свой пароль человек меняет сам — чужой сбрасывает глава семьи ссылкой."""
+    """Свой пароль человек меняет сам — чужой сбрасывает администратор ссылкой."""
     try:
         accounts.change_own_password(db, current, current_password,
                                      new_password, new_password_repeat)
@@ -450,7 +512,7 @@ def update_profile(
     return RedirectResponse("/settings/profile", status_code=303)
 
 
-# --- модель и знания (только глава семьи) ---------------------------------
+# --- модель и знания (администратор) --------------------------------------
 
 @router.get("/model", response_class=HTMLResponse)
 def model_screen(
@@ -461,10 +523,7 @@ def model_screen(
 ):
     context = screen_context(request, db, current, viewed,
                              title="Модель и знания",
-                             subtitle="Ядро, зрение и база знаний семьи")
-    if not current.is_head:
-        return render(request, "settings/model_denied.html", context)
-
+                             subtitle="Ядро, зрение, деньги и база знаний семьи")
     settings_row = family_service.get_settings(db, viewed.family_id)
     context.update(
         settings_row=settings_row,
@@ -484,9 +543,6 @@ async def update_model(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if not current.is_head:
-        return RedirectResponse("/settings/model", status_code=303)
-
     form = await request.form()
     settings_row = family_service.get_settings(db, viewed.family_id)
 

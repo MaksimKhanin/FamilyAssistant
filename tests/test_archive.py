@@ -30,10 +30,10 @@ def client(db):
 
 
 @pytest.fixture
-def as_head(client, db, head):
-    head.password_hash = hash_password("pw")
+def as_member(client, db, member):
+    member.password_hash = hash_password("pw")
     db.commit()
-    client.post("/login", data={"username": head.username, "password": "pw"},
+    client.post("/login", data={"username": member.username, "password": "pw"},
                 follow_redirects=False)
     return client
 
@@ -55,16 +55,16 @@ def gate(db, family):
     return service.get_or_create_camera(db, family.id, "gate", "Калитка")
 
 
-def test_the_archive_lists_what_arrived(as_head, db, family, gate):
+def test_the_archive_lists_what_arrived(as_member, db, family, gate):
     _add(db, family.id, gate, "a.jpg")
 
-    response = as_head.get("/security/archive")
+    response = as_member.get("/security/archive")
 
     assert response.status_code == 200
     assert "Калитка" in response.text
 
 
-def test_paging_does_not_repeat_or_lose_anything(as_head, db, family, gate):
+def test_paging_does_not_repeat_or_lose_anything(as_member, db, family, gate):
     for i in range(service.PAGE_SIZE + 3):
         _add(db, family.id, gate, f"file-{i:02d}.jpg", minutes_ago=i)
 
@@ -76,7 +76,7 @@ def test_paging_does_not_repeat_or_lose_anything(as_head, db, family, gate):
     assert not {i.id for i in first} & {i.id for i in second}
 
 
-def test_the_camera_filter_shows_only_that_camera(as_head, db, family, gate):
+def test_the_camera_filter_shows_only_that_camera(as_member, db, family, gate):
     yard = service.get_or_create_camera(db, family.id, "yard", "Двор")
     _add(db, family.id, gate, "gate.jpg")
     _add(db, family.id, yard, "yard.jpg")
@@ -95,10 +95,10 @@ def test_only_alerts_leaves_out_the_routine_recording(db, family, gate):
     assert [i.filename for i in items] == ["person.jpg"]
 
 
-def test_a_file_is_served_to_its_own_family(as_head, db, family, gate):
+def test_a_file_is_served_to_its_own_family(as_member, db, family, gate):
     item = _add(db, family.id, gate, "a.jpg", body=b"jpeg-bytes")
 
-    response = as_head.get(f"/security/file/{item.id}")
+    response = as_member.get(f"/security/file/{item.id}")
 
     assert response.status_code == 200
     assert response.content == b"jpeg-bytes"
@@ -106,45 +106,45 @@ def test_a_file_is_served_to_its_own_family(as_head, db, family, gate):
     assert response.headers["accept-ranges"] == "bytes"
 
 
-def test_a_video_can_be_seeked_not_just_downloaded(as_head, db, family, gate):
+def test_a_video_can_be_seeked_not_just_downloaded(as_member, db, family, gate):
     """Часовая склеенная запись без Range означает «смотри с начала или качай целиком»."""
     item = _add(db, family.id, gate, "clip.mp4", kind=KIND_VIDEO, body=b"0123456789")
 
-    response = as_head.get(f"/security/file/{item.id}", headers={"Range": "bytes=4-6"})
+    response = as_member.get(f"/security/file/{item.id}", headers={"Range": "bytes=4-6"})
 
     assert response.status_code == 206
     assert response.content == b"456"
     assert response.headers["content-range"] == "bytes 4-6/10"
 
 
-def test_an_open_ended_range_runs_to_the_end(as_head, db, family, gate):
+def test_an_open_ended_range_runs_to_the_end(as_member, db, family, gate):
     item = _add(db, family.id, gate, "clip.mp4", kind=KIND_VIDEO, body=b"0123456789")
 
-    response = as_head.get(f"/security/file/{item.id}", headers={"Range": "bytes=7-"})
+    response = as_member.get(f"/security/file/{item.id}", headers={"Range": "bytes=7-"})
 
     assert response.status_code == 206
     assert response.content == b"789"
 
 
-def test_a_suffix_range_asks_for_the_tail(as_head, db, family, gate):
+def test_a_suffix_range_asks_for_the_tail(as_member, db, family, gate):
     """mp4 с moov-атомом в конце браузер начинает читать именно так."""
     item = _add(db, family.id, gate, "clip.mp4", kind=KIND_VIDEO, body=b"0123456789")
 
-    response = as_head.get(f"/security/file/{item.id}", headers={"Range": "bytes=-3"})
+    response = as_member.get(f"/security/file/{item.id}", headers={"Range": "bytes=-3"})
 
     assert response.status_code == 206
     assert response.content == b"789"
 
 
-def test_a_range_past_the_end_is_refused_properly(as_head, db, family, gate):
+def test_a_range_past_the_end_is_refused_properly(as_member, db, family, gate):
     item = _add(db, family.id, gate, "clip.mp4", kind=KIND_VIDEO, body=b"0123456789")
 
-    response = as_head.get(f"/security/file/{item.id}", headers={"Range": "bytes=99-200"})
+    response = as_member.get(f"/security/file/{item.id}", headers={"Range": "bytes=99-200"})
 
     assert response.status_code == 416
 
 
-def test_another_familys_file_is_not_served(as_head, db, family, gate):
+def test_another_familys_file_is_not_served(as_member, db, family, gate):
     """Разные семьи на одном сервере не должны видеть архив друг друга."""
     other = Family(name="Соседи")
     db.add(other)
@@ -152,8 +152,8 @@ def test_another_familys_file_is_not_served(as_head, db, family, gate):
     their_camera = service.get_or_create_camera(db, other.id, "their-gate", "Их калитка")
     theirs = _add(db, other.id, their_camera, "secret.jpg")
 
-    assert as_head.get(f"/security/file/{theirs.id}").status_code == 404
-    assert as_head.get(f"/security/media/{theirs.id}").status_code == 404
+    assert as_member.get(f"/security/file/{theirs.id}").status_code == 404
+    assert as_member.get(f"/security/media/{theirs.id}").status_code == 404
 
 
 def test_a_stranger_gets_no_file_at_all(client, db, family, gate):
@@ -164,12 +164,12 @@ def test_a_stranger_gets_no_file_at_all(client, db, family, gate):
     assert response.status_code in (303, 401, 403)
 
 
-def test_the_page_survives_a_file_that_rotation_already_removed(as_head, db, family, gate):
+def test_the_page_survives_a_file_that_rotation_already_removed(as_member, db, family, gate):
     """Строка живёт дольше файла — экран должен это сказать, а не сломаться."""
     item = _add(db, family.id, gate, "a.jpg")
     media.resolve(item.rel_path).unlink()
 
-    response = as_head.get(f"/security/media/{item.id}")
+    response = as_member.get(f"/security/media/{item.id}")
 
     assert response.status_code == 200
     assert "удалён по сроку хранения" in response.text

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card tight stack" style="margin-bottom:16px;border-left:4px solid var(--acc)">
+  <p class="muted">
+    Эти настройки — общие: они действуют одинаково для всех в доме. Личного здесь
+    нет ничего — характер ассистента и памятки каждый пишет себе сам, на своём
+    экране «Профиль и агент».
+  </p>
+</div>
+
+<div class="grid auto-300">
+  <div class="stack">
+    {# Четыре полоски вместо ползунка: ползунок на телефоне промахивался мимо
+       деления, а уровней всего четыре — их видно все сразу. #}
+    <div class="card tight stack">
+      <div class="row">
+        <span class="card-title">Самостоятельность</span>
+        <span class="spacer" style="color:var(--acc);font-weight:600">{{ autonomy_levels[autonomy] }}</span>
+      </div>
+      <div class="steps">
+        {% for level in autonomy_levels %}
+          <form method="post" action="/settings/agent/autonomy">
+            <input type="hidden" name="autonomy" value="{{ level }}">
+            <button class="{% if level <= autonomy %}on{% endif %}" type="submit"
+                    aria-label="{{ autonomy_levels[level] }}"></button>
+          </form>
+        {% endfor %}
+      </div>
+      <p class="tiny">0 — всё спрашивает · 3 — максимально самостоятельно.
+        У каждого инструмента ниже это можно переопределить отдельно.</p>
+    </div>
+
+    <div class="card tight stack">
+      <div class="card-title">Что это меняет</div>
+      <p class="tiny">
+        «Сам» — ассистент делает и рассказывает, что сделал. «Спросит» — готовит
+        действие и ждёт «да» от человека, который с ним разговаривает.
+        «Выкл» — инструмента нет вовсе: модель о нём даже не знает и предлагать
+        его не станет.
+      </p>
+      <p class="tiny">
+        Модуль, выключенный участнику на экране «Учётные записи», забирает свои
+        инструменты только у него — здесь же правило общее.
+      </p>
+    </div>
+  </div>
+
+  <div class="card tight stack">
+    <div class="card-title">Инструменты</div>
+    {% for row in tools %}
+      {% if not loop.first %}<div class="divider" style="margin:2px 0"></div>{% endif %}
+      <div class="tool-row">
+        <div style="font-weight:500">{{ row.spec.title }}</div>
+        <div class="mono">{{ row.spec.name }}</div>
+        <div class="segment wide small" style="margin-top:6px">
+          {% for value, label in [("auto", "Сам"), ("ask", "Спросит"), ("off", "Выкл")] %}
+            <form method="post" action="/settings/agent/tools/{{ row.spec.name }}">
+              <input type="hidden" name="mode" value="{{ value }}">
+              <button class="{% if row.mode == value %}on{% endif %}" type="submit">{{ label }}</button>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

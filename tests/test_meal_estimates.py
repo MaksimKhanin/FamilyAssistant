@@ -15,8 +15,8 @@ from tests.conftest import FakeLLM
 
 
 @pytest.fixture
-def ctx(db, head):
-    return ToolContext(db=db, actor=head, subject=head, channel="web", attachments={})
+def ctx(db, member):
+    return ToolContext(db=db, actor=member, subject=member, channel="web", attachments={})
 
 
 @pytest.fixture
@@ -49,11 +49,11 @@ def test_the_reply_carries_the_numbers_and_the_question(ctx, spy):
     assert result.data["question"]
 
 
-def test_the_draft_is_written_before_the_question_is_asked(ctx, db, head, spy):
+def test_the_draft_is_written_before_the_question_is_asked(ctx, db, member, spy):
     """Человек вправе не ответить — приём пищи из-за этого теряться не должен."""
     tools.log_meal(ctx, text="борщ")
 
-    meal = db.query(service.Meal).filter(service.Meal.user_id == head.id).one()
+    meal = db.query(service.Meal).filter(service.Meal.user_id == member.id).one()
     assert meal.status == STATUS_DRAFT
     assert meal.kcal == 380
 
@@ -66,12 +66,12 @@ def test_weight_and_cooking_reach_the_estimator(ctx, spy):
     assert "жареная на масле" in spy["text"]
 
 
-def test_the_estimator_is_told_who_it_is_counting_for(ctx, db, head, spy):
+def test_the_estimator_is_told_who_it_is_counting_for(ctx, db, member, spy):
     """Аллергия и цель меняют оценку сильнее, чем кажется, а модель о них не спросит."""
-    section = knowledge.create_section(db, head.id, "Личное")
-    board = knowledge.create_board(db, head.id, section.id, "Здоровье")
-    knowledge.add_entry(db, head.id, board.id, "Максим не ест сахар")
-    service.update_profile(db, head.id, daily_kcal=2400)
+    section = knowledge.create_section(db, member.id, "Личное")
+    board = knowledge.create_board(db, member.id, section.id, "Здоровье")
+    knowledge.add_entry(db, member.id, board.id, "Максим не ест сахар")
+    service.update_profile(db, member.id, daily_kcal=2400)
 
     tools.log_meal(ctx, text="чай с печеньем")
 
@@ -79,16 +79,16 @@ def test_the_estimator_is_told_who_it_is_counting_for(ctx, db, head, spy):
     assert "не ест сахар" in spy["context"]
 
 
-def test_a_measuring_board_does_not_crowd_out_what_matters(ctx, db, head, spy):
+def test_a_measuring_board_does_not_crowd_out_what_matters(ctx, db, member, spy):
     """«02:50 170» об этом человеке не говорит ничего, а вытеснило бы аллергию:
     доски, которые ведут счёт, в выжимку не идут."""
-    section = knowledge.create_section(db, head.id, "Личное")
-    facts = knowledge.create_board(db, head.id, section.id, "Здоровье")
-    knowledge.add_entry(db, head.id, facts.id, "Максим не ест сахар")
-    log = knowledge.create_board(db, head.id, section.id, "Кормления")
-    knowledge.add_event_type(db, head.id, log.id, "кормление", "мл")
+    section = knowledge.create_section(db, member.id, "Личное")
+    facts = knowledge.create_board(db, member.id, section.id, "Здоровье")
+    knowledge.add_entry(db, member.id, facts.id, "Максим не ест сахар")
+    log = knowledge.create_board(db, member.id, section.id, "Кормления")
+    knowledge.add_event_type(db, member.id, log.id, "кормление", "мл")
     for hour in range(12):
-        knowledge.add_entry(db, head.id, log.id, f"{hour}:50 170", llm=FakeLLM([{"events": []}]))
+        knowledge.add_entry(db, member.id, log.id, f"{hour}:50 170", llm=FakeLLM([{"events": []}]))
 
     tools.log_meal(ctx, text="чай с печеньем")
 
@@ -125,10 +125,10 @@ def test_an_empty_call_records_nothing(ctx, spy):
 
 # --- уточнение после вопроса ----------------------------------------------
 
-def test_answering_the_weight_question_actually_moves_the_numbers(ctx, db, head, spy):
+def test_answering_the_weight_question_actually_moves_the_numbers(ctx, db, member, spy):
     """Иначе вопрос «сколько грамм?» — пустая вежливость: ответ ничего не меняет."""
     tools.log_meal(ctx, text="съел тарелку борща")
-    meal_id = db.query(service.Meal).filter(service.Meal.user_id == head.id).one().id
+    meal_id = db.query(service.Meal).filter(service.Meal.user_id == member.id).one().id
 
     spy["estimate"] = MealEstimate(title="Борщ", kcal=520, protein=19, fat=25, carbs=52,
                                    portion="тарелка ~400 г")
@@ -139,10 +139,10 @@ def test_answering_the_weight_question_actually_moves_the_numbers(ctx, db, head,
     assert "400 г" in spy["text"]                       # уточнение дошло до оценщика
 
 
-def test_named_numbers_are_taken_as_they_are(ctx, db, head, spy):
+def test_named_numbers_are_taken_as_they_are(ctx, db, member, spy):
     """Человек сказал цифру — она главнее любой оценки, пересчитывать нечего."""
     tools.log_meal(ctx, text="съел борщ")
-    meal_id = db.query(service.Meal).filter(service.Meal.user_id == head.id).one().id
+    meal_id = db.query(service.Meal).filter(service.Meal.user_id == member.id).one().id
     spy["text"] = None
 
     result = tools.confirm_meal(ctx, meal_id=meal_id, kcal=450, weight_g=400)

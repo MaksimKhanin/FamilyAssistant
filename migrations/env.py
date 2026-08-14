@@ -5,7 +5,7 @@
 их удалить.
 """
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, event, pool
 
 from app.core.config import settings
 from app.core.db import Base
@@ -36,6 +36,24 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     engine = create_engine(_database_url(), poolclass=pool.NullPool)
+
+    @event.listens_for(engine, "connect")
+    def _relax_sqlite_foreign_keys(dbapi_connection, _):
+        """На время миграций внешние ключи в SQLite выключены.
+
+        Batch mode правит таблицу пересозданием: копия — старую снести — новую
+        переименовать. При включённых ключах (а приложение включает их всегда,
+        `app/core/db.py`, и слушатель там висит на всех движках) снос старой
+        таблицы уносит каскадом детей: переписку, записи досок, приёмы пищи.
+        Ставится это соединением, а не запросом: PRAGMA внутри транзакции
+        молча ничего не делает, а первый же запрос транзакцию открывает.
+        """
+        if engine.dialect.name != "sqlite":
+            return
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.close()
+
     with engine.connect() as connection:
         context.configure(
             connection=connection,

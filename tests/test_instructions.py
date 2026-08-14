@@ -28,50 +28,50 @@ CHARACTER = "неформально и с иронией, без сюсюкан�
 
 # --- хранение -------------------------------------------------------------
 
-def test_character_is_personal_and_falls_back_to_the_default(db, head, member):
-    instructions.set_character(db, head, CHARACTER)
+def test_character_is_personal_and_falls_back_to_the_default(db, member, other):
+    instructions.set_character(db, member, CHARACTER)
 
-    assert instructions.character(head) == CHARACTER
+    assert instructions.character(member) == CHARACTER
     # Чужой характер не приезжает, а свой у соседа — тот, что был всегда.
+    assert instructions.character(other) == instructions.DEFAULT_CHARACTER
+
+    instructions.set_character(db, member, "   ")
     assert instructions.character(member) == instructions.DEFAULT_CHARACTER
-
-    instructions.set_character(db, head, "   ")
-    assert instructions.character(head) == instructions.DEFAULT_CHARACTER
-    assert instructions.own_character(head) == ""   # своего нет
-    assert head.assistant_character is None         # пустую строку не храним
+    assert instructions.own_character(member) == ""   # своего нет
+    assert member.assistant_character is None         # пустую строку не храним
 
 
-def test_memo_is_kept_per_person_and_per_area(db, head, member):
-    instructions.set_memo(db, head.id, "nutrition", MEMO)
-    instructions.set_memo(db, head.id, "security", "по средам уборщица")
-    instructions.set_memo(db, member.id, "nutrition", "аллергия на орехи")
+def test_memo_is_kept_per_person_and_per_area(db, member, other):
+    instructions.set_memo(db, member.id, "nutrition", MEMO)
+    instructions.set_memo(db, member.id, "security", "по средам уборщица")
+    instructions.set_memo(db, other.id, "nutrition", "аллергия на орехи")
 
-    assert instructions.memo(db, head.id, "nutrition") == MEMO
-    assert instructions.memo(db, head.id, "security") == "по средам уборщица"
-    assert instructions.memo(db, member.id, "nutrition") == "аллергия на орехи"
-    assert instructions.memo(db, head.id, "memory") == ""
+    assert instructions.memo(db, member.id, "nutrition") == MEMO
+    assert instructions.memo(db, member.id, "security") == "по средам уборщица"
+    assert instructions.memo(db, other.id, "nutrition") == "аллергия на орехи"
+    assert instructions.memo(db, member.id, "memory") == ""
 
 
-def test_emptying_a_memo_removes_the_row_rather_than_storing_a_blank(db, head):
-    instructions.set_memo(db, head.id, "nutrition", MEMO)
-    instructions.set_memo(db, head.id, "nutrition", "  ")
+def test_emptying_a_memo_removes_the_row_rather_than_storing_a_blank(db, member):
+    instructions.set_memo(db, member.id, "nutrition", MEMO)
+    instructions.set_memo(db, member.id, "nutrition", "  ")
 
-    assert instructions.memo(db, head.id, "nutrition") == ""
+    assert instructions.memo(db, member.id, "nutrition") == ""
     assert db.query(ModuleMemo).count() == 0
 
 
-def test_long_text_is_cut_instead_of_eating_the_context(db, head):
-    instructions.set_character(db, head, "я" * 5000)
-    instructions.set_memo(db, head.id, "nutrition", "я" * 5000)
+def test_long_text_is_cut_instead_of_eating_the_context(db, member):
+    instructions.set_character(db, member, "я" * 5000)
+    instructions.set_memo(db, member.id, "nutrition", "я" * 5000)
 
-    assert len(instructions.character(head)) == instructions.CHARACTER_LIMIT
-    assert len(instructions.memo(db, head.id, "nutrition")) == instructions.MEMO_LIMIT
+    assert len(instructions.character(member)) == instructions.CHARACTER_LIMIT
+    assert len(instructions.memo(db, member.id, "nutrition")) == instructions.MEMO_LIMIT
 
 
 # --- системный промпт -----------------------------------------------------
 
-def test_the_character_is_the_only_place_the_manner_is_written(db, head):
-    prompt = system_prompt(head, ["nutrition"], character=CHARACTER)
+def test_the_character_is_the_only_place_the_manner_is_written(db, member):
+    prompt = system_prompt(member, ["nutrition"], character=CHARACTER)
 
     assert CHARACTER in prompt
     # Манеры в коде не осталось: спорить характеру не с чем.
@@ -81,45 +81,45 @@ def test_the_character_is_the_only_place_the_manner_is_written(db, head):
     assert "нравоучений о еде" in prompt
 
 
-def test_the_default_character_keeps_the_panel_talking_as_it_always_did(db, head):
+def test_the_default_character_keeps_the_panel_talking_as_it_always_did(db, member):
     """Ничего не написал — ассистент говорит ровно так же, как до настройки."""
-    prompt = system_prompt(head, ["nutrition"],
-                           character=instructions.character(head))
+    prompt = system_prompt(member, ["nutrition"],
+                           character=instructions.character(member))
 
     assert "тепло и спокойно, как внимательный член семьи" in prompt
 
 
-def test_a_chat_of_a_person_who_wrote_nothing_carries_the_default(db, head):
+def test_a_chat_of_a_person_who_wrote_nothing_carries_the_default(db, member):
     llm = FakeLLM([LLMResponse(content="Привет!")])
-    Agent(llm).respond(db, head, "привет")
+    Agent(llm).respond(db, member, "привет")
 
     system = llm.calls[0]["messages"][0]["content"]
     assert instructions.DEFAULT_CHARACTER in system
 
 
-def test_memo_travels_only_with_its_own_area(db, head):
-    prompt = system_prompt(head, ["nutrition"],
+def test_memo_travels_only_with_its_own_area(db, member):
+    prompt = system_prompt(member, ["nutrition"],
                            memos=[("Питание", MEMO)])
     assert MEMO in prompt
 
     # Той же области не включили — памятке в промпте делать нечего.
-    assert MEMO not in system_prompt(head, ["security"], memos=[])
+    assert MEMO not in system_prompt(member, ["security"], memos=[])
 
 
-def test_a_person_without_memos_gets_no_memo_block(db, head):
-    assert "просил учитывать" not in system_prompt(head, ["nutrition"])
+def test_a_person_without_memos_gets_no_memo_block(db, member):
+    assert "просил учитывать" not in system_prompt(member, ["nutrition"])
 
 
 # --- разговор -------------------------------------------------------------
 
-def test_the_chat_carries_character_and_memos_of_enabled_areas(db, head):
-    instructions.set_character(db, head, CHARACTER)
-    instructions.set_memo(db, head.id, "nutrition", MEMO)
-    instructions.set_memo(db, head.id, "security", "по средам приходит уборщица")
-    set_module_enabled(db, head.id, "security", False)
+def test_the_chat_carries_character_and_memos_of_enabled_areas(db, member):
+    instructions.set_character(db, member, CHARACTER)
+    instructions.set_memo(db, member.id, "nutrition", MEMO)
+    instructions.set_memo(db, member.id, "security", "по средам приходит уборщица")
+    set_module_enabled(db, member.id, "security", False)
 
     llm = FakeLLM([LLMResponse(content="Привет!")])
-    Agent(llm).respond(db, head, "привет")
+    Agent(llm).respond(db, member, "привет")
 
     system = llm.calls[0]["messages"][0]["content"]
     assert CHARACTER in system
@@ -127,11 +127,11 @@ def test_the_chat_carries_character_and_memos_of_enabled_areas(db, head):
     assert "уборщица" not in system          # модуль выключен — памятка осталась дома
 
 
-def test_a_memo_of_one_person_never_reaches_another_persons_chat(db, head, member):
-    instructions.set_memo(db, member.id, "nutrition", "аллергия на орехи")
+def test_a_memo_of_one_person_never_reaches_another_persons_chat(db, member, other):
+    instructions.set_memo(db, other.id, "nutrition", "аллергия на орехи")
 
     llm = FakeLLM([LLMResponse(content="Привет!")])
-    Agent(llm).respond(db, head, "привет")
+    Agent(llm).respond(db, member, "привет")
 
     assert "орехи" not in llm.calls[0]["messages"][0]["content"]
 
@@ -139,8 +139,8 @@ def test_a_memo_of_one_person_never_reaches_another_persons_chat(db, head, membe
 # --- сценарий: еда --------------------------------------------------------
 
 @pytest.fixture
-def ctx(db, head):
-    return ToolContext(db=db, actor=head, subject=head, channel="web", attachments={})
+def ctx(db, member):
+    return ToolContext(db=db, actor=member, subject=member, channel="web", attachments={})
 
 
 @pytest.fixture
@@ -156,23 +156,23 @@ def spy(monkeypatch):
     return seen
 
 
-def test_the_meal_estimate_gets_the_nutrition_memo(db, head, ctx, spy):
+def test_the_meal_estimate_gets_the_nutrition_memo(db, member, ctx, spy):
     """Ради этого всё и заводилось: оценщик тарелки должен знать про гастрит."""
-    instructions.set_memo(db, head.id, "nutrition", MEMO)
+    instructions.set_memo(db, member.id, "nutrition", MEMO)
 
     nutrition_tools.log_meal(ctx, text="съел тарелку борща")
 
     assert MEMO in spy["context"]
 
 
-def test_the_meal_estimate_of_a_person_without_a_memo_is_unchanged(db, head, ctx, spy):
+def test_the_meal_estimate_of_a_person_without_a_memo_is_unchanged(db, member, ctx, spy):
     nutrition_tools.log_meal(ctx, text="съел тарелку борща")
 
     assert "просил учитывать" not in spy["context"]
 
 
-def test_meal_ideas_are_asked_for_with_the_memo(db, head, ctx, monkeypatch):
-    instructions.set_memo(db, head.id, "nutrition", MEMO)
+def test_meal_ideas_are_asked_for_with_the_memo(db, member, ctx, monkeypatch):
+    instructions.set_memo(db, member.id, "nutrition", MEMO)
     llm = FakeLLM([{"days": [{"title": "Завтра", "kcal": 2000,
                               "meals": [{"name": "овсянка", "slot": "завтрак", "kcal": 300}]}],
                     "comment": "Держитесь."}])
@@ -187,32 +187,32 @@ def test_meal_ideas_are_asked_for_with_the_memo(db, head, ctx, monkeypatch):
 # --- экран ----------------------------------------------------------------
 
 @pytest.fixture
-def as_head(db, head):
+def as_member(db, member):
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app)
-    client.post("/login", data={"username": head.username, "password": "pw"},
+    client.post("/login", data={"username": member.username, "password": "pw"},
                 follow_redirects=False)
     yield client
     app.dependency_overrides.clear()
 
 
-def test_the_screen_saves_the_character_and_the_memo(as_head, db, head):
-    as_head.post("/settings/profile/character", data={"character": CHARACTER},
+def test_the_screen_saves_the_character_and_the_memo(as_member, db, member):
+    as_member.post("/settings/profile/character", data={"character": CHARACTER},
                  follow_redirects=False)
-    as_head.post("/settings/profile/memo/nutrition", data={"memo": MEMO},
+    as_member.post("/settings/profile/memo/nutrition", data={"memo": MEMO},
                  follow_redirects=False)
 
-    db.refresh(head)
-    assert instructions.character(head) == CHARACTER
-    assert instructions.memo(db, head.id, "nutrition") == MEMO
+    db.refresh(member)
+    assert instructions.character(member) == CHARACTER
+    assert instructions.memo(db, member.id, "nutrition") == MEMO
 
-    screen = as_head.get("/settings/profile")
+    screen = as_member.get("/settings/profile")
     assert CHARACTER in screen.text
     assert MEMO in screen.text
 
 
-def test_an_unknown_area_gets_no_memo(as_head, db, head):
-    as_head.post("/settings/profile/memo/finance", data={"memo": "трачу много"},
+def test_an_unknown_area_gets_no_memo(as_member, db, member):
+    as_member.post("/settings/profile/memo/finance", data={"memo": "трачу много"},
                  follow_redirects=False)
 
     assert db.query(ModuleMemo).count() == 0

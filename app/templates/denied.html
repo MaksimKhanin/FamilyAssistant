@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card stack" style="max-width:560px">
+  <div class="card-title">Этот экран не для этой учётной записи</div>
+  <p class="muted">{{ reason }}</p>
+  <a class="btn ghost" href="{{ home }}">Вернуться к своим экранам</a>
+</div>
+{% endblock %}

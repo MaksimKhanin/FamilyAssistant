@@ -1,7 +1,8 @@
 """«Трейсы агента» — админский экран: что ушло в модель, что вернулось, во что обошлось.
 
-Раздел только для главы семьи: в трейсах лежат полные промпты, а значит и куски
-переписки всех домашних. Здесь же — выключатель записи, очистка и выгрузка в JSON.
+Раздел администратора: в трейсах лежат полные промпты, а значит и куски переписки
+всех домашних. Здесь же — выключатель записи, очистка и выгрузка в JSON. Роль тут
+не проверяется: на весь админ-раздел стоит один заслон (`app/web/gate.py`).
 """
 import json
 
@@ -43,9 +44,6 @@ def traces_screen(
     context = screen_context(request, db, current, viewed,
                              title="Трейсы агента",
                              subtitle="Промпты, вызовы инструментов и токены")
-    if not current.is_head:
-        return render(request, "settings/traces_denied.html", context)
-
     rows = tracing.runs(db, limit=RUNS_ON_SCREEN, user_id=user_id, session_id=session_id)
     context.update(
         trace_settings=tracing.get_settings(db, viewed.family_id),
@@ -74,9 +72,6 @@ def export(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if not current.is_head:
-        return RedirectResponse("/settings/traces", status_code=303)
-
     data = tracing.export(db, viewed.family_id, user_id=user_id,
                           session_id=session_id, run_id=run_id)
     name = "traces" + (f"-session-{session_id}" if session_id else "") + \
@@ -95,10 +90,9 @@ def toggle(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if current.is_head:
-        row = tracing.get_settings(db, viewed.family_id)
-        row.enabled = enabled == "on"
-        db.commit()
+    row = tracing.get_settings(db, viewed.family_id)
+    row.enabled = enabled == "on"
+    db.commit()
     return _back()
 
 
@@ -109,10 +103,9 @@ def set_keep(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if current.is_head:
-        row = tracing.get_settings(db, viewed.family_id)
-        row.keep_runs = max(10, min(5000, keep_runs))
-        db.commit()
+    row = tracing.get_settings(db, viewed.family_id)
+    row.keep_runs = max(10, min(5000, keep_runs))
+    db.commit()
     return _back()
 
 
@@ -122,6 +115,5 @@ def clear(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if current.is_head:
-        tracing.clear(db, viewed.family_id)
+    tracing.clear(db, viewed.family_id)
     return _back()

@@ -44,7 +44,7 @@ def onboarding(
         module_list=module_list,
         matrix=access_matrix(db, current.family_id, [m.name for m in module_list]),
         member_rows=[{"user": m, "avatar": avatar(m), "invite_url": invite_url(m)} for m in members],
-        can_toggle=current.is_head,
+        can_toggle=True,
     )
     return render(request, "onboarding.html", context)
 
@@ -55,7 +55,7 @@ def set_name(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    if current.is_head and current.family is not None:
+    if current.family is not None:
         family_service.rename(db, current.family, name)
     return RedirectResponse("/onboarding?step=2", status_code=303)
 
@@ -71,7 +71,7 @@ def add_member(
     try:
         accounts.create_member(db, current, display_name, relation)
     except accounts.AccountError:
-        pass          # подробный разбор ошибок — на экране «Семья и модули»
+        pass          # подробный разбор ошибок — на экране «Учётные записи»
     return RedirectResponse("/onboarding?step=2", status_code=303)
 
 
@@ -84,7 +84,7 @@ def set_modules(
     current: User = Depends(get_current_user),
 ):
     target = db.get(User, user_id)
-    if current.is_head and target is not None and target.family_id == current.family_id:
+    if target is not None and target.family_id == current.family_id and target.is_member:
         set_module_enabled(db, user_id, module, enabled == "on")
     return RedirectResponse("/onboarding?step=3", status_code=303)
 

@@ -16,10 +16,10 @@ def client(db):
 
 
 @pytest.fixture
-def invited(db, member):
-    member.invite_code = new_invite_code()
+def invited(db, other):
+    other.invite_code = new_invite_code()
     db.commit()
-    return member
+    return other
 
 
 def test_invite_page_greets_the_person_by_name(client, invited):
@@ -77,12 +77,9 @@ def test_unknown_code_says_so_plainly(client):
     assert "уже не работает" in response.text
 
 
-def test_new_member_gets_an_invite_link(client, db, head):
-    from app.core.auth import hash_password
-
-    head.password_hash = hash_password("pw")
-    db.commit()
-    client.post("/login", data={"username": head.username, "password": "pw"}, follow_redirects=False)
+def test_new_member_gets_an_invite_link(client, db, admin):
+    """Людей заводит администратор — с онбординга или с «Учётных записей»."""
+    client.post("/login", data={"username": admin.username, "password": "pw"}, follow_redirects=False)
 
     client.post("/onboarding/member", data={"display_name": "Соня", "relation": "дочь"},
                 follow_redirects=False)

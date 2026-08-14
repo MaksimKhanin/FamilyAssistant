@@ -117,8 +117,9 @@ async def send(
 
     reply: AgentReply = agent.respond(
         db, current, text, image=image, channel="web",
-        # действовать «за» другого участника может только глава семьи
-        subject=viewed if current.is_head or viewed.id == current.id else current,
+        # Ассистент отвечает тому, кто спрашивает: действовать за другого больше
+        # некому — роль главы семьи разделилась на админа и участника (ADR-0007).
+        subject=current,
     )
 
     # Пузырь с репликой человека рисует сам браузер — сразу, не дожидаясь модели

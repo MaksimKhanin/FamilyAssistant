@@ -1,6 +1,6 @@
 """Module on/off flags — the entire access model of the MVP.
 
-There are no roles beyond «глава семьи включает модуль участнику». Everything that
+There are no roles beyond «администратор включает модуль участнику». Everything that
 asks «may this person use module X?» goes through `is_module_enabled`, including
 the agent layer, which hides a disabled module's tools from the LLM entirely
 rather than letting it call them and fail.

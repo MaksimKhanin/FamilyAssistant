@@ -15,16 +15,20 @@ from app.core.db import Base
 
 # --- small vocabularies, kept as plain strings so the DB stays easy to inspect ---
 
-ROLE_HEAD = "head"        # глава семьи — включает модули, видит админ-раздел
-ROLE_MEMBER = "member"
+#: Роли две, и они не пересекаются: администратор настраивает панель для всех,
+#: участник ею пользуется. Одна учётная запись — одна роль; человеку, который
+#: делает и то и другое, нужны две учётки (ADR-0007).
+ROLE_ADMIN = "admin"      # служебная учётка: глобальные настройки, люди, трейсы
+ROLE_MEMBER = "member"    # участник семьи: разговор, модули, свои знания
 
 #: How a single tool may be used on behalf of a user.
 MODE_AUTO = "auto"        # агент делает сам
 MODE_ASK = "ask"          # готовит действие и спрашивает подтверждение
 MODE_OFF = "off"          # инструмент недоступен
 
-#: Autonomy slider positions (screen «Агент и инструменты»). Used as the default
-#: tool mode when a user has no explicit per-tool override.
+#: Autonomy slider positions (screen «Агент и инструменты»). Одна на семью:
+#: самостоятельность ассистента задаёт администратор сразу для всех (ADR-0007),
+#: и она же — умолчание для инструмента, у которого нет отдельного режима.
 AUTONOMY_LEVELS = {
     0: "Всё спрашивает",
     1: "Спрашивает про важное",
@@ -60,7 +64,13 @@ class Family(Base):
 
 
 class User(Base):
-    """A person in the family. One row per Telegram account / web login."""
+    """A person in the family. One row per Telegram account / web login.
+
+    Роль решает, что это за учётка целиком: у администратора нет ни разговора,
+    ни модулей, ни личных настроек, а у участника — админ-раздела. Поэтому
+    личные колонки ниже (характер, самостоятельность, оформление) у админской
+    строки просто лежат неиспользованными: заполнить их некому и негде.
+    """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
@@ -79,7 +89,9 @@ class User(Base):
     telegram_id = Column(String(32), unique=True, nullable=True, index=True)
 
     avatar_slot = Column(Integer, nullable=False, default=0)    # индекс палитры аватара 0..4
-    autonomy = Column(Integer, nullable=False, default=1)
+    #: Самостоятельности здесь нет намеренно: она одна на семью и живёт в
+    #: `FamilySettings`. Человек не решает, насколько ассистенту можно
+    #: действовать без спроса, — это решает администратор для всех разом.
     #: Характер — свободное описание роли, которую ассистент играет для этого
     #: человека. Личный, как оформление: одному нужен сухой секретарь, другому —
     #: колкий собеседник, и это про манеру речи, а не про факты (app/core/instructions.py).
@@ -94,8 +106,12 @@ class User(Base):
     family = relationship("Family", back_populates="members")
 
     @property
-    def is_head(self) -> bool:
-        return self.role == ROLE_HEAD
+    def is_admin(self) -> bool:
+        return self.role == ROLE_ADMIN
+
+    @property
+    def is_member(self) -> bool:
+        return not self.is_admin
 
 
 class ModuleAccess(Base):
@@ -127,12 +143,17 @@ class ModuleMemo(Base):
 
 
 class ToolPolicy(Base):
-    """Per-user override of a tool's mode; absent row means «follow the autonomy slider»."""
+    """Режим одного инструмента для всей семьи; нет строки — «как задаёт самостоятельность».
+
+    Скоуп семейный, а не личный: что ассистенту позволено делать без спроса,
+    решает администратор один раз для всех (ADR-0007). Инструмент, выключенный
+    здесь, не показывается модели вовсе — ни у кого.
+    """
     __tablename__ = "tool_policies"
-    __table_args__ = (UniqueConstraint("user_id", "tool", name="uq_tool_policy"),)
+    __table_args__ = (UniqueConstraint("family_id", "tool", name="uq_tool_policy"),)
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    family_id = Column(Integer, ForeignKey("families.id", ondelete="CASCADE"), nullable=False, index=True)
     tool = Column(String(64), nullable=False)
     mode = Column(String(8), nullable=False, default=MODE_ASK)
 
@@ -243,7 +264,8 @@ class AgentRun(Base):
     #: меньше `SESSION_GAP` (см. app/agent/tracing.py).
     session_id = Column(String(32), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    #: За кого агент действовал: глава семьи может писать «от лица» другого.
+    #: За кого агент действовал. Сегодня это всегда сам участник — колонка
+    #: осталась от режима «от лица», который ушёл вместе с главой семьи (ADR-0007).
     subject_id = Column(Integer, nullable=True)
     channel = Column(String(16), nullable=False, default="web")     # web|telegram|schedule|event
 
@@ -294,7 +316,7 @@ class AgentTraceStep(Base):
 
 
 class TraceSettings(Base):
-    """Выключатель записи трейсов — один на семью, доступен только главе."""
+    """Выключатель записи трейсов — один на семью, доступен только администратору."""
     __tablename__ = "trace_settings"
 
     id = Column(Integer, primary_key=True)
@@ -305,12 +327,15 @@ class TraceSettings(Base):
 
 
 class FamilySettings(Base):
-    """Screen «Модель и знания» — family-wide, editable by the head only."""
+    """Screen «Модель и знания» — family-wide, editable by the administrator only."""
     __tablename__ = "family_settings"
 
     id = Column(Integer, primary_key=True)
     family_id = Column(Integer, ForeignKey("families.id", ondelete="CASCADE"), nullable=False, unique=True)
 
+    #: Самостоятельность ассистента (0..3) — одна на семью: её задаёт
+    #: администратор сразу для всех, а не каждый себе.
+    autonomy = Column(Integer, nullable=False, default=1, server_default="1")
     core_model = Column(String(16), nullable=False, default="hybrid")   # local|cloud|hybrid
     vlm_mode = Column(String(16), nullable=False, default="core")       # core|separate
     yolo_model = Column(String(16), nullable=False, default="yolov8n")

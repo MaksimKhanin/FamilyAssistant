@@ -9,7 +9,7 @@
    и на телефоне читаются сверху вниз одним движением. #}
 
 {# Кнопки профиля справа нет: этот экран и есть профиль. #}
-<div class="screen-head">{{ sh.screen_head("Профиль и агент", profile=false) }}</div>
+<div class="screen-head">{{ sh.screen_head("Профиль" if is_admin else "Профиль и агент", profile=false) }}</div>
 
 {% if error %}
   <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
@@ -29,7 +29,7 @@
       <div>
         <div class="card-title">{{ viewed_user.display_name }}</div>
         <div class="tiny">
-          {{ viewed_user.relation or ("глава семьи" if viewed_user.is_head else "участник") }} ·
+          {{ viewed_user.relation or ("администратор" if viewed_user.is_admin else "участник") }} ·
           @{{ viewed_user.username }}
         </div>
       </div>
@@ -55,6 +55,7 @@
         бумажное, для дня.</p>
     </div>
 
+    {% if not is_admin %}
     {# Характер стоит сразу за оформлением: и то и другое — про то, каким человек
        видит ассистента, а не про то, что тому разрешено. #}
     <form class="card tight stack" method="post" action="/settings/profile/character">
@@ -88,48 +89,16 @@
       </form>
     {% endfor %}
 
-    {# Четыре полоски вместо ползунка: ползунок на телефоне промахивался мимо
-       деления, а уровней всего четыре — их видно все сразу. #}
+    {# Самостоятельность здесь только показана: её задаёт администратор сразу
+       для всех (ADR-0007). Показана всё равно — человеку важно знать, в каких
+       случаях ассистент спросит, а в каких сделает сам. #}
     <div class="card tight stack">
       <div class="row">
-        <span class="card-title">Самостоятельность</span>
+        <span class="card-title">Самостоятельность ассистента</span>
         <span class="spacer" style="color:var(--acc);font-weight:600">{{ autonomy_levels[autonomy] }}</span>
       </div>
-      <div class="steps">
-        {% for level in autonomy_levels %}
-          <form method="post" action="/settings/agent/autonomy">
-            <input type="hidden" name="autonomy" value="{{ level }}">
-            <button class="{% if level <= autonomy %}on{% endif %}" type="submit"
-                    aria-label="{{ autonomy_levels[level] }}"
-                    {% if not can_edit %}disabled{% endif %}></button>
-          </form>
-        {% endfor %}
-      </div>
-      <p class="tiny">0 — всё спрашивает · 3 — максимально самостоятельно.
-        У каждого инструмента ниже это можно переопределить отдельно.</p>
-    </div>
-
-    <div class="card tight stack">
-      <div class="card-title">Инструменты</div>
-      {% for row in tools %}
-        {% if not loop.first %}<div class="divider" style="margin:2px 0"></div>{% endif %}
-        <div class="tool-row">
-          <div style="font-weight:500">
-            {{ row.spec.title }}
-            {% if not row.module_enabled %}<span class="badge neutral">модуль выключен</span>{% endif %}
-          </div>
-          <div class="mono">{{ row.spec.name }}</div>
-          <div class="segment wide small" style="margin-top:6px">
-            {% for value, label in [("auto", "Сам"), ("ask", "Спросит"), ("off", "Выкл")] %}
-              <form method="post" action="/settings/agent/tools/{{ row.spec.name }}">
-                <input type="hidden" name="mode" value="{{ value }}">
-                <button class="{% if row.mode == value %}on{% endif %}" type="submit"
-                        {% if not can_edit %}disabled{% endif %}>{{ label }}</button>
-              </form>
-            {% endfor %}
-          </div>
-        </div>
-      {% endfor %}
+      <p class="tiny">Одна на всю семью — её выбирает администратор. «Спросит» значит,
+        что ассистент подготовит действие и дождётся вашего «да».</p>
     </div>
 
     {# Уведомления идут сразу за инструментами: это последнее «что ассистенту
@@ -177,9 +146,11 @@
         <p class="muted">Сегодня агент ничего не делал сам.</p>
       {% endfor %}
     </div>
+    {% endif %}
   </div>
 
   <div class="stack" style="gap:14px">
+    {% if not is_admin %}
     <form class="card tight stack" method="post" action="/settings/profile">
       <div class="card-title">Питание</div>
       <div>
@@ -217,7 +188,7 @@
             <div style="font-weight:600">{{ job.label }}</div>
             <div class="tiny">в {{ job.at_time }}</div>
           </div>
-          <form class="spacer" method="post" action="/settings/agent/jobs/{{ job.kind }}">
+          <form class="spacer" method="post" action="/settings/profile/jobs/{{ job.kind }}">
             <input type="hidden" name="enabled" value="{{ 'off' if job.enabled else 'on' }}">
             <button class="toggle {% if job.enabled %}on{% endif %}" type="submit"
                     {% if not can_edit %}disabled{% endif %}><span></span></button>
@@ -225,11 +196,13 @@
         </div>
       {% endfor %}
     </div>
+    {% endif %}
 
+    {# Пароль — единственное, что есть у обеих ролей: свой меняет каждый сам. #}
     {% if current_user.id == viewed_user.id %}
       <form class="card tight stack" method="post" action="/settings/profile/password">
         <div class="card-title">Сменить пароль</div>
-        <p class="muted">Свой пароль вы меняете сами — глава семьи его не видит.</p>
+        <p class="muted">Свой пароль вы придумываете сами — администратор его не видит и не задаёт.</p>
         <input class="field" type="password" name="current_password" placeholder="Текущий пароль"
                autocomplete="current-password">
         <input class="field" type="password" name="new_password" placeholder="Новый пароль"
@@ -240,6 +213,9 @@
       </form>
     {% endif %}
 
+    {% if not is_admin %}
+    {# Модули здесь только видно: включает их администратор — выключенный модуль
+       уносит и экраны, и инструменты ассистента, и это решение на всю семью. #}
     <div class="card tight stack">
       <div class="card-title">Модули</div>
       {% for module in module_list %}
@@ -248,18 +224,14 @@
             <div style="font-weight:600">{{ module.title }}</div>
             <div class="tiny">{{ module.description }}</div>
           </div>
-          <form method="post" action="/settings/family/module">
-            <input type="hidden" name="user_id" value="{{ viewed_user.id }}">
-            <input type="hidden" name="module" value="{{ module.name }}">
-            <input type="hidden" name="enabled" value="{{ 'off' if matrix.get(module.name) else 'on' }}">
-            <button class="toggle {% if matrix.get(module.name) %}on{% endif %}" type="submit"
-                    {% if not can_toggle %}disabled title="Модули включает глава семьи"{% endif %}>
-              <span></span>
-            </button>
-          </form>
+          <span class="badge {{ 'ok' if matrix.get(module.name) else 'neutral' }}">
+            {{ "включён" if matrix.get(module.name) else "выключен" }}
+          </span>
         </div>
       {% endfor %}
+      <p class="tiny">Включает и выключает их администратор.</p>
     </div>
+    {% endif %}
   </div>
 </div>
 

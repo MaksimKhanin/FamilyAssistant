@@ -1,14 +1,19 @@
-"""Учётные записи семьи: кого заводим, кому выдаём вход, кого убираем.
+"""Учётные записи: кого заводим, кому выдаём вход, кого убираем.
 
-Администратор появляется из окружения при первом старте (`app/core/bootstrap.py`),
-всё остальное делается здесь и вызывается из панели. Правила простые, но их лучше
-держать в одном месте, а не размазывать по роутам:
+Первый администратор появляется из окружения при первом старте
+(`app/core/bootstrap.py`), всё остальное делается здесь и вызывается из панели.
+Правила простые, но их лучше держать в одном месте, а не размазывать по роутам:
 
-  * заводить, переименовывать и удалять людей может только глава семьи;
+  * заводить, переименовывать и удалять людей может только администратор;
   * себя нельзя ни удалить, ни разжаловать — иначе легко остаться без входа;
-  * последний глава семьи не может перестать быть главой по той же причине;
+  * последний администратор не может перестать быть администратором по той же причине;
   * ссылка-приглашение одноразовая, и её перевыпуск — он же сброс пароля:
     старая ссылка и старый пароль сразу перестают работать.
+
+Роль — это вся учётка целиком, а не набор галочек: администратор ассистентом не
+пользуется, участник настроек не трогает (ADR-0007). Поэтому «сделать участника
+администратором» — операция редкая и заметная: человек теряет доступ к своему
+разговору и своим модулям, хотя записи никуда не деваются.
 
 Нарушение правила — это `AccountError` с фразой, которую не стыдно показать
 человеку: интерфейс печатает её как есть.
@@ -19,10 +24,12 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.core.models import ROLE_HEAD, ROLE_MEMBER, User
+from app.core.models import ROLE_ADMIN, ROLE_MEMBER, User
 
 logger = get_logger("accounts")
 
+#: Ограничение на участников семьи. Админские учётки в него не входят: это не
+#: люди за столом, а служебный вход, и запирать из-за них семью незачем.
 MAX_MEMBERS = 12          # семья, а не корпоративный каталог
 AVATAR_SLOTS = 5
 
@@ -37,9 +44,9 @@ def new_invite_code() -> str:
 
 # --- проверки -------------------------------------------------------------
 
-def _require_head(actor: User):
-    if not actor.is_head:
-        raise AccountError("Учётные записи заводит и убирает глава семьи.")
+def _require_admin(actor: User):
+    if not actor.is_admin:
+        raise AccountError("Учётные записи заводит и убирает администратор.")
 
 
 def _same_family(actor: User, target: User) -> User:
@@ -52,8 +59,8 @@ def _fetch(db: Session, actor: User, user_id: int) -> User:
     return _same_family(actor, db.get(User, user_id))
 
 
-def heads(db: Session, family_id: int) -> List[User]:
-    return db.query(User).filter(User.family_id == family_id, User.role == ROLE_HEAD).all()
+def administrators(db: Session, family_id: int) -> List[User]:
+    return db.query(User).filter(User.family_id == family_id, User.role == ROLE_ADMIN).all()
 
 
 # --- создание -------------------------------------------------------------
@@ -81,14 +88,18 @@ def _unique_username(db: Session, base: str) -> str:
 
 
 def create_member(db: Session, actor: User, display_name: str, relation: str = "") -> User:
-    """Завести человека. Пароль он придумает сам по ссылке-приглашению."""
-    _require_head(actor)
+    """Завести участника. Пароль он придумает сам по ссылке-приглашению."""
+    _require_admin(actor)
 
     display_name = (display_name or "").strip()
     if not display_name:
         raise AccountError("Без имени не получится — как к человеку обращаться?")
 
-    members = db.query(User).filter(User.family_id == actor.family_id).all()
+    members = (
+        db.query(User)
+        .filter(User.family_id == actor.family_id, User.role == ROLE_MEMBER)
+        .all()
+    )
     if len(members) >= MAX_MEMBERS:
         raise AccountError(f"Больше {MAX_MEMBERS} человек в одной семье — это уже не семья.")
 
@@ -99,7 +110,6 @@ def create_member(db: Session, actor: User, display_name: str, relation: str = "
         relation=(relation or "").strip()[:32] or None,
         role=ROLE_MEMBER,
         avatar_slot=len(members) % AVATAR_SLOTS,
-        autonomy=1,
         invite_code=new_invite_code(),
     )
     db.add(member)
@@ -112,7 +122,7 @@ def create_member(db: Session, actor: User, display_name: str, relation: str = "
 # --- изменение ------------------------------------------------------------
 
 def rename(db: Session, actor: User, user_id: int, display_name: str, relation: str = "") -> User:
-    _require_head(actor)
+    _require_admin(actor)
     member = _fetch(db, actor, user_id)
 
     display_name = (display_name or "").strip()
@@ -125,17 +135,22 @@ def rename(db: Session, actor: User, user_id: int, display_name: str, relation: 
     return member
 
 
-def set_head(db: Session, actor: User, user_id: int, is_head: bool) -> User:
-    """Назначить или снять главу семьи."""
-    _require_head(actor)
+def set_admin(db: Session, actor: User, user_id: int, is_admin: bool) -> User:
+    """Сделать учётку административной или вернуть её в участники.
+
+    Смена роли меняет учётку целиком: администратор теряет разговор, модули и
+    свои настройки, участник — админ-раздел. Данные при этом остаются на месте,
+    поэтому операция обратима: вернули роль — вернулись и записи.
+    """
+    _require_admin(actor)
     member = _fetch(db, actor, user_id)
 
-    # Своя роль не меняется. Отдельной проверки «последний глава» не нужно:
-    # менять роли может только глава, и если он один — он же и есть этот случай.
+    # Своя роль не меняется. Отдельной проверки «последний администратор» не
+    # нужно: менять роли может только админ, и если он один — это он и есть.
     if member.id == actor.id:
-        raise AccountError("Свою роль изменить нельзя — попросите другого главу семьи.")
+        raise AccountError("Свою роль изменить нельзя — попросите другого администратора.")
 
-    member.role = ROLE_HEAD if is_head else ROLE_MEMBER
+    member.role = ROLE_ADMIN if is_admin else ROLE_MEMBER
     db.commit()
     logger.info(f"{member.username}: роль → {member.role}")
     return member
@@ -148,11 +163,11 @@ def issue_invite(db: Session, actor: User, user_id: int) -> User:
     ссылке и придумывает новый. Отдельной кнопки «сбросить пароль» нет — она бы
     делала ровно то же самое.
     """
-    _require_head(actor)
+    _require_admin(actor)
     member = _fetch(db, actor, user_id)
 
     # Себе — нельзя: это стёрло бы собственный пароль, и, если не скопировать
-    # ссылку немедленно, глава семьи остался бы снаружи собственной панели.
+    # ссылку немедленно, администратор остался бы снаружи собственной панели.
     if member.id == actor.id:
         raise AccountError("Свой пароль меняйте в профиле — так вы точно не потеряете вход.")
 
@@ -184,7 +199,7 @@ def change_own_password(db: Session, actor: User, current_password: str, new_pas
 
 def revoke_invite(db: Session, actor: User, user_id: int) -> User:
     """Отозвать неиспользованную ссылку, ничего не меняя у тех, кто уже вошёл."""
-    _require_head(actor)
+    _require_admin(actor)
     member = _fetch(db, actor, user_id)
     member.invite_code = None
     db.commit()
@@ -197,13 +212,13 @@ def delete_member(db: Session, actor: User, user_id: int) -> str:
     Данные уезжают каскадом по внешним ключам: еда, активность, знания, диалог,
     подписки на уведомления. Это необратимо, поэтому интерфейс переспрашивает.
     """
-    _require_head(actor)
+    _require_admin(actor)
     member = _fetch(db, actor, user_id)
 
-    # Отдельной проверки «последний глава» здесь не нужно: удалять может только
-    # глава, а единственный глава — это он сам, и его останавливает строка ниже.
+    # Отдельной проверки «последний администратор» здесь не нужно: удалять может
+    # только админ, а единственный админ — это он сам, и его останавливает строка ниже.
     if member.id == actor.id:
-        raise AccountError("Себя удалить нельзя. Попросите другого главу семьи.")
+        raise AccountError("Себя удалить нельзя. Попросите другого администратора.")
 
     name = member.display_name
     db.delete(member)
@@ -223,17 +238,17 @@ def status_of(member: User) -> str:
 
 
 def overview(db: Session, actor: User) -> List[dict]:
-    """Строки для экрана «Семья и модули» глазами того, кто на него смотрит."""
-    members = db.query(User).filter(User.family_id == actor.family_id).order_by(User.id).all()
-    #: Над собой глава семьи не властен: ни удалить, ни сменить роль — иначе
-    #: единственный администратор может случайно запереть себя снаружи.
-    manageable = lambda member: actor.is_head and member.id != actor.id   # noqa: E731
+    """Строки для админского экрана «Учётные записи» — все учётки, включая свою."""
+    accounts_rows = db.query(User).filter(User.family_id == actor.family_id).order_by(User.id).all()
+    #: Над собой администратор не властен: ни удалить, ни сменить роль — иначе
+    #: единственный админ может случайно запереть себя снаружи.
+    manageable = lambda member: actor.is_admin and member.id != actor.id   # noqa: E731
     return [{
         "user": member,
         "status": status_of(member),
         "can_delete": manageable(member),
         "can_change_role": manageable(member),
-    } for member in members]
+    } for member in accounts_rows]
 
 
 def find_by_invite(db: Session, code: str) -> Optional[User]:

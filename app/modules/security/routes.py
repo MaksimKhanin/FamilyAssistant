@@ -310,9 +310,9 @@ def cameras_screen(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if not is_module_enabled(db, viewed.id, "security"):
-        return _module_off(request, db, current, viewed, "Камеры")
-
+    # Камеры — админский экран (app/core/roles.py): это настройка кубика, а не
+    # место, куда ходят смотреть. Тумблер модуля здесь не спрашивается нарочно —
+    # камеры настраивают до того, как модуль кому-то включили.
     context = screen_context(request, db, current, viewed,
                              title="Камеры", subtitle="Какие камеры пишут в ленту, а какие — уведомляют")
     context["cameras"] = service.list_cameras(db, viewed.family_id)

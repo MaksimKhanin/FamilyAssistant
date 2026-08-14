@@ -109,7 +109,7 @@ def seed_demo():
     from app.core.auth import hash_password
     from app.core.db import session_scope
     from app.core.family import get_settings
-    from app.core.models import ROLE_HEAD, ROLE_MEMBER, Family, User
+    from app.core.models import ROLE_ADMIN, ROLE_MEMBER, Family, User
     from app.modules.memory import knowledge, reminders
     from app.modules.nutrition import service as nutrition
     from app.modules.nutrition.vision import MealEstimate
@@ -125,20 +125,26 @@ def seed_demo():
         db.flush()
         get_settings(db, family.id)
 
-        head = User(family_id=family.id, username="marina", password_hash=hash_password(DEMO_PASSWORD),
-                    display_name="Марина", relation="мама", role=ROLE_HEAD, avatar_slot=0, autonomy=2)
+        # Администратор — служебная учётка: под ней настраивают панель, но не
+        # разговаривают с ассистентом (ADR-0007). Поэтому в демо-семье он есть
+        # отдельно от людей, а не поверх одного из них.
+        admin = User(family_id=family.id, username="admin", password_hash=hash_password(DEMO_PASSWORD),
+                     display_name="Администратор", role=ROLE_ADMIN, avatar_slot=4)
+        mother = User(family_id=family.id, username="marina", password_hash=hash_password(DEMO_PASSWORD),
+                      display_name="Марина", relation="мама", role=ROLE_MEMBER, avatar_slot=0)
         son = User(family_id=family.id, username="leva", password_hash=hash_password(DEMO_PASSWORD),
-                   display_name="Лёва", relation="сын", role=ROLE_MEMBER, avatar_slot=1, autonomy=1)
+                   display_name="Лёва", relation="сын", role=ROLE_MEMBER, avatar_slot=1)
         daughter = User(family_id=family.id, username="sonya", display_name="Соня", relation="дочь",
-                        role=ROLE_MEMBER, avatar_slot=2, autonomy=1, invite_code=new_invite_code())
-        db.add_all([head, son, daughter])
+                        role=ROLE_MEMBER, avatar_slot=2, invite_code=new_invite_code())
+        db.add_all([admin, mother, son, daughter])
         db.flush()
 
-        _seed_week(db, head.id, nutrition)
-        _seed_knowledge(db, head.id, knowledge, reminders)
+        _seed_week(db, mother.id, nutrition)
+        _seed_knowledge(db, mother.id, knowledge, reminders)
         _seed_home(db, family.id, security)
 
-        return {"family": family.name, "head": head.username, "invite": daughter.invite_code}
+        return {"family": family.name, "admin": admin.username,
+                "member": mother.username, "invite": daughter.invite_code}
 
 
 def _seed_week(db, user_id: int, nutrition):
@@ -273,8 +279,9 @@ def banner(port: int, demo: dict, stub: bool):
     print(f"  База:        {DB_FILE}  (SQLite)")
     if demo:
         print(f"  Семья:       «{demo['family']}»")
-        print(f"  Вход:        {demo['head']} / {DEMO_PASSWORD}   (глава семьи)")
+        print(f"  Вход:        {demo['member']} / {DEMO_PASSWORD}   (участник — ассистент, модули, знания)")
         print(f"               leva / {DEMO_PASSWORD}   (участник — увидит, что чужие цифры скрыты)")
+        print(f"               {demo['admin']} / {DEMO_PASSWORD}   (администратор — только настройки и трейсы)")
         print(f"  Приглашение: http://127.0.0.1:{port}/invite/{demo['invite']}   (Соня задаст пароль)")
     if not demo:
         print(f"  Вход:        admin / {DEMO_PASSWORD}   (создан из ADMIN_* при первом старте)")

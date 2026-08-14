@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+
+{% if error %}
+  <div class="card tight" style="border-left:4px solid var(--alarm);margin-bottom:16px">
+    <p class="muted" style="color:var(--alarm-text)">{{ error }}</p>
+  </div>
+{% elif notice %}
+  <div class="card tight" style="border-left:4px solid var(--ok);margin-bottom:16px">
+    <p class="muted">{{ notice }}</p>
+  </div>
+{% endif %}
+
+{% if invite_link %}
+  <div class="card stack" style="margin-bottom:16px;border-left:4px solid var(--acc)">
+    <div class="card-title">Ссылка для {{ invited_user.display_name }}</div>
+    <p class="muted">
+      По ней человек придумает себе пароль и сразу попадёт в панель. Ссылка одноразовая —
+      покажу её только сейчас, потом можно будет только выпустить новую.
+    </p>
+    <div class="row wrap" style="gap:8px">
+      <input class="field" id="invite-link" value="{{ invite_link }}" readonly
+             onclick="this.select()" style="flex:1;min-width:240px">
+      <button class="btn" type="button" onclick="panel.copyInviteField()">Скопировать</button>
+    </div>
+  </div>
+{% endif %}
+
+<form class="card row wrap" method="post" action="/settings/accounts/name" style="gap:10px;margin-bottom:16px">
+  <div style="flex:1;min-width:220px">
+    <div class="label">Название семьи</div>
+    <input class="field" name="name" value="{{ family.name }}">
+  </div>
+  <button class="btn" type="submit" style="align-self:flex-end">Сохранить</button>
+</form>
+
+<div class="stack">
+  {% for row in members_info %}
+    {% set member = row.user %}
+    <div class="card stack">
+      <div class="row wrap" style="gap:10px">
+        <span class="avatar" style="background:{{ row.avatar.bg }};color:{{ row.avatar.fg }}">
+          {{ row.avatar.initial }}
+        </span>
+        <div style="flex:1;min-width:180px">
+          <div class="row wrap" style="gap:8px">
+            <span style="font-weight:600">{{ member.display_name }}</span>
+            {% if member.is_admin %}<span class="badge ok">администратор</span>{% endif %}
+            <span class="badge {{ 'neutral' if member.password_hash else 'estimate' }}">{{ row.status }}</span>
+          </div>
+          <div class="tiny">{{ member.relation or ("служебная учётная запись" if member.is_admin else "участник") }}
+            · @{{ member.username }}</div>
+        </div>
+
+        {# Модули включают участнику: у администратора их нет — ни экранов, ни
+           инструментов, ни разговора, в котором они бы понадобились. #}
+        {% if member.is_member %}
+          {% for module in module_list %}
+            <form method="post" action="/settings/accounts/module" style="text-align:center">
+              <input type="hidden" name="user_id" value="{{ member.id }}">
+              <input type="hidden" name="module" value="{{ module.name }}">
+              <input type="hidden" name="enabled"
+                     value="{{ 'off' if matrix[member.id][module.name] else 'on' }}">
+              <div class="tiny" style="margin-bottom:3px">{{ module.title }}</div>
+              <button class="toggle {% if matrix[member.id][module.name] %}on{% endif %}" type="submit">
+                <span></span>
+              </button>
+            </form>
+          {% endfor %}
+        {% endif %}
+      </div>
+
+      <div class="divider" style="margin:6px 0"></div>
+      <div class="row wrap" style="gap:8px">
+        <form method="post" action="/settings/accounts/member/{{ member.id }}/rename"
+              class="row wrap" style="gap:6px;flex:1;min-width:280px">
+          <input class="field" name="display_name" value="{{ member.display_name }}"
+                 style="flex:1;min-width:120px">
+          <input class="field" name="relation" value="{{ member.relation or '' }}"
+                 placeholder="кем приходится" style="flex:1;min-width:120px">
+          <button class="btn ghost small" type="submit">Сохранить</button>
+        </form>
+
+        {% if row.can_change_role %}
+          <form method="post" action="/settings/accounts/member/{{ member.id }}/role"
+                hx-confirm="{% if member.is_admin %}Вернуть {{ member.display_name }} в участники? Появятся разговор, модули и личные настройки, админ-раздел исчезнет.{% else %}Сделать {{ member.display_name }} администратором? Разговор с ассистентом и модули у этой учётной записи пропадут — записи останутся, но пользоваться ассистентом под ней будет нельзя.{% endif %}">
+            <input type="hidden" name="admin" value="{{ 'off' if member.is_admin else 'on' }}">
+            <button class="btn ghost small" type="submit">
+              {{ "Вернуть в участники" if member.is_admin else "Сделать администратором" }}
+            </button>
+          </form>
+        {% endif %}
+
+        <form method="post" action="/settings/accounts/member/{{ member.id }}/invite"
+              hx-confirm="Выпустить новую ссылку для {{ member.display_name }}? Текущий пароль перестанет работать.">
+          <button class="btn ghost small" type="submit">
+            {{ "Сбросить пароль" if member.password_hash else "Выпустить ссылку" }}
+          </button>
+        </form>
+
+        {% if member.invite_code and not member.password_hash %}
+          <form method="post" action="/settings/accounts/member/{{ member.id }}/revoke">
+            <button class="btn ghost small" type="submit">Отозвать ссылку</button>
+          </form>
+        {% endif %}
+
+        {% if row.can_delete %}
+          <form method="post" action="/settings/accounts/member/{{ member.id }}/delete"
+                hx-confirm="Удалить {{ member.display_name }}? Вместе с человеком исчезнут все его записи о еде, разделы знаний и переписка с ассистентом. Это необратимо.">
+            <button class="btn ghost small" type="submit" style="color:var(--alarm-text)">Удалить</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+
+  <form class="card row wrap" method="post" action="/settings/accounts/member" style="gap:8px">
+    <div style="flex:1;min-width:160px">
+      <div class="label">Имя</div>
+      <input class="field" name="display_name" placeholder="Соня">
+    </div>
+    <div style="flex:1;min-width:160px">
+      <div class="label">Кем приходится</div>
+      <input class="field" name="relation" placeholder="дочь">
+    </div>
+    <button class="btn" type="submit" style="align-self:flex-end">Добавить участника</button>
+  </form>
+</div>
+
+<p class="tiny" style="margin-top:16px;max-width:72ch">
+  Роли две, и они не пересекаются: администратор настраивает панель для всех и
+  ассистентом не пользуется, участник пользуется и настроек не трогает. Чтобы
+  разговаривать с ассистентом самому, заведите себе вторую учётную запись —
+  участника. Пароль человек придумывает сам по ссылке: администратор его не
+  видит и не задаёт.
+</p>
+
+{% endblock %}

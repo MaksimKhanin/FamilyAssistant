@@ -69,32 +69,32 @@ def test_vapid_header_is_a_signed_jwt_for_the_push_service(browser):
 
 # --- хранение подписок ----------------------------------------------------
 
-def test_subscription_is_saved_per_device(db, head):
-    push.save_subscription(db, head.id, "https://push/1", "key1", "auth1", "iPhone · Safari")
-    push.save_subscription(db, head.id, "https://push/2", "key2", "auth2", "Android · Chrome")
+def test_subscription_is_saved_per_device(db, member):
+    push.save_subscription(db, member.id, "https://push/1", "key1", "auth1", "iPhone · Safari")
+    push.save_subscription(db, member.id, "https://push/2", "key2", "auth2", "Android · Chrome")
 
-    assert push.device_count(db, head.id) == 2
+    assert push.device_count(db, member.id) == 2
 
 
-def test_resubscribing_the_same_device_updates_it(db, head):
-    push.save_subscription(db, head.id, "https://push/1", "old", "auth", "iPhone · Safari")
-    push.save_subscription(db, head.id, "https://push/1", "new", "auth", "iPhone · Safari")
+def test_resubscribing_the_same_device_updates_it(db, member):
+    push.save_subscription(db, member.id, "https://push/1", "old", "auth", "iPhone · Safari")
+    push.save_subscription(db, member.id, "https://push/1", "new", "auth", "iPhone · Safari")
 
     row = db.query(PushSubscription).one()
     assert row.p256dh == "new"
-    assert push.device_count(db, head.id) == 1
-
-
-def test_a_shared_device_moves_to_its_new_owner(db, head, member):
-    push.save_subscription(db, head.id, "https://push/shared", "k", "a")
-    push.save_subscription(db, member.id, "https://push/shared", "k", "a")
-
-    assert push.device_count(db, head.id) == 0
     assert push.device_count(db, member.id) == 1
 
 
-def test_forgetting_a_subscription(db, head):
-    push.save_subscription(db, head.id, "https://push/1", "k", "a")
+def test_a_shared_device_moves_to_its_new_owner(db, member, other):
+    push.save_subscription(db, member.id, "https://push/shared", "k", "a")
+    push.save_subscription(db, other.id, "https://push/shared", "k", "a")
+
+    assert push.device_count(db, member.id) == 0
+    assert push.device_count(db, other.id) == 1
+
+
+def test_forgetting_a_subscription(db, member):
+    push.save_subscription(db, member.id, "https://push/1", "k", "a")
     assert push.forget_subscription(db, "https://push/1") is True
     assert push.forget_subscription(db, "https://push/1") is False
 
@@ -108,9 +108,9 @@ def test_device_label_is_recognisable():
 
 # --- доставка -------------------------------------------------------------
 
-def test_dead_subscriptions_are_dropped_not_retried_forever(db, head, monkeypatch):
-    push.save_subscription(db, head.id, "https://push/gone", "k", "a")
-    push.save_subscription(db, head.id, "https://push/alive", "k", "a")
+def test_dead_subscriptions_are_dropped_not_retried_forever(db, member, monkeypatch):
+    push.save_subscription(db, member.id, "https://push/gone", "k", "a")
+    push.save_subscription(db, member.id, "https://push/alive", "k", "a")
     monkeypatch.setattr(push.settings.push, "public_key", "pub")
     monkeypatch.setattr(push.settings.push, "private_key", "priv")
 
@@ -121,39 +121,39 @@ def test_dead_subscriptions_are_dropped_not_retried_forever(db, head, monkeypatc
 
     monkeypatch.setattr(push.webpush, "send", fake_send)
 
-    delivered = push.send_to_users(db, [head.id], "Проверка")
+    delivered = push.send_to_users(db, [member.id], "Проверка")
 
     assert delivered == 1
     assert [row.endpoint for row in db.query(PushSubscription)] == ["https://push/alive"]
 
 
-def test_temporary_failure_keeps_the_subscription(db, head, monkeypatch):
-    push.save_subscription(db, head.id, "https://push/flaky", "k", "a")
+def test_temporary_failure_keeps_the_subscription(db, member, monkeypatch):
+    push.save_subscription(db, member.id, "https://push/flaky", "k", "a")
     monkeypatch.setattr(push.settings.push, "public_key", "pub")
     monkeypatch.setattr(push.settings.push, "private_key", "priv")
     monkeypatch.setattr(push.webpush, "send",
                         lambda *a, **kw: (_ for _ in ()).throw(webpush.PushError("503", status=503)))
 
-    assert push.send_to_users(db, [head.id], "Проверка") == 0
-    assert push.device_count(db, head.id) == 1
+    assert push.send_to_users(db, [member.id], "Проверка") == 0
+    assert push.device_count(db, member.id) == 1
 
 
-def test_nothing_is_sent_without_vapid_keys(db, head, monkeypatch):
-    push.save_subscription(db, head.id, "https://push/1", "k", "a")
+def test_nothing_is_sent_without_vapid_keys(db, member, monkeypatch):
+    push.save_subscription(db, member.id, "https://push/1", "k", "a")
     monkeypatch.setattr(push.settings.push, "public_key", "")
     monkeypatch.setattr(push.settings.push, "private_key", "")
 
-    assert push.send_to_users(db, [head.id], "Проверка") == 0
+    assert push.send_to_users(db, [member.id], "Проверка") == 0
 
 
-def test_anomaly_on_the_bus_becomes_a_notification_with_a_link(db, head, monkeypatch):
+def test_anomaly_on_the_bus_becomes_a_notification_with_a_link(db, member, monkeypatch):
     sent = {}
     monkeypatch.setattr(push, "send_to_users",
                         lambda db, user_ids, body, severity="info", url="/", tag=None:
                         sent.update(user_ids=user_ids, body=body, severity=severity, url=url) or 1)
 
     push.handle_agent_message({
-        "user_ids": [head.id],
+        "user_ids": [member.id],
         "text": "Кто-то у калитки, 23:14",
         "severity": "alarm",
         "event_id": 7,

@@ -27,6 +27,7 @@ from app.web import (
     routes_auth, routes_chat, routes_dashboard, routes_invite, routes_onboarding,
     routes_push, routes_settings, routes_traces,
 )
+from app.web.gate import role_gate
 
 logger = get_logger("app")
 
@@ -35,7 +36,7 @@ async def lifespan(_: FastAPI):
     Path(settings.media_root).mkdir(parents=True, exist_ok=True)
     create_all()
 
-    # Глава семьи заводится из окружения при первом старте; дальше учётные записи
+    # Администратор заводится из окружения при первом старте; дальше учётные записи
     # он нарезает в панели. Вызов идемпотентный — на непустой базе ничего не делает.
     with session_scope() as db:
         ensure_admin(db)
@@ -60,6 +61,11 @@ app = FastAPI(title="Семейный ассистент", docs_url=None, redoc_
 # только сжатым. Медиа с камер middleware не трогает сам: jpeg, video/* и
 # 206-ответы (перемотка видео) в его списке исключений.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Кто что видит — решает один заслон, а не сотня роутов (app/core/roles.py):
+# админ-раздел не открывается участнику, личные экраны — администратору, и это
+# верно и для пункта меню, и для адреса, набранного руками.
+app.middleware("http")(role_gate)
 
 
 @app.exception_handler(NotAuthenticatedException)

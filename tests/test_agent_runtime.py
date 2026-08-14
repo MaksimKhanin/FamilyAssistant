@@ -1,6 +1,7 @@
 """The agent loop: tool calls, confirmations, traces, logging."""
 import pytest
 
+from app.agent import policy
 from app.agent.llm import LLMResponse, LLMUnavailable, ToolCall
 from app.agent.runtime import Agent, OFFLINE_REPLY, approve_action, reject_action
 from app.core.models import ActionLog, ChatMessage, PendingAction
@@ -11,15 +12,14 @@ def _call(name, **arguments):
     return LLMResponse(tool_calls=[ToolCall(id=f"call_{name}", name=name, arguments=arguments)])
 
 
-def test_auto_mode_runs_the_tool_and_traces_it(db, head):
-    head.autonomy = 3
-    db.commit()
+def test_auto_mode_runs_the_tool_and_traces_it(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
 
     llm = FakeLLM([
         _call("remember", text="Соня не ест грибы"),
         LLMResponse(content="Запомнил."),
     ])
-    reply = Agent(llm).respond(db, head, "запомни: Соня не ест грибы")
+    reply = Agent(llm).respond(db, member, "запомни: Соня не ест грибы")
 
     assert reply.text == "Запомнил."
     assert [t.status for t in reply.traces] == ["done"]
@@ -30,15 +30,14 @@ def test_auto_mode_runs_the_tool_and_traces_it(db, head):
     assert db.query(PendingAction).count() == 0
 
 
-def test_ask_mode_prepares_the_action_instead_of_doing_it(db, head):
-    head.autonomy = 0      # всё спрашивает
-    db.commit()
+def test_ask_mode_prepares_the_action_instead_of_doing_it(db, member):
+    policy.set_autonomy(db, member.family_id, 0)      # всё спрашивает
 
     llm = FakeLLM([
         _call("remember", text="купить хлеб"),
         LLMResponse(content="Подготовил, подтвердите."),
     ])
-    reply = Agent(llm).respond(db, head, "запомни купить хлеб")
+    reply = Agent(llm).respond(db, member, "запомни купить хлеб")
 
     assert [t.status for t in reply.traces] == ["awaiting"]
     pending = db.query(PendingAction).one()
@@ -51,14 +50,13 @@ def test_ask_mode_prepares_the_action_instead_of_doing_it(db, head):
     assert card["type"] == "confirm" and card["pending_id"] == pending.id
 
 
-def test_approving_runs_the_action_and_marks_it_confirmed(db, head):
-    head.autonomy = 0
-    db.commit()
+def test_approving_runs_the_action_and_marks_it_confirmed(db, member):
+    policy.set_autonomy(db, member.family_id, 0)
     Agent(FakeLLM([_call("remember", text="купить хлеб"),
-                   LLMResponse(content="Подготовил.")])).respond(db, head, "запомни")
+                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
 
     pending = db.query(PendingAction).one()
-    result = approve_action(db, pending.id, head)
+    result = approve_action(db, pending.id, member)
 
     assert result.ok
     db.refresh(pending)
@@ -66,14 +64,13 @@ def test_approving_runs_the_action_and_marks_it_confirmed(db, head):
     assert db.query(ActionLog).filter(ActionLog.mode == "confirmed").count() == 1
 
 
-def test_rejecting_leaves_no_trace_of_the_action(db, head):
-    head.autonomy = 0
-    db.commit()
+def test_rejecting_leaves_no_trace_of_the_action(db, member):
+    policy.set_autonomy(db, member.family_id, 0)
     Agent(FakeLLM([_call("remember", text="что-то"),
-                   LLMResponse(content="Подготовил.")])).respond(db, head, "запомни")
+                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
 
     pending = db.query(PendingAction).one()
-    result = reject_action(db, pending.id, head)
+    result = reject_action(db, pending.id, member)
 
     assert result.ok
     db.refresh(pending)
@@ -81,15 +78,14 @@ def test_rejecting_leaves_no_trace_of_the_action(db, head):
     assert db.query(ActionLog).count() == 0
 
 
-def test_another_member_cannot_confirm_your_action(db, head, member):
-    member.autonomy = 0
-    db.commit()
+def test_another_member_cannot_confirm_your_action(db, member, other):
+    policy.set_autonomy(db, other.family_id, 0)
     Agent(FakeLLM([_call("remember", text="личное"),
-                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
+                   LLMResponse(content="Подготовил.")])).respond(db, other, "запомни")
 
     pending = db.query(PendingAction).one()
-    other = type(member)(family_id=member.family_id, username="sonya",
-                         display_name="Соня", role="member")
+    other = type(other)(family_id=other.family_id, username="sonya",
+                         display_name="Соня", role="other")
     db.add(other)
     db.commit()
 
@@ -99,43 +95,42 @@ def test_another_member_cannot_confirm_your_action(db, head, member):
     assert pending.status == "pending"
 
 
-def test_unknown_tool_does_not_break_the_conversation(db, head):
+def test_unknown_tool_does_not_break_the_conversation(db, member):
     llm = FakeLLM([_call("order_a_taxi", where="домой"), LLMResponse(content="Так я не умею.")])
-    reply = Agent(llm).respond(db, head, "вызови такси")
+    reply = Agent(llm).respond(db, member, "вызови такси")
 
     assert reply.text == "Так я не умею."
     assert reply.traces[0].status == "failed"
 
 
-def test_offline_model_says_so_instead_of_crashing(db, head):
+def test_offline_model_says_so_instead_of_crashing(db, member):
     class Broken(FakeLLM):
         def chat(self, *args, **kwargs):
             raise LLMUnavailable("нет связи")
 
-    reply = Agent(Broken([])).respond(db, head, "привет")
+    reply = Agent(Broken([])).respond(db, member, "привет")
 
     assert reply.text == OFFLINE_REPLY
     saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
     assert saved.content == OFFLINE_REPLY
 
 
-def test_conversation_is_persisted_for_both_channels(db, head):
-    head.autonomy = 3
-    db.commit()
+def test_conversation_is_persisted_for_both_channels(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
     Agent(FakeLLM([LLMResponse(content="Здравствуйте.")])).respond(
-        db, head, "привет", channel="telegram")
+        db, member, "привет", channel="telegram")
 
     roles = [m.role for m in db.query(ChatMessage).order_by(ChatMessage.id)]
     assert roles == ["user", "assistant"]
     assert all(m.channel == "telegram" for m in db.query(ChatMessage))
 
 
-def test_only_allowed_tools_are_offered_to_the_model(db, member):
+def test_only_allowed_tools_are_offered_to_the_model(db, other):
     from app.core.access import set_module_enabled
 
-    set_module_enabled(db, member.id, "security", False)
+    set_module_enabled(db, other.id, "security", False)
     llm = FakeLLM([LLMResponse(content="Хорошо.")])
-    Agent(llm).respond(db, member, "что дома?")
+    Agent(llm).respond(db, other, "что дома?")
 
     offered = {t["function"]["name"] for t in llm.calls[0]["tools"]}
     assert "get_security_log" not in offered

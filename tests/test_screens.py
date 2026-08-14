@@ -11,13 +11,18 @@ from fastapi.testclient import TestClient
 from app.core.db import get_db
 from app.main import app
 
-#: Всё, что человек может открыть по ссылке из навигации, панели или уведомления.
-SCREENS = [
+#: Всё, что участник может открыть по ссылке из навигации, панели или уведомления.
+MEMBER_SCREENS = [
     "/", "/chat", "/chat/panel", "/memory", "/reminders",
     "/settings/profile", "/settings/family", "/settings/connectors",
-    "/settings/model", "/settings/traces",
     "/nutrition/meal", "/nutrition/stats", "/nutrition/activity", "/nutrition/plan",
-    "/security/events", "/security/cameras", "/security/archive",
+    "/security/events", "/security/archive",
+]
+
+#: Админ-раздел: настройки на всю семью, люди, трейсы и настройка камер.
+ADMIN_SCREENS = [
+    "/settings/accounts", "/settings/agent", "/settings/model", "/settings/traces",
+    "/settings/profile", "/onboarding", "/security/cameras",
 ]
 
 
@@ -29,24 +34,37 @@ def client(db):
 
 
 @pytest.fixture
-def as_head(client, head):
-    client.post("/login", data={"username": head.username, "password": "pw"},
+def as_member(client, member):
+    client.post("/login", data={"username": member.username, "password": "pw"},
                 follow_redirects=False)
     return client
 
 
-@pytest.mark.parametrize("path", SCREENS)
-def test_every_screen_renders(as_head, path):
-    response = as_head.get(path, follow_redirects=True)
+@pytest.fixture
+def as_admin(client, admin):
+    client.post("/login", data={"username": admin.username, "password": "pw"},
+                follow_redirects=False)
+    return client
+
+
+@pytest.mark.parametrize("path", MEMBER_SCREENS)
+def test_every_screen_renders(as_member, path):
+    response = as_member.get(path, follow_redirects=True)
     assert response.status_code == 200, (path, response.text[:400])
 
 
-@pytest.mark.parametrize("path", SCREENS)
-def test_every_screen_renders_in_the_dark_theme(as_head, path):
-    """Ночное оформление — не переменная цвета, а второй набор токенов."""
-    as_head.post("/settings/profile/theme", data={"theme": "dark"}, follow_redirects=False)
+@pytest.mark.parametrize("path", ADMIN_SCREENS)
+def test_every_admin_screen_renders(as_admin, path):
+    response = as_admin.get(path, follow_redirects=True)
+    assert response.status_code == 200, (path, response.text[:400])
 
-    response = as_head.get(path, follow_redirects=True)
+
+@pytest.mark.parametrize("path", MEMBER_SCREENS)
+def test_every_screen_renders_in_the_dark_theme(as_member, path):
+    """Ночное оформление — не переменная цвета, а второй набор токенов."""
+    as_member.post("/settings/profile/theme", data={"theme": "dark"}, follow_redirects=False)
+
+    response = as_member.get(path, follow_redirects=True)
 
     assert response.status_code == 200, (path, response.text[:400])
     if path != "/chat/panel":          # партиал панели живёт без <html>
@@ -55,18 +73,18 @@ def test_every_screen_renders_in_the_dark_theme(as_head, path):
 
 # --- оформление ---------------------------------------------------------------
 
-def test_the_theme_is_saved_and_reaches_the_document(as_head, db, head):
-    assert as_head.post("/settings/profile/theme", data={"theme": "dark"},
+def test_the_theme_is_saved_and_reaches_the_document(as_member, db, member):
+    assert as_member.post("/settings/profile/theme", data={"theme": "dark"},
                         follow_redirects=False).status_code == 303
 
-    db.refresh(head)
-    assert head.theme == "dark"
+    db.refresh(member)
+    assert member.theme == "dark"
     # Тема стоит атрибутом на <html>, а не подставляется скриптом: иначе ночью
     # первый кадр вспыхивал бы белым.
-    assert 'data-theme="dark"' in as_head.get("/chat").text
+    assert 'data-theme="dark"' in as_member.get("/chat").text
 
 
-def test_the_theme_form_reloads_the_document(as_head):
+def test_the_theme_form_reloads_the_document(as_member):
     """Форма оформления — единственная, которая ходит без hx-boost.
 
     Оформление живёт атрибутом на `<html>` и цветом статусбара в `<head>`, а
@@ -74,32 +92,32 @@ def test_the_theme_form_reloads_the_document(as_head):
     но цвета оставались прежними до перезагрузки, и кнопка выглядела нерабочей.
     Тест на сохранение темы этого не ловил — он ходит запросами, а не браузером.
     """
-    markup = as_head.get("/settings/profile").text
+    markup = as_member.get("/settings/profile").text
 
     form = markup.split('action="/settings/profile/theme"')[1].split(">")[0]
     assert 'hx-boost="false"' in form
 
 
-def test_an_unknown_theme_is_ignored(as_head, db, head):
-    as_head.post("/settings/profile/theme", data={"theme": "neon"}, follow_redirects=False)
-
-    db.refresh(head)
-    assert head.theme == "warm"
-
-
-def test_the_theme_is_personal(as_head, client, db, head, member):
-    """Оформление своё у каждого — соседу по семье оно не достаётся."""
-    as_head.post("/settings/profile/theme", data={"theme": "dark"}, follow_redirects=False)
+def test_an_unknown_theme_is_ignored(as_member, db, member):
+    as_member.post("/settings/profile/theme", data={"theme": "neon"}, follow_redirects=False)
 
     db.refresh(member)
     assert member.theme == "warm"
 
 
+def test_the_theme_is_personal(as_member, client, db, member, other):
+    """Оформление своё у каждого — соседу по семье оно не достаётся."""
+    as_member.post("/settings/profile/theme", data={"theme": "dark"}, follow_redirects=False)
+
+    db.refresh(other)
+    assert other.theme == "warm"
+
+
 # --- нижняя панель ------------------------------------------------------------
 
-def test_the_bottom_bar_is_home_talk_and_knowledge(as_head):
+def test_the_bottom_bar_is_home_talk_and_knowledge(as_member):
     """Три пункта, и разговор посередине: он есть всегда, даже без модулей."""
-    markup = as_head.get("/").text
+    markup = as_member.get("/").text
 
     bar = markup.split('<nav class="bottom-nav')[1].split("</nav>")[0]
     assert bar.count("<a ") == 3
@@ -113,25 +131,55 @@ def test_the_bottom_bar_is_home_talk_and_knowledge(as_head):
     assert 'href="/nutrition/meal"' not in bar
 
 
-def test_the_talk_button_keeps_the_middle_when_a_module_is_off(as_head, db, head):
+def test_the_talk_button_keeps_the_middle_when_a_module_is_off(as_member, db, member):
     """Выключенный модуль забирает свой пункт, но не место под ним."""
     from app.core.access import set_module_enabled
 
-    set_module_enabled(db, head.id, "security", False)
+    set_module_enabled(db, member.id, "security", False)
 
-    bar = as_head.get("/").text.split('<nav class="bottom-nav')[1].split("</nav>")[0]
+    bar = as_member.get("/").text.split('<nav class="bottom-nav')[1].split("</nav>")[0]
     assert "/security/events" not in bar
     # Пустое место слева, разговор всё ещё в середине.
     assert bar.index("<span></span>") < bar.index('href="/chat"') < bar.index('href="/memory"')
 
 
-# --- переезд «Агента и инструментов» -------------------------------------------
+# --- разделение ролей ----------------------------------------------------------
 
-def test_the_agent_screen_moved_into_the_profile(as_head):
-    response = as_head.get("/settings/agent", follow_redirects=False)
+def test_the_admin_area_is_closed_to_a_family_member(as_member):
+    """Спрятать пункт мало: адрес, набранный руками, тоже не должен открыться."""
+    for path in ("/settings/accounts", "/settings/agent", "/settings/model",
+                 "/settings/traces", "/security/cameras", "/onboarding"):
+        assert as_member.get(path).status_code == 403, path
 
-    assert response.status_code == 308
-    assert response.headers["location"] == "/settings/profile"
+
+def test_the_members_screens_are_closed_to_the_administrator(as_admin):
+    """У администратора нет ни разговора, ни модулей — только настройки."""
+    for path in ("/chat", "/memory", "/reminders", "/nutrition/meal", "/security/events"):
+        assert as_admin.get(path).status_code == 403, path
+
+
+def test_the_administrator_lands_in_the_admin_area(as_admin):
+    """«Главная» — экран участника, и админа с неё уводит к его собственной работе."""
+    response = as_admin.get("/", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings/accounts"
+
+
+def test_the_administrator_has_no_talk_in_the_shell(as_admin):
+    markup = as_admin.get("/settings/accounts").text
+
+    assert 'href="/chat"' not in markup
+    assert 'class="bottom-nav' not in markup
+    assert "Администратор" in markup
+
+
+def test_the_member_navigation_carries_no_admin_items(as_member):
+    markup = as_member.get("/").text
+
+    assert "Администрирование" not in markup
+    assert 'href="/settings/traces"' not in markup
+    assert 'href="/settings/accounts"' not in markup
 
 
 # --- карточки ассистента --------------------------------------------------------
@@ -172,32 +220,32 @@ def test_every_agent_card_renders(card):
 
 @pytest.mark.parametrize("path,title", [("/memory", "Знания"),
                                         ("/settings/profile", "Профиль и агент")])
-def test_a_secondary_screen_leads_back_to_the_talk(as_head, path, title):
+def test_a_secondary_screen_leads_back_to_the_talk(as_member, path, title):
     """Разговор — главный экран, и со «Знаний» и «Профиля» возвращаются в него."""
-    markup = as_head.get(path).text
+    markup = as_member.get(path).text
 
     row = markup.split('class="screen-head-row"')[1].split("</div>")[0]
     assert 'href="/chat"' in row
     assert f'<div class="screen-title">{title}</div>' in markup
 
 
-def test_the_profile_head_has_no_button_to_itself(as_head):
-    head = (as_head.get("/settings/profile").text
+def test_the_profile_head_has_no_button_to_itself(as_member):
+    head = (as_member.get("/settings/profile").text
             .split('class="screen-head-row"')[1].split('class="two-col"')[0])
     assert 'href="/settings/profile"' not in head
 
 
-def test_the_sections_ride_along_with_the_head_of_the_knowledge_screen(as_head):
+def test_the_sections_ride_along_with_the_head_of_the_knowledge_screen(as_member):
     """Полоса разделов стоит в шапке и липнет вместе с ней: раздел — это то,
     где ты находишься, и уезжать вверх он не должен."""
-    markup = as_head.get("/memory").text
+    markup = as_member.get("/memory").text
 
     assert markup.index('<div class="screen-head">') < markup.index('class="section-strip"')
 
 
-def test_the_knowledge_head_keeps_the_profile_button(as_head):
+def test_the_knowledge_head_keeps_the_profile_button(as_member):
     """Справа в шапке — тот же профиль, что и в разговоре."""
-    row = as_head.get("/memory").text.split('class="screen-head-row"')[1]
+    row = as_member.get("/memory").text.split('class="screen-head-row"')[1]
     assert row.index('href="/settings/profile"') < row.index('class="section-strip"')
 
 
@@ -233,9 +281,28 @@ def test_an_answer_arriving_now_carries_no_day_separator():
     assert "chat-daysep" not in markup
 
 
-def test_the_profile_carries_the_agent_controls(as_head):
-    markup = as_head.get("/settings/profile").text
+def test_the_profile_shows_the_family_dials_without_the_handles(as_member):
+    """Самостоятельность видно, но крутит её администратор — на всю семью."""
+    markup = as_member.get("/settings/profile").text
+
+    assert "Самостоятельность" in markup
+    assert "Что агент делал сегодня" in markup
+    assert "/settings/agent/tools/log_meal" not in markup
+    assert 'action="/settings/agent/autonomy"' not in markup
+
+
+def test_the_admin_profile_is_only_the_password_and_the_theme(as_admin):
+    markup = as_admin.get("/settings/profile").text
+
+    assert 'action="/settings/profile/theme"' in markup
+    assert 'action="/settings/profile/password"' in markup
+    assert "Характер ассистента" not in markup
+    assert "Что агент делал сегодня" not in markup
+
+
+def test_the_agent_screen_sets_the_dials_for_everyone(as_admin):
+    markup = as_admin.get("/settings/agent").text
 
     assert "Самостоятельность" in markup
     assert "/settings/agent/tools/log_meal" in markup
-    assert "Что агент делал сегодня" in markup
+    assert "одинаково для всех" in markup

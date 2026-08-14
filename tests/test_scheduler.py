@@ -41,19 +41,19 @@ def catcher():
     return received
 
 
-def test_a_job_fires_at_its_local_time(db, head, catcher):
-    db.add(ScheduledJob(user_id=head.id, kind="evening_summary", at_time="21:00", enabled=True))
+def test_a_job_fires_at_its_local_time(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
     db.commit()
 
     scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 0))
 
     assert catcher, "вечерний итог не ушёл"
-    assert catcher[-1]["user_ids"] == [head.id]
+    assert catcher[-1]["user_ids"] == [member.id]
     assert "Вечерний итог" in catcher[-1]["text"]
 
 
-def test_a_job_does_not_fire_at_another_minute(db, head, catcher):
-    db.add(ScheduledJob(user_id=head.id, kind="evening_summary", at_time="21:00", enabled=True))
+def test_a_job_does_not_fire_at_another_minute(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
     db.commit()
 
     scheduler.run_jobs(db, datetime(2026, 8, 9, 20, 59))
@@ -61,8 +61,8 @@ def test_a_job_does_not_fire_at_another_minute(db, head, catcher):
     assert catcher == []
 
 
-def test_a_disabled_job_stays_silent(db, head, catcher):
-    db.add(ScheduledJob(user_id=head.id, kind="evening_summary", at_time="21:00", enabled=False))
+def test_a_disabled_job_stays_silent(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=False))
     db.commit()
 
     scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 0))
@@ -70,8 +70,8 @@ def test_a_disabled_job_stays_silent(db, head, catcher):
     assert catcher == []
 
 
-def test_a_job_does_not_fire_twice_in_the_same_minute(db, head, catcher):
-    db.add(ScheduledJob(user_id=head.id, kind="evening_summary", at_time="21:00", enabled=True))
+def test_a_job_does_not_fire_twice_in_the_same_minute(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
     db.commit()
 
     scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 0))
@@ -80,7 +80,7 @@ def test_a_job_does_not_fire_twice_in_the_same_minute(db, head, catcher):
     assert len(catcher) == 1
 
 
-def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, head, catcher,
+def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, member, catcher,
                                                                       monkeypatch):
     """Задача статистики не заводит своего расписания (тикет #31).
 
@@ -90,17 +90,17 @@ def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, head, 
     from app.modules.memory import knowledge, stats
     from tests.conftest import FakeLLM
 
-    section = knowledge.create_section(db, head.id, "Малыш")
-    board = knowledge.create_board(db, head.id, section.id, "Кормления")
-    knowledge.add_event_type(db, head.id, board.id, "кормление", "мл")
-    knowledge.add_entry(db, head.id, board.id, "02:50 170", llm=FakeLLM([
+    section = knowledge.create_section(db, member.id, "Малыш")
+    board = knowledge.create_board(db, member.id, section.id, "Кормления")
+    knowledge.add_event_type(db, member.id, board.id, "кормление", "мл")
+    knowledge.add_entry(db, member.id, board.id, "02:50 170", llm=FakeLLM([
         {"events": [{"kind": "кормление", "value": 170, "unit": "мл", "confidence": "high"}]}]))
-    stats.create_task(db, head.id, board.id, request="сколько малыш съел за сутки",
+    stats.create_task(db, member.id, board.id, request="сколько малыш съел за сутки",
                       kind="кормление")
     monkeypatch.setattr(stats, "default_client",
                         FakeLLM([{"text": "За сутки малыш съел 170 мл."}]))
 
-    db.add(ScheduledJob(user_id=head.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
     db.commit()
     scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
 
@@ -110,10 +110,10 @@ def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, head, 
 
 # --- напоминания ----------------------------------------------------------
 
-def test_a_due_reminder_reaches_its_owner_once(db, head, catcher):
+def test_a_due_reminder_reaches_its_owner_once(db, member, catcher):
     from app.modules.memory.models import Reminder
 
-    reminders_service.add_reminder(db, head.id, "полить цветы",
+    reminders_service.add_reminder(db, member.id, "полить цветы",
                                    remind_at=datetime.utcnow() - timedelta(minutes=1))
 
     scheduler.run_reminders(db, datetime.utcnow())
@@ -122,13 +122,13 @@ def test_a_due_reminder_reaches_its_owner_once(db, head, catcher):
     reminders = [m for m in catcher if "Напоминаю" in m["text"]]
     assert len(reminders) == 1
     assert "полить цветы" in reminders[0]["text"]
-    assert reminders[0]["user_ids"] == [head.id]
+    assert reminders[0]["user_ids"] == [member.id]
     # Сработавшее помечено — второй раз оно уже не уйдёт.
     assert db.query(Reminder).one().reminded_at is not None
 
 
-def test_a_future_reminder_waits(db, head, catcher):
-    reminders_service.add_reminder(db, head.id, "позвонить врачу",
+def test_a_future_reminder_waits(db, member, catcher):
+    reminders_service.add_reminder(db, member.id, "позвонить врачу",
                                    remind_at=datetime.utcnow() + timedelta(hours=1))
 
     scheduler.run_reminders(db, datetime.utcnow())
