@@ -35,6 +35,7 @@ logger = get_logger("agent")
 
 MAX_STEPS = 4            # сколько раз подряд агент может брать инструмент за один ответ
 HISTORY_LIMIT = 16       # сообщений истории, которые видит модель
+TRAIL_SUMMARY_LIMIT = 120  # сколько знаков сводки инструмента доезжает до следующего хода
 
 OFFLINE_REPLY = (
     "Сейчас не могу подумать — не отвечает модель. "
@@ -51,6 +52,10 @@ class Trace:
     status: str                       # done | awaiting | failed | confirmed
     summary: str = ""
     pending_id: Optional[int] = None
+    #: Что инструмент вернул машинно — прежде всего номера записей. В словах
+    #: сводки их нет («Записал: пицца — 1050 ккал»), а следующему ходу они нужны,
+    #: чтобы поправка знала, о какой именно записи речь.
+    data: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def signature(self) -> str:
@@ -78,6 +83,35 @@ def _short(value: Any, limit: int = 24) -> str:
 
 # --- conversation history -------------------------------------------------
 
+def _trail(payload: dict) -> str:
+    """Чем ассистент занимался на прошлом ходу — строкой для следующего хода.
+
+    Вызовы инструментов живут в `messages` внутри одного ответа и умирают вместе
+    с ним: наружу уезжает только текст реплики. Из-за этого ассистент не помнит
+    ни номера записи, которую сам же завёл, ни того, что поиск уже отвечал
+    отказом, — и на «пицца была 20 см» ему остаётся выдумывать цифры.
+
+    Восстанавливается это не настоящими `tool_calls`, а припиской к реплике.
+    Причина в окне: пара «assistant с tool_calls» + «tool с ответом» неразрывна,
+    и скользящее окно рано или поздно разрежет её пополам — половина провайдеров
+    на такую историю отвечает ошибкой. Приписке резать нечего.
+    """
+    lines = []
+    for trace in payload.get("traces") or []:
+        if not isinstance(trace, dict):
+            continue
+        name = trace.get("signature") or trace.get("tool") or "?"
+        outcome = _short(trace.get("summary") or "", TRAIL_SUMMARY_LIMIT)
+        data = {k: v for k, v in (trace.get("data") or {}).items() if v is not None}
+        line = f"{name} → {trace.get('status') or '?'}"
+        if outcome:
+            line += f": {outcome}"
+        if data:
+            line += " [" + ", ".join(f"{k}={v}" for k, v in data.items()) + "]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def load_history(db: Session, user: User, limit: int = HISTORY_LIMIT) -> List[dict]:
     rows = (
         db.query(ChatMessage)
@@ -86,7 +120,19 @@ def load_history(db: Session, user: User, limit: int = HISTORY_LIMIT) -> List[di
         .limit(limit)
         .all()
     )
-    return [{"role": row.role, "content": row.content} for row in reversed(rows) if row.content]
+    history = []
+    for row in reversed(rows):
+        if not row.content:
+            continue
+        content = row.content
+        if row.role == "assistant":
+            trail = _trail(message_payload(row))
+            if trail:
+                # Приписка едет только в модель: в базе строка остаётся чистой,
+                # а панель читает её же — человеку это видеть незачем.
+                content = f"{content}\n\n[что я тогда сделал:\n{trail}]"
+        history.append({"role": row.role, "content": content})
+    return history
 
 
 def save_message(db: Session, user: User, role: str, content: str,
@@ -263,7 +309,8 @@ class Agent:
                     duration_ms=int((time.monotonic() - started) * 1000))
         _log_action(db, ctx.subject, spec, call.arguments, result, mode=MODE_AUTO)
         trace = Trace(tool=spec.name, title=spec.title, arguments=call.arguments,
-                      status="done" if result.ok else "failed", summary=result.summary)
+                      status="done" if result.ok else "failed", summary=result.summary,
+                      data=result.data or {})
         return trace, result.summary, result.card
 
 
@@ -333,7 +380,8 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
     save_message(db, actor, "assistant", result.summary, channel=channel,
                  payload=AgentReply(text=result.summary,
                                     traces=[Trace(tool=spec.name, title=spec.title, arguments=arguments,
-                                                  status="confirmed", summary=result.summary)],
+                                                  status="confirmed", summary=result.summary,
+                                                  data=result.data or {})],
                                     cards=[result.card] if result.card else []).to_payload())
     return result
 
