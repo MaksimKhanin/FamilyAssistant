@@ -284,6 +284,9 @@ def banner(port: int, demo: dict, stub: bool):
         print("               Настоящая модель — LLM_* в .env рядом с этим файлом")
     else:
         print(f"  Модель:      {os.environ.get('LLM_MODEL')} · {os.environ.get('LLM_BASE_URL')}")
+    provider = os.environ.get("WEB_SEARCH_PROVIDER")
+    print(f"  Поиск:       {provider} — состав фабричной еды берётся с этикетки" if provider
+          else "  Поиск:       выключен — фабричную еду считаю на глаз (WEB_SEARCH_* в .env)")
     print(f"{line}\n")
 
 

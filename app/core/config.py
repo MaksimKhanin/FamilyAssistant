@@ -79,6 +79,31 @@ class LLMSettings:
 
 
 @dataclass
+class WebSearchSettings:
+    """Поиск в интернете: чужой поисковый API, к которому ходит ассистент.
+
+    Нужен ровно там, где память модели врёт цифрами, — у фабричной еды. «Батончик
+    Mars 51 г» и «пицца пепперони Додо» имеют опубликованный состав, и списать его
+    честнее, чем прикинуть на глаз.
+
+    По умолчанию выключено: наружу семейный ассистент ходит только тогда, когда
+    хозяин дома сам назвал провайдера и ключ.
+    """
+    provider: str = ""          # tavily | brave | searxng — пусто значит «не ходим наружу»
+    api_key: str = ""
+    base_url: str = ""          # свой адрес; пусто — адрес провайдера по умолчанию
+    max_results: int = 5
+    timeout: float = 10.0
+    lang: str = "ru"
+
+    @property
+    def configured(self) -> bool:
+        # searxng бывает без ключа, облачные провайдеры — без своего адреса:
+        # хватает провайдера и хотя бы одного из двух.
+        return bool(self.provider) and bool(self.api_key or self.base_url)
+
+
+@dataclass
 class AdminSettings:
     """Первый вход в систему — глава семьи, заводится из окружения при первом старте.
 
@@ -137,6 +162,7 @@ class Settings:
     admin: AdminSettings = field(
         default_factory=lambda: AdminSettings("", "", "", "", "Семья", False))
     llm: LLMSettings = field(default_factory=lambda: LLMSettings("", "", "", "", 0.3, 1024, 60.0))
+    web_search: WebSearchSettings = field(default_factory=WebSearchSettings)
 
 
 def load_settings() -> Settings:
@@ -179,6 +205,14 @@ def load_settings() -> Settings:
             reasoning_estimate=os.environ.get("LLM_REASONING_ESTIMATE", "off").strip().lower(),
             extra_body=_json_env("LLM_EXTRA_BODY"),
             stub=_flag("LLM_STUB", False),
+        ),
+        web_search=WebSearchSettings(
+            provider=os.environ.get("WEB_SEARCH_PROVIDER", "").strip().lower(),
+            api_key=os.environ.get("WEB_SEARCH_API_KEY", "").strip(),
+            base_url=os.environ.get("WEB_SEARCH_BASE_URL", "").strip(),
+            max_results=_int("WEB_SEARCH_MAX_RESULTS", 5),
+            timeout=float(os.environ.get("WEB_SEARCH_TIMEOUT", "10")),
+            lang=os.environ.get("WEB_SEARCH_LANG", "ru").strip() or "ru",
         ),
     )
 
