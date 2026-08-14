@@ -8,6 +8,7 @@ looking at a plate, and the person must be able to fix it in one gesture.
 from app.agent.llm import LLMUnavailable, client as llm_client
 from app.agent.prompts import MEAL_PLAN_SYSTEM
 from app.agent.registry import ToolContext, ToolResult, tool
+from app.core import instructions
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
 from app.core.logging import get_logger
 from app.core.websearch import SearchUnavailable
@@ -48,6 +49,11 @@ def _person_context(ctx: ToolContext) -> str:
     Профиль берётся у того, кому считают еду (`subject`), а знания — у того, кто
     разговаривает (`actor`): доски из режима «от лица» исключены, и ассистент
     видит ровно те, что видит его собеседник (ADR-0005).
+
+    Памятка про еду — оттуда же, откуда профиль: это человек про себя, а не про
+    разговор. Здесь она и нужна больше всего — оценка тарелки у того, кто без
+    желчного, и у того, кто набирает вес, разная не цифрами, а тем, о чём
+    ассистент переспросит и что предложит дальше.
     """
     profile = service.get_profile(ctx.db, ctx.subject.id)
     notes = _known(ctx)
@@ -57,6 +63,9 @@ def _person_context(ctx: ToolContext) -> str:
     ]
     if profile.weight_kg:
         lines.append(f"- вес: {profile.weight_kg:g} кг")
+    memo = instructions.memo(ctx.db, ctx.subject.id, MODULE)
+    if memo:
+        lines.append(f"- сам просил учитывать: {memo}")
     if notes:
         lines.append(f"- с досок {ctx.actor.display_name}: " + "; ".join(notes))
     return "\n".join(lines)
@@ -480,6 +489,7 @@ def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
     profile = service.get_profile(ctx.db, ctx.subject.id)
     history = service.recent_meal_titles(ctx.db, ctx.subject.id)
     notes = _known(ctx, limit=10)
+    memo = instructions.memo(ctx.db, ctx.subject.id, MODULE)
 
     prompt = (
         f"Человек: {ctx.subject.display_name}. Цель: {profile.goal_label}. "
@@ -488,6 +498,10 @@ def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
         f"Что известно с досок {ctx.actor.display_name}: "
         f"{'; '.join(notes) if notes else 'ничего особенного'}."
     )
+    # Идеи — то место, где памятка весит больше всего: гастрит и «без острого»
+    # меняют не цифру в плане, а сам список блюд.
+    if memo:
+        prompt += f"\nЧто человек просил учитывать: {memo}"
 
     try:
         raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900)
