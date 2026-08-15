@@ -11,6 +11,11 @@
 модели находит его сам, включая обращения из инструментов (оценка блюда по фото,
 разбор события) — они попадают в тот же прогон.
 
+Читателей двое. `/settings/traces` — админский, на всю семью: `export`, `by_user`,
+`by_session` без ограничений. `/settings/my-traces` — участниковый: `own_export`
+прибивает выборку к одному человеку, чтобы номер чужого прогона в адресной строке
+ничего не открывал.
+
 Запись никогда не мешает ассистенту работать: любая ошибка здесь гасится и
 уходит в лог. Трейс — вещь полезная, но не та, ради которой стоит уронить ответ.
 """
@@ -265,15 +270,20 @@ def by_user(db: Session, family_id: int) -> List[dict]:
     return sorted(result, key=lambda e: e["total_tokens"], reverse=True)
 
 
-def by_session(db: Session, family_id: int, limit: int = 30) -> List[dict]:
-    """Сводка по разговорам, свежие сверху."""
-    rows = (
+def by_session(db: Session, family_id: int, limit: int = 30, user_id: int = None) -> List[dict]:
+    """Сводка по разговорам, свежие сверху.
+
+    `user_id` сужает до одного человека — экран «Мои трейсы» видит только свои
+    разговоры, а не всю семью.
+    """
+    query = (
         db.query(AgentRun, User)
         .join(User, User.id == AgentRun.user_id)
         .filter(User.family_id == family_id)
-        .order_by(AgentRun.created_at.asc(), AgentRun.id.asc())
-        .all()
     )
+    if user_id:
+        query = query.filter(AgentRun.user_id == user_id)
+    rows = query.order_by(AgentRun.created_at.asc(), AgentRun.id.asc()).all()
     sessions: Dict[str, dict] = {}
     for run_row, user in rows:
         entry = sessions.setdefault(run_row.session_id, {
@@ -378,6 +388,29 @@ def export(db: Session, family_id: int, user_id: int = None, session_id: str = N
         "filter": {"user_id": user_id, "session_id": session_id, "run_id": run_id},
         "by_user": by_user(db, family_id),
         "by_session": by_session(db, family_id, limit=limit),
+        "runs": [run_payload(db, row) for row in rows],
+    }
+
+
+def own_export(db: Session, user: User, session_id: str = None, run_id: int = None,
+               limit: int = 500) -> dict:
+    """Та же выгрузка, что и `export`, но человеку — только его собственные прогоны.
+
+    Экран «Мои трейсы» участниковый: `user_id` в запросе прибит к самому человеку,
+    а не приходит параметром, — иначе `run_id` чужого прогона утёк бы чужую
+    переписку через подмену числа в адресе.
+    """
+    query = db.query(AgentRun).filter(AgentRun.user_id == user.id)
+    if session_id:
+        query = query.filter(AgentRun.session_id == session_id)
+    if run_id:
+        query = query.filter(AgentRun.id == run_id)
+    rows = query.order_by(AgentRun.created_at.desc(), AgentRun.id.desc()).limit(limit).all()
+
+    return {
+        "exported_at": datetime.utcnow().isoformat(),
+        "filter": {"session_id": session_id, "run_id": run_id},
+        "by_session": by_session(db, user.family_id, limit=limit, user_id=user.id),
         "runs": [run_payload(db, row) for row in rows],
     }
 

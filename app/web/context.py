@@ -48,6 +48,9 @@ MEMBER_NAV = [
     # заставляло ходить туда-обратно между «кто я» и «что ему можно».
     NavItem(slug="profile", label="Профиль и агент", url="/settings/profile", icon="user", group="Настройки"),
     NavItem(slug="family", label="Семья", url="/settings/family", icon="users", group="Настройки"),
+    # Свои прогоны и выгрузка в JSON — та же идея, что у админского «Трейсы
+    # агента», но только про себя (app/web/routes_my_traces.py).
+    NavItem(slug="my-traces", label="Мои трейсы", url="/settings/my-traces", icon="pulse", group="Настройки"),
 ]
 
 #: Меню администратора. Разговора, главной и модулей в нём нет — их у админской
