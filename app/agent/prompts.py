@@ -113,7 +113,7 @@ def system_prompt(user: User, modules: List[str], now: datetime = None,
                   autonomy: int = 1) -> str:
     now = now or local_now()
     # Самостоятельность приезжает параметром, а не берётся у человека: она одна
-    # на семью и её задаёт администратор (ADR-0007).
+    # на семью и её задаёт администратор (ADR-0008).
     autonomy = AUTONOMY_LEVELS.get(autonomy or 0, "Спрашивает про важное")
     who = f"{user.display_name}"
     if user.relation:

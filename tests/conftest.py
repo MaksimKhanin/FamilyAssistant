@@ -4,7 +4,7 @@ Environment is set before any app import, because settings are read once at impo
 time. Each test gets its own SQLite file and media directory, so nothing leaks
 between tests and nothing touches a real database.
 
-Людей здесь трое, и это ровно те роли, что есть в панели (ADR-0007): `member` и
+Людей здесь трое, и это ровно те роли, что есть в панели (ADR-0008): `member` и
 `other` — участники семьи, `admin` — служебная учётка, у которой нет ни
 разговора, ни модулей, зато есть весь админ-раздел.
 """

@@ -4,7 +4,7 @@ The web panel lets a family member look at the panel through another member's
 eyes (the avatar row in the header). It is a display convenience for a household
 of five and nothing more: other people's nutrition figures stay hidden (see
 `can_see_figures`), and nothing can be *changed* on someone else's behalf — since
-the head of the family became a plain administrator (ADR-0007), acting for
+the head of the family became a plain administrator (ADR-0008), acting for
 another person has no owner, and `can_act_as` is identity only.
 
 Администратора этот переключатель не касается вовсе: он не участник семьи, чужих
@@ -107,7 +107,7 @@ def can_act_as(current: User, viewed: User) -> bool:
     """May `current` change data / run tools on behalf of `viewed`?
 
     Только сам за себя. Раньше это умел глава семьи, но роль главы разделилась
-    на администратора и участника (ADR-0007), а у администратора нет ни разговора,
+    на администратора и участника (ADR-0008), а у администратора нет ни разговора,
     ни модулей — значит, действовать за другого стало некому.
     """
     return current.id == viewed.id

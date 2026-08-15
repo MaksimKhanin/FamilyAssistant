@@ -50,7 +50,7 @@
     </div>
 
     {# Разговора у администратора нет: ассистент отвечает участнику, а админская
-       учётка — служебная (ADR-0007). #}
+       учётка — служебная (ADR-0008). #}
     {% if not is_admin %}
       <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
         {{ ic.icon("chat") }} Разговор

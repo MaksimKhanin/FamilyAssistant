@@ -11,7 +11,9 @@ the interface so a low-confidence guess can be shown as one.
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from app.agent.llm import LLMClient, LLMUnavailable, client as default_client, image_part, text_part
+from app.agent.llm import (
+    ESTIMATE, LLMClient, LLMUnavailable, client as default_client, image_part, text_part,
+)
 from app.agent.prompts import MEAL_TEXT_SYSTEM, MEAL_VISION_SYSTEM
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -100,6 +102,7 @@ def estimate_from_image(image_bytes: bytes, hint: str = None, context: str = Non
         MEAL_VISION_SYSTEM,
         [text_part(prompt), image_part(image_bytes)],
         model=settings.llm.vision_model,
+        task=ESTIMATE,
     )
     return _coerce(raw, fallback_title="Блюдо с фото")
 
@@ -120,7 +123,7 @@ def estimate_from_text(text: str, context: str = None, facts: str = None,
         prompt += f"\n\n{context}"
     if facts:
         prompt += f"\n\n{facts}"
-    raw = llm.json_completion(MEAL_TEXT_SYSTEM, prompt)
+    raw = llm.json_completion(MEAL_TEXT_SYSTEM, prompt, task=ESTIMATE)
     return _coerce(raw, fallback_title=text.strip()[:60] or "Приём пищи")
 
 

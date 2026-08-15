@@ -1,7 +1,7 @@
 """Autonomy policy: what the assistant may do by itself.
 
 Обе ручки — самостоятельность и режим инструмента — семейные: их задаёт
-администратор сразу для всех (ADR-0007). Личным остаётся только флаг модуля.
+администратор сразу для всех (ADR-0008). Личным остаётся только флаг модуля.
 """
 from app.agent import policy, registry
 from app.core.access import set_module_enabled
@@ -45,6 +45,18 @@ def test_notifying_the_whole_family_needs_the_top_setting(db, member):
 
     policy.set_autonomy(db, member.family_id, 3)
     assert policy.resolve_mode(db, member, notify) == MODE_AUTO
+
+
+def test_wiping_a_month_asks_even_at_full_autonomy(db, member):
+    """Одно «да» стирает здесь месяц истории — этого не отдают ползунку.
+
+    Удаление одной записи на самом смелом положении проходит само (её видно в
+    разговоре и легко записать заново), а чистку периода спрашивают всегда.
+    """
+    policy.set_autonomy(db, member.family_id, 3)
+
+    assert policy.resolve_mode(db, member, registry.get("delete_meal")) == MODE_AUTO
+    assert policy.resolve_mode(db, member, registry.get("clear_nutrition_period")) == MODE_ASK
 
 
 def test_explicit_override_beats_the_slider(db, member):

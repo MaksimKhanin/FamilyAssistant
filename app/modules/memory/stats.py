@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
-from app.agent.llm import LLMClient, LLMUnavailable, client as default_client
+from app.agent.llm import ROUTINE, LLMClient, LLMUnavailable, client as default_client
 from app.agent.prompts import BOARD_STATS_SYSTEM
 from app.core.clock import local_date, local_today, utc_now
 from app.core.logging import get_logger
@@ -289,7 +289,9 @@ def phrase(request: str, board_name: str, numbers: Figures, llm: LLMClient = Non
         f"Период: {_window_words(numbers.days)}.\n\n"
         f"Посчитано кодом:\n{_numbers_block(numbers)}"
     )
-    raw = llm.json_completion(BOARD_STATS_SYSTEM, prompt)
+    # Числа уже посчитаны кодом (ADR-0002) — от модели тут одна фраза по готовому.
+    # Думать над ней не о чем, и раньше эта задача молча ехала на ручке оценок.
+    raw = llm.json_completion(BOARD_STATS_SYSTEM, prompt, task=ROUTINE)
     return str(raw.get("text") or "").strip()[:PHRASE_LIMIT]
 
 

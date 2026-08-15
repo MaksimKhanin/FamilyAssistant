@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from app.agent.llm import LLMClient, LLMUnavailable, client as default_llm
+from app.agent.llm import ESTIMATE, LLMClient, LLMUnavailable, client as default_llm
 from app.agent.prompts import PRODUCT_FACTS_SYSTEM
 from app.core.logging import get_logger
 from app.core.websearch import SearchResult, SearchUnavailable, WebSearchClient, client as default_search
@@ -192,6 +192,9 @@ def lookup(name: str, llm: LLMClient = None, search: WebSearchClient = None) -> 
         PRODUCT_FACTS_SYSTEM,
         f"Товар: {query}\n\nВыдержки из поиска:\n\n{_snippets(results)}",
         max_tokens=700,
+        # Та же работа, что и оценка тарелки: списать цифры с этикетки и пересчитать
+        # их на порцию. Ручка у неё общая с оценками.
+        task=ESTIMATE,
     )
     facts = _coerce(raw, query, results)
     _remember(query, facts)

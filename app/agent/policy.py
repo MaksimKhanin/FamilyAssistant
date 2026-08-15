@@ -7,7 +7,7 @@ Two dials, in this order of precedence:
   2. the autonomy slider (0..3): a tool runs by itself when the slider has reached
      the tool's own `auto_from` level, otherwise it prepares the action and asks.
 
-Обе — семейные: их задаёт администратор один раз для всех (ADR-0007). Личным
+Обе — семейные: их задаёт администратор один раз для всех (ADR-0008). Личным
 здесь не остаётся ничего, и это сознательно: «сам делает рутину» — это про
 доверие к ассистенту в доме, а не про настроение отдельного человека.
 

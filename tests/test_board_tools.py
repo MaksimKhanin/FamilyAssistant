@@ -162,7 +162,7 @@ def test_only_the_person_themselves_confirms_their_action(db, member, other):
     """Чужое «да» больше не считается: подтверждает тот, чей это был разговор.
 
     Раньше это умел глава семьи — роль разделилась на администратора и
-    участника, и подтверждать за другого стало некому (ADR-0007).
+    участника, и подтверждать за другого стало некому (ADR-0008).
     """
     from app.agent.llm import LLMResponse, ToolCall
     from app.agent.runtime import Agent, approve_action

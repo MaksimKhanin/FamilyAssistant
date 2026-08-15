@@ -5,9 +5,9 @@ estimate, and `confirm_meal` is what turns it into a confirmed (or hand-correcte
 entry. That two-step shape is a product requirement — the number came from a model
 looking at a plate, and the person must be able to fix it in one gesture.
 """
-from app.agent.llm import LLMUnavailable, client as llm_client
+from app.agent.llm import PLANNING, LLMUnavailable, client as llm_client
 from app.agent.prompts import MEAL_PLAN_SYSTEM
-from app.agent.registry import ToolContext, ToolResult, tool
+from app.agent.registry import ALWAYS_ASK, ToolContext, ToolResult, tool
 from app.core import instructions
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
 from app.core.logging import get_logger
@@ -221,6 +221,9 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     description="""
     Подтвердить черновик приёма пищи или поправить его. Передавай только те поля,
     которые человек назвал; остальные останутся как есть.
+    meal_id не обязателен: без него правится самая свежая запись — а это почти
+    всегда та, о которой идёт речь. Номер нужен, только когда он звучал в разговоре
+    и человек возвращается к записи постарше.
     Если человек уточнил вес или способ приготовления (а не сами цифры) — передай
     weight_g и cooking, и оценка пересчитается сама. Не выдумывай калории вместо него.
     Если человек назвал цифры — передай их, запись пометится как скорректированная вручную.
@@ -228,7 +231,8 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
     parameters={
         "type": "object",
         "properties": {
-            "meal_id": {"type": "integer"},
+            "meal_id": {"type": "integer",
+                        "description": "Номер записи; без него — самая свежая"},
             "kcal": {"type": "integer"},
             "protein": {"type": "integer"},
             "fat": {"type": "integer"},
@@ -241,25 +245,32 @@ def log_meal(ctx: ToolContext, text: str = None, weight_g: float = None,
                         "description": "Способ приготовления, если человек уточнил его — "
                                        "цифры пересчитаются"},
         },
-        "required": ["meal_id"],
     },
     # Этот инструмент сам по себе и есть подтверждение: человек только что сказал
     # «да» или назвал верную цифру. Спрашивать разрешения на его «да» — абсурд.
     auto_from=0,
 )
-def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int = None,
+def confirm_meal(ctx: ToolContext, meal_id: int = None, kcal: int = None, protein: int = None,
                  fat: int = None, carbs: int = None, title: str = None,
                  weight_g: float = None, cooking: str = None) -> ToolResult:
     corrections = {"kcal": kcal, "protein": protein, "fat": fat, "carbs": carbs, "title": title}
     recounted = None
 
+    # Номер записи модель знать не обязана: в историю разговора едет только текст
+    # реплик, а `meal_id` живёт в ответе инструмента и до следующего хода не
+    # доживает. Требовать его — значит требовать невозможного, и на поправку
+    # «пицца была 20 см» ассистенту остаётся выдумывать цифры. Поэтому без номера
+    # правится самая свежая запись — как в delete_meal.
+    draft = (service.get_meal(ctx.db, ctx.subject.id, meal_id) if meal_id
+             else service.last_meal(ctx.db, ctx.subject.id))
+    if draft is None:
+        return ToolResult(summary="Такой записи нет.", ok=False)
+    meal_id = draft.id
+
     # Человек ответил на вопрос про вес или готовку, а цифр не назвал — значит их
     # надо пересчитать. Иначе ответ «было 400 грамм» ничего не меняет, и вопрос,
     # который ассистент только что задал, оказывается пустой вежливостью.
     if (weight_g or cooking) and kcal is None:
-        draft = service.get_meal(ctx.db, ctx.subject.id, meal_id)
-        if draft is None:
-            return ToolResult(summary="Такой записи нет.", ok=False)
         described = _describe(draft.raw_input or draft.title, weight_g, cooking)
         context = _person_context(ctx)
         recounted = _refined_by_web(
@@ -295,6 +306,8 @@ def confirm_meal(ctx: ToolContext, meal_id: int, kcal: int = None, protein: int 
     Название пиши так, как товар ищут: марка, название, размер или вес упаковки —
     «пицца Пепперони Додо 25 см», а не «пицца».
     Если человек это съел, вызывай log_meal: он сам сходит за составом и запишет.
+    Если он поправляет уже записанное («пицца была 20 см») — это confirm_meal:
+    там состав тоже ищется, но цифры доедут до записи, а не останутся в ответе.
     Ответ — цифры с этикетки; назови их вместе с тем, где они нашлись.
     """,
     parameters={
@@ -371,6 +384,57 @@ def delete_meal(ctx: ToolContext, meal_id: int = None) -> ToolResult:
     return ToolResult(
         summary=f"Удалил запись: {title} — {kcal} ккал. В дневном балансе она больше не считается.",
         data={"meal_id": meal.id},
+    )
+
+
+@tool(
+    name="clear_nutrition_period",
+    module=MODULE,
+    title="Убрать записи о еде за период",
+    description="""
+    Убрать разом все записи за период: «удали статистику за неделю», «сотри
+    сегодняшнюю еду», «почисти месяц». Записи исчезают насовсем вместе со снимками
+    тарелок, цифры пересчитываются.
+    period: day — сегодняшний день, week — последние семь дней вместе с сегодняшним,
+    month — последние 30 дней. Других периодов инструмент не умеет: если человек
+    просит убрать «за вчера», «за март» или «с 1 по 5 число», не подставляй ближайший
+    период — скажи, что такие дни убираются по одному на экране «Статистика питания»,
+    там у каждого дня своя кнопка.
+    what: meals — только еда, activity — только активность, all — и то и другое.
+    Одну ошибочную запись убирает delete_meal, а не этот инструмент.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "period": {"type": "string", "enum": ["day", "week", "month"],
+                       "description": "Сегодня, последние семь дней или последние 30 дней"},
+            "what": {"type": "string", "enum": ["meals", "activity", "all"],
+                     "description": "Что именно убрать; по умолчанию и еду, и активность"},
+        },
+        "required": ["period"],
+    },
+    # Одно «да» стирает здесь месяц истории, и восстановить её неоткуда: спрашиваем
+    # всегда, даже у того, кто разрешил агенту всё остальное.
+    auto_from=ALWAYS_ASK,
+)
+def clear_nutrition_period(ctx: ToolContext, period: str, what: str = service.WHAT_ALL) -> ToolResult:
+    if period not in service.PERIODS:
+        return ToolResult(summary=f"Не знаю такого периода: {period}. Есть день, неделя и месяц.",
+                          ok=False)
+    if what not in service.WHAT_LABELS:
+        what = service.WHAT_ALL
+
+    window = service.PERIOD_WINDOWS[period]
+    removed = service.clear_period(ctx.db, ctx.subject.id, period, what)
+    if not removed:
+        return ToolResult(summary=f"Убирать было нечего: {service.WHAT_LABELS[what]} {window} "
+                                  f"и так не заведены.",
+                          data={"meals": 0, "activity": 0})
+
+    return ToolResult(
+        summary=f"Убрал {window}: {removed.words}. Записей больше нет, дневной баланс "
+                f"и статистика пересчитаны.",
+        data={"meals": removed.meals, "activity": removed.activity},
     )
 
 
@@ -504,7 +568,10 @@ def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
         prompt += f"\nЧто человек просил учитывать: {memo}"
 
     try:
-        raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900)
+        # Единственная задача ассистента, где модели есть что обдумывать: уложиться
+        # в норму, свести цель, обойти то, что человеку нельзя, и не повторить
+        # вчерашнее — всё сразу. Отсюда и `PLANNING` вместо общей ручки чата.
+        raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900, task=PLANNING)
     except LLMUnavailable:
         return ToolResult(summary="Сейчас не могу собрать идеи — модель не отвечает.", ok=False)
 
