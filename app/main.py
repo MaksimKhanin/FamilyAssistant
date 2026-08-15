@@ -24,8 +24,8 @@ from app.core.logging import get_logger
 from app.core.templating import render
 from app.modules import load_modules
 from app.web import (
-    routes_auth, routes_chat, routes_dashboard, routes_invite, routes_onboarding,
-    routes_push, routes_settings, routes_traces,
+    routes_auth, routes_chat, routes_dashboard, routes_invite, routes_my_traces,
+    routes_onboarding, routes_push, routes_settings, routes_traces,
 )
 from app.web.gate import role_gate
 
@@ -97,6 +97,7 @@ app.include_router(routes_chat.router)
 app.include_router(routes_push.router)
 app.include_router(routes_settings.router)
 app.include_router(routes_traces.router)
+app.include_router(routes_my_traces.router)
 app.include_router(routes_onboarding.router)
 
 for module in load_modules():
