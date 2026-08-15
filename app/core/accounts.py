@@ -87,13 +87,50 @@ def _unique_username(db: Session, base: str) -> str:
     return username
 
 
-def create_member(db: Session, actor: User, display_name: str, relation: str = "") -> User:
-    """Завести участника. Пароль он придумает сам по ссылке-приглашению."""
+#: Логин человек вводит руками на экране входа, часто с телефона: латиница,
+#: цифры, точка, дефис и подчёркивание — и ничего, что придётся переключать
+#: раскладку или искать на клавиатуре.
+USERNAME_MIN = 2
+USERNAME_MAX = 32
+_USERNAME_EXTRA = {".", "-", "_"}
+
+
+def validate_username(db: Session, username: str, *, exclude_id: int = None) -> str:
+    """Проверить логин, введённый администратором руками.
+
+    Возвращает его в том виде, в каком он ляжет в базу: логин нечувствителен к
+    регистру, иначе «Petya» и «petya» были бы разными входами, а человек за
+    экраном входа об этом не догадывался бы.
+    """
+    username = (username or "").strip().lower()
+    if len(username) < USERNAME_MIN:
+        raise AccountError(f"Логин короче {USERNAME_MIN} символов — по нему человек будет заходить.")
+    if len(username) > USERNAME_MAX:
+        raise AccountError(f"Логин длиннее {USERNAME_MAX} символов — его придётся набирать руками.")
+    if not all(ch.isascii() and (ch.isalnum() or ch in _USERNAME_EXTRA) for ch in username):
+        raise AccountError("В логине — латиница, цифры и знаки . - _ : его набирают на экране входа.")
+
+    taken = db.query(User).filter(User.username == username).one_or_none()
+    if taken is not None and taken.id != exclude_id:
+        raise AccountError(f"Логин «{username}» уже занят — придумайте другой.")
+    return username
+
+
+def create_member(db: Session, actor: User, display_name: str, relation: str = "",
+                  username: str = "") -> User:
+    """Завести участника. Пароль он придумает сам по ссылке-приглашению.
+
+    Логин можно задать сразу, а можно не задавать: из имени он получается
+    предсказуемый («Лёва» → «leva»), и менять его потом никто не запрещает.
+    """
     _require_admin(actor)
 
     display_name = (display_name or "").strip()
     if not display_name:
         raise AccountError("Без имени не получится — как к человеку обращаться?")
+
+    login = (validate_username(db, username) if (username or "").strip()
+             else _unique_username(db, username_from(display_name)))
 
     members = (
         db.query(User)
@@ -105,7 +142,7 @@ def create_member(db: Session, actor: User, display_name: str, relation: str = "
 
     member = User(
         family_id=actor.family_id,
-        username=_unique_username(db, username_from(display_name)),
+        username=login,
         display_name=display_name[:64],
         relation=(relation or "").strip()[:32] or None,
         role=ROLE_MEMBER,
@@ -121,13 +158,25 @@ def create_member(db: Session, actor: User, display_name: str, relation: str = "
 
 # --- изменение ------------------------------------------------------------
 
-def rename(db: Session, actor: User, user_id: int, display_name: str, relation: str = "") -> User:
+def rename(db: Session, actor: User, user_id: int, display_name: str, relation: str = "",
+           username: str = None) -> User:
+    """Имя, кем приходится и логин — одной формой: это одна строка на экране.
+
+    Логин меняется вместе с остальным, потому что до первого входа он ещё ничей
+    и человек его не помнит; после — это его вход, поэтому смена логина ломает
+    старый, и предупреждать об этом должен экран, а не эта функция.
+    """
     _require_admin(actor)
     member = _fetch(db, actor, user_id)
 
     display_name = (display_name or "").strip()
     if not display_name:
         raise AccountError("Имя не может быть пустым.")
+
+    # None значит «логин не трогаем»; пустая строка пришла бы из формы, где поля
+    # логина нет вовсе, и стирать им чужой вход нельзя.
+    if username is not None and username.strip():
+        member.username = validate_username(db, username, exclude_id=member.id)
 
     member.display_name = display_name[:64]
     member.relation = (relation or "").strip()[:32] or None
@@ -248,6 +297,9 @@ def overview(db: Session, actor: User) -> List[dict]:
         "status": status_of(member),
         "can_delete": manageable(member),
         "can_change_role": manageable(member),
+        # Себе приглашение не выпускают: это стёрло бы собственный пароль
+        # (см. issue_invite). Кнопка на своей карточке умела только ругаться.
+        "can_invite": manageable(member),
     } for member in accounts_rows]
 
 

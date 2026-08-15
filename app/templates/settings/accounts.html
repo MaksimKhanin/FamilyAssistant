@@ -12,20 +12,24 @@
   </div>
 {% endif %}
 
-{% if invite_link %}
-  <div class="card stack" style="margin-bottom:16px;border-left:4px solid var(--acc)">
-    <div class="card-title">Ссылка для {{ invited_user.display_name }}</div>
-    <p class="muted">
-      По ней человек придумает себе пароль и сразу попадёт в панель. Ссылка одноразовая —
-      покажу её только сейчас, потом можно будет только выпустить новую.
-    </p>
-    <div class="row wrap" style="gap:8px">
-      <input class="field" id="invite-link" value="{{ invite_link }}" readonly
-             onclick="this.select()" style="flex:1;min-width:240px">
-      <button class="btn" type="button" onclick="panel.copyInviteField()">Скопировать</button>
-    </div>
-  </div>
-{% endif %}
+{# Как заводится человек — тремя строками наверху экрана. Порядок шагов иначе
+   негде прочитать: пароля администратор не задаёт, и без объяснения экран
+   выглядит недоделанным. #}
+<div class="card tight stack" style="margin-bottom:16px;border-left:4px solid var(--acc)">
+  <div class="card-title">Как дать человеку вход</div>
+  <ol class="howto">
+    <li>Добавьте его внизу экрана — имя и, если хотите, логин. Логин можно не
+      придумывать: получится из имени.</li>
+    <li>Передайте ему ссылку из его карточки — любым способом, хоть в мессенджере.
+      Она лежит там, пока человек ею не воспользуется.</li>
+    <li>По ссылке он придумает пароль и сразу окажется в панели. Дальше он заходит
+      логином и паролем сам.</li>
+  </ol>
+  <p class="tiny">
+    Пароль администратор не задаёт и не видит — его придумывает сам человек.
+    Забыл пароль — «Сбросить пароль» в его карточке выпустит новую ссылку.
+  </p>
+</div>
 
 <form class="card row wrap" method="post" action="/settings/accounts/name" style="gap:10px;margin-bottom:16px">
   <div style="flex:1;min-width:220px">
@@ -38,7 +42,7 @@
 <div class="stack">
   {% for row in members_info %}
     {% set member = row.user %}
-    <div class="card stack">
+    <div class="card stack {% if member.id == invited_id %}just-invited{% endif %}">
       <div class="row wrap" style="gap:10px">
         <span class="avatar" style="background:{{ row.avatar.bg }};color:{{ row.avatar.fg }}">
           {{ row.avatar.initial }}
@@ -50,7 +54,7 @@
             <span class="badge {{ 'neutral' if member.password_hash else 'estimate' }}">{{ row.status }}</span>
           </div>
           <div class="tiny">{{ member.relation or ("служебная учётная запись" if member.is_admin else "участник") }}
-            · @{{ member.username }}</div>
+            · логин <span class="mono">{{ member.username }}</span></div>
         </div>
 
         {# Модули включают участнику: у администратора их нет — ни экранов, ни
@@ -71,6 +75,21 @@
         {% endif %}
       </div>
 
+      {# Ссылка, пока ею не воспользовались: это единственный способ дать
+         человеку пароль, и прятать её до нажатия кнопки было не за чем. #}
+      {% if row.invite_link %}
+        <div class="invite-row">
+          <div class="tiny" style="margin-bottom:6px">
+            Ссылка для {{ member.display_name }} — по ней он придумает пароль и войдёт:
+          </div>
+          <div class="row wrap" style="gap:8px">
+            <input class="field mono" id="invite-{{ member.id }}" value="{{ row.invite_link }}"
+                   readonly onclick="this.select()" style="flex:1;min-width:220px;font-size:12.5px">
+            <button class="btn small" type="button" data-copy="#invite-{{ member.id }}">Скопировать</button>
+          </div>
+        </div>
+      {% endif %}
+
       <div class="divider" style="margin:6px 0"></div>
       <div class="row wrap" style="gap:8px">
         <form method="post" action="/settings/accounts/member/{{ member.id }}/rename"
@@ -79,6 +98,12 @@
                  style="flex:1;min-width:120px">
           <input class="field" name="relation" value="{{ member.relation or '' }}"
                  placeholder="кем приходится" style="flex:1;min-width:120px">
+          {# Логин правится там же, где имя: это одна строка про одного человека.
+             Сохранение отвечает тем логином, который получился, — в том числе
+             когда введённый оказался занят и форма вернула ошибку. #}
+          <input class="field mono" name="username" value="{{ member.username }}"
+                 placeholder="логин" aria-label="Логин для входа"
+                 style="flex:1;min-width:110px;font-size:13px">
           <button class="btn ghost small" type="submit">Сохранить</button>
         </form>
 
@@ -92,12 +117,23 @@
           </form>
         {% endif %}
 
+        {# У того, кто ещё не заходил, ссылка уже есть и висит выше — вторая
+           кнопка нужна, только если ссылку отозвали или пароль пора сбросить.
+           На своей карточке её нет: свой пароль меняют в профиле. #}
+        {% if row.can_invite %}
         <form method="post" action="/settings/accounts/member/{{ member.id }}/invite"
-              hx-confirm="Выпустить новую ссылку для {{ member.display_name }}? Текущий пароль перестанет работать.">
+              {% if member.password_hash %}
+                hx-confirm="Сбросить пароль {{ member.display_name }}? Нынешний перестанет работать, и войти получится только по новой ссылке."
+              {% elif member.invite_code %}
+                hx-confirm="Выпустить новую ссылку для {{ member.display_name }}? Та, что показана выше, перестанет работать."
+              {% endif %}>
           <button class="btn ghost small" type="submit">
-            {{ "Сбросить пароль" if member.password_hash else "Выпустить ссылку" }}
+            {% if member.password_hash %}Сбросить пароль
+            {%- elif member.invite_code %}Выпустить ссылку заново
+            {%- else %}Выпустить ссылку{% endif %}
           </button>
         </form>
+        {% endif %}
 
         {% if member.invite_code and not member.password_hash %}
           <form method="post" action="/settings/accounts/member/{{ member.id }}/revoke">
@@ -116,13 +152,17 @@
   {% endfor %}
 
   <form class="card row wrap" method="post" action="/settings/accounts/member" style="gap:8px">
-    <div style="flex:1;min-width:160px">
+    <div style="flex:1;min-width:150px">
       <div class="label">Имя</div>
       <input class="field" name="display_name" placeholder="Соня">
     </div>
-    <div style="flex:1;min-width:160px">
+    <div style="flex:1;min-width:150px">
       <div class="label">Кем приходится</div>
       <input class="field" name="relation" placeholder="дочь">
+    </div>
+    <div style="flex:1;min-width:150px">
+      <div class="label">Логин — необязательно</div>
+      <input class="field mono" name="username" placeholder="sonya" style="font-size:13px">
     </div>
     <button class="btn" type="submit" style="align-self:flex-end">Добавить участника</button>
   </form>
@@ -132,8 +172,7 @@
   Роли две, и они не пересекаются: администратор настраивает панель для всех и
   ассистентом не пользуется, участник пользуется и настроек не трогает. Чтобы
   разговаривать с ассистентом самому, заведите себе вторую учётную запись —
-  участника. Пароль человек придумывает сам по ссылке: администратор его не
-  видит и не задаёт.
+  участника.
 </p>
 
 {% endblock %}

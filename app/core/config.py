@@ -168,6 +168,12 @@ class Settings:
     #: ingest-ключа — доступ «читать архив» и «включить тревогу» это разные права.
     control_base_url: str = ""
     control_api_token: str = ""
+    #: Задан ли `PUBLIC_BASE_URL` в окружении на самом деле. Умолчание у него
+    #: правдоподобное («localhost») и потому опасное: ссылка-приглашение с ним
+    #: собирается без единой ошибки и не открывается ни с одного другого
+    #: устройства. Там, где под рукой есть запрос, адрес берётся из него —
+    #: но только пока никто не сказал точнее.
+    public_base_url_explicit: bool = False
     push: PushSettings = field(default_factory=lambda: PushSettings("", "", "mailto:admin@example.com"))
     admin: AdminSettings = field(
         default_factory=lambda: AdminSettings("", "", "", "", "Семья", False))
@@ -186,6 +192,7 @@ def load_settings() -> Settings:
         redis_url=os.environ.get("REDIS_URL", ""),
         telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         public_base_url=os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000"),
+        public_base_url_explicit=bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
         timezone=os.environ.get("TIMEZONE", "Europe/Moscow"),
         media_retention_days=_int("MEDIA_RETENTION_DAYS", 14),
         control_base_url=os.environ.get("CONTROL_BASE_URL", "").strip(),

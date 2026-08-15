@@ -21,8 +21,24 @@ router = APIRouter(tags=["invite"])
 MIN_PASSWORD_LENGTH = 6
 
 
-def invite_url(user: User) -> str:
-    return f"{settings.public_base_url.rstrip('/')}/invite/{user.invite_code}" if user.invite_code else ""
+def invite_url(user: User, request: Request = None) -> str:
+    """Ссылка, по которой человек заведёт себе пароль.
+
+    Адрес берётся из запроса, а не из `PUBLIC_BASE_URL`: администратор смотрит
+    панель по тому же адресу, по которому её откроет приглашённый — они в одном
+    доме. У переменной окружения умолчание «localhost», и с ним ссылка
+    собиралась без ошибок, но не открывалась ни с одного другого устройства:
+    самая частая поломка приглашений и была в этом.
+
+    Явно заданный `PUBLIC_BASE_URL` всё равно главнее: если панель стоит за
+    доменом, а внутрь ходит по служебному адресу, знает об этом только тот, кто
+    её разворачивал.
+    """
+    if not user.invite_code:
+        return ""
+    base = settings.public_base_url if settings.public_base_url_explicit or request is None \
+        else str(request.base_url)
+    return f"{base.rstrip('/')}/invite/{user.invite_code}"
 
 
 def _find(db: Session, code: str) -> User:

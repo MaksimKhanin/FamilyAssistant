@@ -43,6 +43,61 @@ def test_nameless_member_is_refused(db, admin):
         accounts.create_member(db, admin, "   ")
 
 
+# --- логин --------------------------------------------------------------------
+
+def test_the_admin_can_choose_the_login(db, admin):
+    """Логин из имени — умолчание, а не приговор: его набирают на экране входа."""
+    member = accounts.create_member(db, admin, "Пётр", "папа", username="petya")
+
+    assert member.username == "petya"
+
+
+def test_the_login_is_case_insensitive(db, admin):
+    """Иначе «Petya» и «petya» — два разных входа, а человек об этом не знает."""
+    member = accounts.create_member(db, admin, "Пётр", username="  Petya  ")
+
+    assert member.username == "petya"
+
+
+def test_a_taken_login_is_refused(db, admin, member):
+    with pytest.raises(AccountError, match="занят"):
+        accounts.create_member(db, admin, "Другая Марина", username=member.username.upper())
+
+
+@pytest.mark.parametrize("bad", ["аня", "a b", "petya!", "p"])
+def test_a_login_that_cannot_be_typed_is_refused(db, admin, bad):
+    with pytest.raises(AccountError):
+        accounts.create_member(db, admin, "Кто-то", username=bad)
+
+
+def test_the_login_can_be_changed_later(db, admin, member):
+    accounts.rename(db, admin, member.id, member.display_name, "мама", username="marina-2")
+
+    assert member.username == "marina-2"
+
+
+def test_renaming_without_a_login_field_leaves_the_login_alone(db, admin, member):
+    """Форма без поля логина не должна стирать человеку вход."""
+    was = member.username
+
+    accounts.rename(db, admin, member.id, "Марина Ивановна", "мама")
+
+    assert member.username == was
+    assert member.display_name == "Марина Ивановна"
+
+
+def test_a_login_taken_by_someone_else_is_refused_on_rename(db, admin, member, other):
+    with pytest.raises(AccountError, match="занят"):
+        accounts.rename(db, admin, member.id, member.display_name, username=other.username)
+
+
+def test_keeping_your_own_login_is_not_a_collision(db, admin, member):
+    """Сохранение строки без правки логина — обычное дело, и падать тут нечему."""
+    accounts.rename(db, admin, member.id, "Марина", "мама", username=member.username)
+
+    assert member.username == "marina"
+
+
 def test_family_size_is_bounded(db, admin, monkeypatch):
     """Лимит считает людей: админская учётка — вход в панель, а не человек за столом."""
     monkeypatch.setattr(accounts, "MAX_MEMBERS", 2)

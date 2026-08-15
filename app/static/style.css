@@ -552,6 +552,21 @@ textarea.field { font-size: 13.5px; resize: vertical; }
 
 .divider { height: 1px; background: var(--border); margin: 14px 0; }
 
+/* Порядок действий, который человеку надо проделать самому: «завести — передать
+   ссылку — он придумает пароль». Нумерация здесь несёт смысл, поэтому список
+   нумерованный, а не набор абзацев. */
+.howto { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); font-size: 13.5px; }
+.howto li { line-height: 1.5; }
+
+/* Ссылка-приглашение в карточке человека: подложка отделяет её от полей, в
+   которых что-то правят, — эту строку не правят, её забирают. */
+.invite-row {
+  background: var(--surface-3); border-radius: 12px; padding: 10px 12px;
+}
+/* Кого только что завели: список длинный, и после «Добавить участника» надо
+   видеть, в какой карточке лежит ссылка. */
+.just-invited { border-color: var(--acc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 14%, transparent); }
+
 /* ---------- dashboard ---------- */
 
 .ring {
