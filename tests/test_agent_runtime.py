@@ -155,20 +155,90 @@ def test_the_next_turn_knows_what_the_tools_returned(db, member):
     llm = FakeLLM([LLMResponse(content="Хорошо.")])
     Agent(llm).respond(db, member, "а что ты там записал?")
 
-    said = [m["content"] for m in llm.calls[0]["messages"] if m["role"] == "assistant"][0]
-    assert "Запомнил." in said                          # сама реплика на месте
-    assert "remember(" in said                          # и чем она была добыта
-    assert f"entry_id={entry.id}" in said               # номер записи доехал
+    messages = llm.calls[0]["messages"]
+    said = [m["content"] for m in messages if m["role"] == "assistant"][0]
+    trail = [m["content"] for m in messages[1:] if m["role"] == "system"][0]
+    assert said == "Запомнил."                          # сама реплика на месте
+    assert "remember(" in trail                         # и чем она была добыта
+    assert f"entry_id={entry.id}" in trail              # номер записи доехал
+
+
+def test_the_trail_is_not_written_in_the_assistants_voice(db, member):
+    """Иначе модель дочитывает узор «слова + перечень вызовов» как свою роль.
+
+    Прогон #74: перечень приезжал припиской внутри реплики ассистента, и модель
+    в какой-то момент дописала такую же — не вызвав ничего. Человеку она при этом
+    отчиталась о двух выполненных действиях.
+    """
+    policy.set_autonomy(db, member.family_id, 3)
+    Agent(FakeLLM([_call("remember", text="Соня не ест грибы"),
+                   LLMResponse(content="Запомнил.")])).respond(db, member, "запомни про Соню")
+
+    llm = FakeLLM([LLMResponse(content="Хорошо.")])
+    Agent(llm).respond(db, member, "ну ладно")
+
+    for message in llm.calls[0]["messages"]:
+        if message["role"] == "assistant":
+            assert "remember(" not in message["content"]
 
 
 def test_the_trail_never_reaches_the_human(db, member):
-    """Приписка — служебная: она для модели, а панель читает ту же строку."""
+    """Служебная запись — для модели, а панель читает строку из базы."""
     policy.set_autonomy(db, member.family_id, 3)
     Agent(FakeLLM([_call("remember", text="Соня не ест грибы"),
                    LLMResponse(content="Запомнил.")])).respond(db, member, "запомни про Соню")
 
     saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
     assert saved.content == "Запомнил."
+
+
+# --- выдуманные вызовы ----------------------------------------------------
+
+FABRICATED = ("Готово, переименовала и запомнила рецепт.\n\n"
+              "[что я тогда сделал:\nconfirm_meal(title=Огуречный суп) → done\n"
+              "remember(text=рецепт) → done]")
+
+
+def test_a_made_up_report_becomes_a_real_call(db, member):
+    """Модель «отчиталась» о вызовах, не сделав их, — просим сделать по-настоящему."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([
+        LLMResponse(content=FABRICATED),
+        _call("remember", text="рецепт огуречного супа"),
+        LLMResponse(content="Запомнила рецепт."),
+    ])
+    reply = Agent(llm).respond(db, member, "запомни этот рецепт")
+
+    assert reply.text == "Запомнила рецепт."
+    assert [t.status for t in reply.traces] == ["done"]
+    assert db.query(BoardEntry).count() == 1
+    # модели показали, что вышло, и попросили сделать
+    assert any(m["role"] == "system" and m["content"].startswith("СТОП")
+               for m in llm.calls[1]["messages"])
+
+
+def test_a_made_up_report_never_reaches_the_human(db, member):
+    """Даже если модель настаивает: перечень вызовов — не её слова."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([LLMResponse(content=FABRICATED), LLMResponse(content=FABRICATED)])
+    reply = Agent(llm).respond(db, member, "запомни этот рецепт")
+
+    assert reply.text == "Готово, переименовала и запомнила рецепт."
+    assert "confirm_meal(" not in reply.text
+    saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
+    assert "remember(" not in saved.content
+
+
+def test_a_made_up_report_stored_earlier_does_not_come_back_as_truth(db, member):
+    """Строки, осевшие в базе до починки, в следующий ход едут без перечня."""
+    from app.agent.runtime import save_message
+
+    save_message(db, member, "assistant", FABRICATED)
+    llm = FakeLLM([LLMResponse(content="Хорошо.")])
+    Agent(llm).respond(db, member, "и что дальше?")
+
+    said = [m["content"] for m in llm.calls[0]["messages"] if m["role"] == "assistant"][0]
+    assert said == "Готово, переименовала и запомнила рецепт."
 
 
 def test_a_refusal_is_remembered_too(db, member):
@@ -182,6 +252,6 @@ def test_a_refusal_is_remembered_too(db, member):
     llm = FakeLLM([LLMResponse(content="Хорошо.")])
     Agent(llm).respond(db, member, "ну ладно")
 
-    said = [m["content"] for m in llm.calls[0]["messages"] if m["role"] == "assistant"][0]
-    assert "lookup_product(" in said
-    assert "failed" in said
+    trail = [m["content"] for m in llm.calls[0]["messages"][1:] if m["role"] == "system"][0]
+    assert "lookup_product(" in trail
+    assert "failed" in trail
