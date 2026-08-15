@@ -384,6 +384,7 @@ def profile_screen(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
+    from app.modules.memory import knowledge
     from app.modules.nutrition import service as nutrition_service
     from app.modules.nutrition.models import GOAL_LABELS
 
@@ -415,6 +416,10 @@ def profile_screen(
         character=instructions.own_character(viewed),
         default_character=instructions.DEFAULT_CHARACTER,
         character_limit=instructions.CHARACTER_LIMIT,
+        # Правила показываются рядом с характером, но правятся на своей доске:
+        # заводит их разговор, а редактор у них уже есть — экран знаний.
+        rules=knowledge.list_rules(db, viewed.id),
+        rules_url=knowledge.rules_url(db, viewed.id),
         memo_modules=memo_modules,
         memo_limit=instructions.MEMO_LIMIT,
         push_devices=push.device_count(db, viewed.id),

@@ -10,7 +10,7 @@
 у экрана и инструментов агента была одна и та же граница.
 """
 from datetime import datetime
-from typing import List, NamedTuple, Optional, Sequence
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -112,7 +112,7 @@ def board_grants(db: Session, user_id: int) -> List[BoardGrant]:
     """Какие доски видит этот участник и с каким правом.
 
     Три источника: свои (через раздел), расшаренные поимённо (board_shares)
-    и расшаренные «всем» в семье владельца — живое правило, а не снимок.
+    и расшаренные «всем» в семье владельца — живое условие, а не снимок.
     Когда поимённое право и «всем» расходятся, действует более широкое.
     """
     me = db.get(User, user_id)
@@ -560,7 +560,7 @@ def share_board(db: Session, user_id: int, board_id: int, member_id: int,
 
 
 def share_board_with_all(db: Session, user_id: int, board_id: int, right: str) -> bool:
-    """«Всем» — живое правило на доске: новый человек в семье получит её сам."""
+    """«Всем» — живое условие на доске: новый человек в семье получит её сам."""
     board = _own_board(db, user_id, board_id)
     if board is None or right not in RIGHT_LABELS:
         return False
@@ -600,6 +600,27 @@ ASSISTANT_BOARD_NAME = "Память ассистента"
 ASSISTANT_SECTION_NAME = "Личное"
 ASSISTANT_BOARD_INSTRUCTION = ("Сюда ассистент складывает то, что запомнил из "
                                "разговоров: предпочтения, ограничения, наблюдения.")
+
+#: Реестр правил — вторая доска, которую ассистент заводит себе сам. Одна запись
+#: здесь равна одному правилу, и все они доезжают до модели в каждом разговоре.
+RULES_BOARD_NAME = "Поведение помощника"
+RULES_BOARD_INSTRUCTION = ("Реестр правил: что человек однажды велел делать всегда. "
+                           "Одна запись — одно правило; ассистент читает их все "
+                           "в каждом разговоре.")
+
+#: Знаков в одном правиле и правил у человека. Ограничение не про безопасность,
+#: а про окно контекста: правила едут в каждый запрос — как `CHARACTER_LIMIT`
+#: у характера, только счётом ещё и по строкам.
+RULE_LIMIT = 240
+RULES_MAX = 20
+
+
+class TooManyRules(Exception):
+    """Правил столько, что реестр перестал быть обозримым.
+
+    Отказ, а не тихое вытеснение старого: правило, которое ассистент забыл сам,
+    человек считает действующим, и разошлись бы они молча.
+    """
 
 
 def find_boards_by_name(db: Session, user_id: int, name: str) -> List[BoardGrant]:
@@ -654,8 +675,13 @@ def person_facts(db: Session, user_id: int, limit: int = 8) -> List[str]:
     Его последние записи не рассказывают о человеке ничего («02:50 170»), зато
     вытеснили бы из короткой выжимки то единственное, ради чего её собирают, —
     «у Лёвы аллергия на арахис». Поэтому доски, которые ведут счёт, сюда не идут.
+
+    Реестра правил тут нет по той же причине, только с другой стороны: правило
+    рассказывает не о человеке, а об ассистенте, и в подборе блюд ему делать
+    нечего — там ждут аллергию, а не «записывай состояние на доску».
     """
-    boards = {g.board.id for g in board_grants(db, user_id)}
+    boards = {g.board.id for g in board_grants(db, user_id)
+              if g.board.name != RULES_BOARD_NAME}
     if not boards:
         return []
     counted = {row[0] for row in db.query(BoardEventType.board_id)
@@ -671,14 +697,20 @@ def person_facts(db: Session, user_id: int, limit: int = 8) -> List[str]:
     return [entry.text for entry in rows]
 
 
-def assistant_board(db: Session, user_id: int) -> Board:
-    """Доска «Память ассистента» — заводится лениво при первом запоминании,
-    вместе с разделом «Личное», если его ещё нет."""
+def _system_board(db: Session, user_id: int, name: str, instruction: str,
+                  create: bool = True) -> Optional[Board]:
+    """Доска, которую ассистент завёл себе сам, — вместе с разделом «Личное».
+
+    Заводится лениво и только тогда, когда в неё правда пишут: `create=False`
+    отдаёт то, что уже есть. Разница не косметическая — правила читаются на
+    каждом ходу, и чтение не должно заводить пустой реестр тому, кто ни о чём
+    не договаривался.
+    """
     board = (db.query(Board)
              .join(Section, Board.section_id == Section.id)
-             .filter(Section.user_id == user_id, Board.name == ASSISTANT_BOARD_NAME)
+             .filter(Section.user_id == user_id, Board.name == name)
              .first())
-    if board is not None:
+    if board is not None or not create:
         return board
     section = (db.query(Section)
                .filter(Section.user_id == user_id, Section.name == ASSISTANT_SECTION_NAME)
@@ -687,12 +719,22 @@ def assistant_board(db: Session, user_id: int) -> Board:
         section = Section(user_id=user_id, name=ASSISTANT_SECTION_NAME)
         db.add(section)
         db.flush()
-    board = Board(section_id=section.id, name=ASSISTANT_BOARD_NAME,
-                  instruction=ASSISTANT_BOARD_INSTRUCTION)
+    board = Board(section_id=section.id, name=name, instruction=instruction)
     db.add(board)
     db.commit()
     db.refresh(board)
     return board
+
+
+def assistant_board(db: Session, user_id: int) -> Board:
+    """Доска «Память ассистента» — заводится лениво при первом запоминании."""
+    return _system_board(db, user_id, ASSISTANT_BOARD_NAME, ASSISTANT_BOARD_INSTRUCTION)
+
+
+def rules_board(db: Session, user_id: int, create: bool = False) -> Optional[Board]:
+    """Реестр правил — заводится лениво при первом уговоре, а не при чтении."""
+    return _system_board(db, user_id, RULES_BOARD_NAME, RULES_BOARD_INSTRUCTION,
+                         create=create)
 
 
 def add_assistant_entry(db: Session, user_id: int, board_id: int, text: str,
@@ -728,13 +770,75 @@ def delete_assistant_entry(db: Session, user_id: int, entry_id: int) -> bool:
     return True
 
 
+# --- правила ---------------------------------------------------------------------
+
+def list_rules(db: Session, user_id: int) -> List[BoardEntry]:
+    """Действующие правила человека — записями реестра, старые впереди.
+
+    Ни о чём не договаривались — пустой список и ни одной заведённой доски.
+    """
+    board = rules_board(db, user_id)
+    return list_entries(db, user_id, board.id) if board is not None else []
+
+
+def add_rule(db: Session, user_id: int, text: str,
+             replaces: int = None) -> Optional[BoardEntry]:
+    """Записать правило в реестр, при надобности сняв замещаемое.
+
+    Замена — одним действием, а не «завести и потом забыть снять»: два правила
+    об одном и том же противоречат друг другу молча, и разбирать это придётся
+    модели посреди разговора.
+    """
+    text = (text or "").strip()[:RULE_LIMIT]
+    if not text:
+        return None
+
+    superseded = replaces is not None and drop_rule(db, user_id, replaces)
+    if len(list_rules(db, user_id)) >= RULES_MAX and not superseded:
+        raise TooManyRules()
+
+    board = rules_board(db, user_id, create=True)
+    return add_assistant_entry(db, user_id, board.id, text)
+
+
+def drop_rule(db: Session, user_id: int, entry_id: int) -> bool:
+    """Снять правило. Только из реестра: запись с любой другой доски — не правило,
+    и удалять её этим путём нельзя, даже если её тоже написал ассистент."""
+    board = rules_board(db, user_id)
+    entry = db.get(BoardEntry, entry_id)
+    if board is None or entry is None or entry.board_id != board.id:
+        return False
+    return delete_assistant_entry(db, user_id, entry_id)
+
+
+def rules_for_prompt(db: Session, user_id: int) -> List[Tuple[int, str]]:
+    """Правила для системного промпта — парами «номер, текст».
+
+    Номер — это номер записи в реестре: им человек и ссылается на правило,
+    когда просит его снять или поправить.
+    """
+    return [(entry.id, entry.text) for entry in list_rules(db, user_id)[:RULES_MAX]]
+
+
+def rules_url(db: Session, user_id: int) -> str:
+    """Адрес реестра для экрана профиля — пустая строка, если его ещё нет."""
+    board = rules_board(db, user_id)
+    if board is None:
+        return ""
+    return board_url(BoardGrant(board=board, right=RIGHT_OWNER))
+
+
 def boards_prompt(db: Session, user_id: int) -> str:
     """Названия и инструкции доступных досок — для системного промпта.
 
     По одному названию модель не понимает, что доска значит; содержимое при
     этом в контекст не кладётся — только инструментом read_board (спека #19).
+
+    Реестра правил в этом перечне нет: его содержимое и так едет в промпт
+    целиком, а строка в списке досок звала бы модель писать туда `write_entry` —
+    мимо `set_rule` и мимо подтверждения человеком.
     """
-    grants = board_grants(db, user_id)
+    grants = [g for g in board_grants(db, user_id) if g.board.name != RULES_BOARD_NAME]
     if not grants:
         return ""
     owners = board_owner_names(db, grants)

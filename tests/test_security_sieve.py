@@ -1,4 +1,4 @@
-"""The filter that decides whether the family hears about a camera event."""
+"""Сито — ступень отбора, которая решает, услышит ли семья о событии с камеры."""
 from datetime import datetime
 
 import pytest

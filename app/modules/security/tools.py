@@ -181,7 +181,7 @@ def _find_camera(ctx: ToolContext, name: str) -> Camera:
     title="Разобраться в событии",
     description="""
     Внимательно посмотреть на конкретное событие с камеры и решить, стоит ли оно
-    внимания семьи. Вызывай, когда правила отметили событие как «проверить»,
+    внимания семьи. Вызывай, когда сито отметило событие как «проверить»,
     или когда человек спрашивает про конкретное событие.
     """,
     parameters={
@@ -204,7 +204,7 @@ def classify_event(ctx: ToolContext, event_id: int) -> ToolResult:
         f"Время: {event.happened_at:%d.%m %H:%M}.\n"
         f"Детектор увидел: {event.detected_class or 'движение'}"
         f"{f' (уверенность {event.confidence:.2f})' if event.confidence else ''}.\n"
-        f"Предварительный вывод правил: {event.verdict_label} — {event.reason}."
+        f"Предварительный вывод сита: {event.verdict_label} — {event.reason}."
     )
 
     content = [text_part(description)]
@@ -307,7 +307,7 @@ def auto_review(db, event_id: int, family_id: int):
         return
     result = run_tool_directly(db, actor, "classify_event", {"event_id": event_id}, mode="event")
     if not result.ok:
-        logger.info(f"Событие {event_id} осталось с вердиктом правил: {result.summary}")
+        logger.info(f"Событие {event_id} осталось с вердиктом сита: {result.summary}")
 
 
 def notify_on_anomaly(payload: dict):
