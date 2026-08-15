@@ -9,8 +9,8 @@ from app.core import media
 from app.core.clock import day_bounds_utc, local_date, local_today, utc_now
 from app.core.templating import counted
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, GOAL_KEEP, SOURCE_PHOTO, SOURCE_TEXT, STATUS_CONFIRMED,
-    STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, NutritionProfile,
+    ACTIVITY_KCAL, GOAL_KEEP, SLOTS, SOURCE_PHOTO, SOURCE_TEXT, STATUS_CONFIRMED,
+    STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, MealIdea, NutritionProfile,
 )
 from app.modules.nutrition.vision import MealEstimate
 
@@ -33,6 +33,24 @@ def get_profile(db: Session, user_id: int) -> NutritionProfile:
         db.add(profile)
         db.commit()
         db.refresh(profile)
+    return profile
+
+
+#: Сколько человек может написать о своём рационе. Как и у памятки, ограничение
+#: не про безопасность, а про контекст: этот текст уезжает в каждый подбор блюда.
+PREFERENCES_LIMIT = 1200
+
+
+def set_preferences(db: Session, user_id: int, text: str) -> NutritionProfile:
+    """Пожелания к рациону: что человек ест, чего не ест, что любит.
+
+    Пустой текст стирает написанное, а не хранит пустую строку, — иначе в промпт
+    поехала бы строка «пожелания: », которая значит меньше, чем её отсутствие.
+    """
+    profile = get_profile(db, user_id)
+    profile.preferences = (text or "").strip()[:PREFERENCES_LIMIT] or None
+    db.commit()
+    db.refresh(profile)
     return profile
 
 
@@ -436,6 +454,151 @@ def clear_period(db: Session, user_id: int, period: str = "day", what: str = WHA
     start, _ = day_bounds_utc(today - timedelta(days=span - 1))
     _, end = day_bounds_utc(today)
     return _clear_window(db, user_id, start, end, what)
+
+
+# --- идеи блюд: подбор на экране и отмеченное человеком ---------------------
+
+@dataclass
+class PlanDay:
+    """День подбора со своими блюдами — то, что рисует экран «План питания»."""
+    title: str
+    ideas: List[MealIdea] = field(default_factory=list)
+
+    @property
+    def kcal(self) -> int:
+        return sum(idea.kcal for idea in self.ideas)
+
+
+def _clean_slot(slot: str) -> Optional[str]:
+    """Приём пищи словом из словаря — или ничего. Модель пишет по-разному."""
+    lowered = (slot or "").strip().lower().strip(".")
+    return next((key for key in SLOTS if key in lowered), None)
+
+
+def add_idea(db: Session, user_id: int, title: str, slot: str = None, kcal: int = 0,
+             day_title: str = None, position: int = 0, saved: bool = False) -> Optional[MealIdea]:
+    title = (title or "").strip()[:128]
+    if not title:
+        return None
+    idea = MealIdea(
+        user_id=user_id,
+        title=title,
+        slot=_clean_slot(slot),
+        kcal=max(0, int(kcal or 0)),
+        day_title=(day_title or "").strip()[:32] or None,
+        position=position,
+        saved=saved,
+    )
+    db.add(idea)
+    db.commit()
+    db.refresh(idea)
+    return idea
+
+
+def keep_dish(db: Session, user_id: int, title: str, slot: str = None,
+              kcal: int = 0) -> Optional[MealIdea]:
+    """Отметить блюдо из разговора. Нажали дважды — блюдо всё равно одно.
+
+    Кнопка живёт в ленте чата и остаётся там навсегда: человек пролистывает
+    вчерашний разговор и нажимает ещё раз, а второе «то же самое» в закрепе — это
+    не память ассистента, а его невнимательность.
+    """
+    title = (title or "").strip()
+    if not title:
+        return None
+    existing = next((idea for idea in saved_ideas(db, user_id)
+                     if idea.title.lower() == title.lower()[:128]), None)
+    return existing or add_idea(db, user_id, title, slot=slot, kcal=kcal, saved=True)
+
+
+def replace_plan(db: Session, user_id: int, days: List[dict]) -> List[PlanDay]:
+    """Положить новый подбор на место прежнего, не тронув отмеченное.
+
+    Неотмеченные блюда прошлого подбора исчезают: «предложить другое» — это
+    просьба заменить, а не дописать. Отмеченные остаются жить, но теряют свой
+    день: они больше не часть подбора, который человек видит, а его закреп.
+    """
+    stale = db.query(MealIdea).filter(MealIdea.user_id == user_id,
+                                      MealIdea.day_title.isnot(None)).all()
+    for idea in stale:
+        if idea.saved:
+            idea.day_title = None
+        else:
+            db.delete(idea)
+    db.commit()
+
+    for day_number, day in enumerate(days):
+        for number, meal in enumerate(day.get("meals") or []):
+            add_idea(db, user_id, meal.get("name"), slot=meal.get("slot"),
+                     kcal=meal.get("kcal") or 0, day_title=day.get("title") or "День",
+                     position=day_number * 100 + number)
+    return plan_days(db, user_id)
+
+
+def plan_days(db: Session, user_id: int) -> List[PlanDay]:
+    """Последний подбор, разложенный по дням в том порядке, в каком его собрали."""
+    rows = (
+        db.query(MealIdea)
+        .filter(MealIdea.user_id == user_id, MealIdea.day_title.isnot(None))
+        .order_by(MealIdea.position, MealIdea.id)
+        .all()
+    )
+    days: Dict[str, PlanDay] = {}
+    for idea in rows:
+        days.setdefault(idea.day_title, PlanDay(title=idea.day_title)).ideas.append(idea)
+    return list(days.values())
+
+
+def saved_ideas(db: Session, user_id: int, limit: int = 50) -> List[MealIdea]:
+    """Закреп: блюда, которые человек отметил, — свежие первыми."""
+    return (
+        db.query(MealIdea)
+        .filter(MealIdea.user_id == user_id, MealIdea.saved.is_(True))
+        .order_by(MealIdea.created_at.desc(), MealIdea.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def saved_titles(db: Session, user_id: int, limit: int = 12) -> List[str]:
+    """Отмеченное — короткими строками для промпта: это то, что человеку зашло."""
+    return [f"{idea.title} (≈{idea.kcal} ккал)" if idea.kcal else idea.title
+            for idea in saved_ideas(db, user_id, limit=limit)]
+
+
+def get_idea(db: Session, user_id: int, idea_id: int) -> Optional[MealIdea]:
+    idea = db.get(MealIdea, idea_id)
+    return idea if idea is not None and idea.user_id == user_id else None
+
+
+def toggle_saved(db: Session, user_id: int, idea_id: int) -> Optional[MealIdea]:
+    """Отметить блюдо или снять отметку — одна и та же кнопка.
+
+    Снятая отметка у блюда, которого нет в текущем подборе, — это «убрать из
+    закрепа»: держать такую строку больше не за что, и она удаляется. У блюда из
+    подбора отметка просто гаснет: сам подбор никуда не делся.
+    """
+    idea = get_idea(db, user_id, idea_id)
+    if idea is None:
+        return None
+    idea.saved = not idea.saved
+    if not idea.saved and idea.day_title is None:
+        db.delete(idea)
+        db.commit()
+        return None
+    db.commit()
+    db.refresh(idea)
+    return idea
+
+
+def set_recipe(db: Session, user_id: int, idea_id: int, recipe: str) -> Optional[MealIdea]:
+    idea = get_idea(db, user_id, idea_id)
+    if idea is None:
+        return None
+    idea.recipe = (recipe or "").strip() or None
+    db.commit()
+    db.refresh(idea)
+    return idea
 
 
 def recent_meal_titles(db: Session, user_id: int, days: int = 14, limit: int = 25) -> List[str]:

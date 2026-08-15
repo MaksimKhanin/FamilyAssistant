@@ -283,6 +283,23 @@ def add_activity(
     return RedirectResponse("/nutrition/activity", status_code=303)
 
 
+def _plan_context(request: Request, db: Session, current: User, viewed: User,
+                  error: str = None, comment: str = None) -> dict:
+    """Экран плана целиком: подбор, закреп и пожелания к рациону.
+
+    Подбор теперь хранится (`meal_ideas`), поэтому собирается контекст одинаково —
+    и при переходе на экран, и сразу после кнопки «Предложить идеи».
+    """
+    context = screen_context(request, db, current, viewed,
+                             title="План питания", subtitle="Это идеи, а не предписание")
+    context.update(days=service.plan_days(db, viewed.id),
+                   saved=service.saved_ideas(db, viewed.id),
+                   profile=service.get_profile(db, viewed.id),
+                   preferences_limit=service.PREFERENCES_LIMIT,
+                   goal_labels=GOAL_LABELS, error=error, comment=comment)
+    return context
+
+
 @router.get("/plan", response_class=HTMLResponse)
 def plan_screen(
     request: Request,
@@ -294,12 +311,7 @@ def plan_screen(
         return _private_notice(request, db, current, viewed, "План питания",
                                "Идеи питания видит только их владелец")
 
-    context = screen_context(request, db, current, viewed,
-                             title="План питания", subtitle="Это идеи, а не предписание")
-    # План не хранится: он собирается по запросу («Предложить другое» → POST).
-    context.update(plan=None, error=None, goal_labels=GOAL_LABELS,
-                   profile=service.get_profile(db, viewed.id))
-    return render(request, "nutrition/plan.html", context)
+    return render(request, "nutrition/plan.html", _plan_context(request, db, current, viewed))
 
 
 @router.post("/plan")
@@ -309,14 +321,99 @@ def build_plan(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """«Предложить другое» — вызывает тот же инструмент, что и агент в чате."""
-    if not can_act_as(current, viewed):
+    """«Предложить идеи» — собрать рацион на несколько дней и сохранить его.
+
+    Инструмент тот же, что в логе действий, но из чата он не вызывается: в
+    разговоре на «что поесть» отвечают одним блюдом (ADR-0010).
+    """
+    if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
         return RedirectResponse("/nutrition/plan", status_code=303)
 
     result = run_tool_directly(db, viewed, "suggest_meal_plan", {}, mode="web", actor=current)
-    context = screen_context(request, db, current, viewed,
-                             title="План питания", subtitle="Это идеи, а не предписание")
-    context.update(plan=(result.card or {}) if result.ok else None,
-                   error=None if result.ok else result.summary,
-                   goal_labels=GOAL_LABELS, profile=service.get_profile(db, viewed.id))
-    return render(request, "nutrition/plan.html", context)
+    comment = (result.card or {}).get("comment") if result.ok else None
+    return render(request, "nutrition/plan.html",
+                  _plan_context(request, db, current, viewed,
+                                error=None if result.ok else result.summary, comment=comment))
+
+
+@router.post("/plan/preferences")
+def save_preferences(
+    preferences: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Пожелания к рациону — то, что человек ест и чего не ест, его словами."""
+    if can_act_as(current, viewed) and can_see_figures(current, viewed):
+        service.set_preferences(db, viewed.id, preferences)
+    return RedirectResponse("/nutrition/plan", status_code=303)
+
+
+@router.post("/plan/dish/{idea_id}/save")
+def toggle_dish(
+    idea_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Отметить блюдо или снять отметку. Отмеченное переживает следующий подбор."""
+    if can_act_as(current, viewed) and can_see_figures(current, viewed):
+        service.toggle_saved(db, viewed.id, idea_id)
+    return RedirectResponse("/nutrition/plan", status_code=303)
+
+
+@router.post("/plan/dish/{idea_id}/recipe")
+def dish_recipe(
+    request: Request,
+    idea_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """«Рецепт» у блюда — расписать и сохранить прямо у него.
+
+    Расписывается по просьбе, а не для всего подбора сразу: рецепт стоит
+    обращения к модели, а открывают его у одного-двух блюд из дюжины.
+    """
+    if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
+        return RedirectResponse("/nutrition/plan", status_code=303)
+
+    idea = service.get_idea(db, viewed.id, idea_id)
+    if idea is None:
+        return RedirectResponse("/nutrition/plan", status_code=303)
+
+    result = run_tool_directly(db, viewed, "dish_recipe", {"name": idea.title},
+                               mode="web", actor=current)
+    if result.ok:
+        service.set_recipe(db, viewed.id, idea_id, result.data.get("recipe", ""))
+        return RedirectResponse(f"/nutrition/plan#dish-{idea_id}", status_code=303)
+    return render(request, "nutrition/plan.html",
+                  _plan_context(request, db, current, viewed, error=result.summary))
+
+
+@router.post("/plan/dishes")
+def keep_dish(
+    request: Request,
+    title: str = Form(...),
+    slot: str = Form(""),
+    kcal: int = Form(0),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """«Оставить» на карточке блюда из разговора — блюдо уезжает в план питания.
+
+    Отвечает так же, как удаление записи из чата: репликой в ленту, если нажали
+    в разговоре, и переходом на экран, если нажали на экране.
+    """
+    idea = (service.keep_dish(db, viewed.id, title, slot=slot, kcal=kcal)
+            if can_act_as(current, viewed) and can_see_figures(current, viewed) else None)
+    said = (f"Отметил блюдо: {idea.title}. Оно теперь в плане питания — там же можно "
+            f"попросить рецепт." if idea is not None
+            else "Не получилось отметить это блюдо.")
+
+    if request.headers.get("HX-Request") and not request.headers.get("HX-Boosted"):
+        return render(request, "partials/chat_messages.html",
+                      {"request": request,
+                       "messages": [{"role": "assistant", "text": said, "traces": [], "cards": []}]})
+    return RedirectResponse("/nutrition/plan", status_code=303)

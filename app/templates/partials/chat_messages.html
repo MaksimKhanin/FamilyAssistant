@@ -72,6 +72,47 @@
             </div>
           </div>
         </div>
+      {% elif card.type == "dish" %}
+        {# Одно блюдо — то, чем ассистент отвечает на «что бы мне поесть».
+           Отметить его можно прямо отсюда: тогда оно уезжает в план питания. #}
+        <div class="agent-card">
+          <div class="name">{{ card.title }}</div>
+          <div class="macros">
+            <span><b>{{ card.kcal }}</b> ккал</span>
+            <span>Б {{ card.protein }}</span><span>Ж {{ card.fat }}</span><span>У {{ card.carbs }}</span>
+          </div>
+          {% if card.portion or card.slot %}
+            <div class="tiny">
+              {% if card.slot %}{{ card.slot }}{% endif %}
+              {%- if card.slot and card.portion %} · {% endif %}
+              {{- card.portion }}
+            </div>
+          {% endif %}
+          {% if card.why %}<div class="muted">{{ card.why }}</div>{% endif %}
+          <form class="actions" hx-post="/nutrition/plan/dishes"
+                hx-target="#chat-body" hx-swap="beforeend">
+            <input type="hidden" name="title" value="{{ card.title }}">
+            <input type="hidden" name="slot" value="{{ card.slot }}">
+            <input type="hidden" name="kcal" value="{{ card.kcal }}">
+            <button class="btn" type="submit">Оставить в плане</button>
+          </form>
+          <a class="btn link" href="/nutrition/plan">Открыть план питания →</a>
+        </div>
+      {% elif card.type == "recipe" %}
+        <div class="agent-card">
+          <div class="name">{{ card.title }}</div>
+          <div class="tiny">
+            {{ card.portions }} порц. · ≈ {{ card.kcal }} ккал на порцию ·
+            Б {{ card.protein }} / Ж {{ card.fat }} / У {{ card.carbs }}
+          </div>
+          {% if card.ingredients %}
+            <div class="muted">{{ card.ingredients | join("; ") }}</div>
+          {% endif %}
+          <ol class="stack" style="gap:4px;padding-left:18px;margin:0">
+            {% for step in card.steps %}<li>{{ step }}</li>{% endfor %}
+          </ol>
+          {% if card.note %}<div class="tiny">{{ card.note }}</div>{% endif %}
+        </div>
       {% elif card.type == "plan" %}
         <div class="agent-card">
           {% for day in card.days %}
