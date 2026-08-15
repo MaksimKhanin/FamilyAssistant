@@ -1,13 +1,19 @@
-"""Agent tools for knowledge boards and reminders (tickets #24, #29).
+"""Agent tools for knowledge boards, reminders and rules (tickets #24, #29).
 
 Полномочия ассистента равны полномочиям человека, который с ним говорит:
 все инструменты знаний ходят к доскам через `ctx.actor`, а не `ctx.subject` —
 экран знаний и доступ ассистента исключены из режима «от лица» (ADR-0005),
 иначе человек получал бы чужие доски руками ассистента.
+
+Здесь же живут инструменты, которыми ассистент правит сам себя: правило,
+характер, памятка, инструкция доски. Они не про знания, но модуль знаний —
+единственный, который включён всегда, а инструмент, меняющий поведение
+ассистента, не должен исчезать оттого, что человеку выключили область.
 """
 from datetime import datetime, timedelta
 
 from app.agent.registry import ToolContext, ToolResult, tool
+from app.core import instructions
 from app.core.templating import ru_datetime
 from app.modules.memory import knowledge, reminders, screens, stats
 from app.modules.memory.models import RIGHT_VIEW
@@ -525,3 +531,243 @@ def forget(ctx: ToolContext, entry_id: int) -> ToolResult:
             ok=False,
         )
     return ToolResult(summary="Забыл — запись удалена.", data={"entry_id": entry_id})
+
+
+# --- правила: чем ассистент правит сам себя --------------------------------------
+
+@tool(
+    name="set_rule",
+    module=MODULE,
+    title="Договориться о правиле",
+    description="""
+    Запомнить правило — то, что человек велел делать всегда, а не один раз:
+    «записывай моё состояние на доску „Самочувствие“ со временем сообщения»,
+    «не предлагай сладкое на завтрак». Формулируй правило от второго лица, как
+    поручение самому себе, и целиком: через месяц ты прочитаешь только эту строку,
+    без разговора вокруг неё. Правило про манеру речи — это set_character, про
+    одну доску — set_board_instruction, про целую область — add_memo; сюда идёт
+    всё остальное. Поправляя прежнее правило, передай его номер в replaces,
+    иначе в реестре останутся два противоречащих.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "text": {"type": "string",
+                     "description": "Правило одной фразой, от второго лица"},
+            "replaces": {"type": "integer",
+                         "description": "Номер правила, которое это заменяет"},
+        },
+        "required": ["text"],
+    },
+    # Правило переживёт разговор и будет действовать во всех следующих: это тот же
+    # ряд, что «запомнить», — пишем в личные данные, при обычной самостоятельности
+    # спрашиваем.
+    auto_from=2,
+)
+def set_rule(ctx: ToolContext, text: str, replaces: int = None) -> ToolResult:
+    try:
+        entry = knowledge.add_rule(ctx.db, ctx.actor.id, text, replaces=replaces)
+    except knowledge.TooManyRules:
+        having = "; ".join(f"#{number} {line}"
+                           for number, line in knowledge.rules_for_prompt(ctx.db, ctx.actor.id))
+        return ToolResult(
+            summary=f"Правил уже {knowledge.RULES_MAX} — больше не заводится, иначе "
+                    f"реестр перестанет быть обозримым. Скажи человеку, что сначала "
+                    f"надо снять лишнее, и назови, что действует сейчас: {having}",
+            ok=False,
+        )
+    if entry is None:
+        return ToolResult(summary="Пустое правило не завести.", ok=False)
+
+    board = knowledge.rules_board(ctx.db, ctx.actor.id)
+    grant = knowledge.board_access(ctx.db, ctx.actor.id, board.id)
+    return ToolResult(
+        summary=f"Договорились: {entry.text} (правило #{entry.id}).",
+        data={"rule_id": entry.id, "board_id": board.id},
+        card={"type": "board", "board": board.name, "text": entry.text,
+              "url": knowledge.board_url(grant)},
+    )
+
+
+@tool(
+    name="drop_rule",
+    module=MODULE,
+    title="Снять правило",
+    description="""
+    Снять действующее правило по его номеру: «больше не записывай моё состояние
+    на доску». Номера правил перечислены в системном промпте. Снимай только то,
+    о чём человек прямо попросил: правило, которое мешает тебе прямо сейчас, —
+    не повод его отменять.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "rule_id": {"type": "integer", "description": "Номер правила из системного промпта"},
+        },
+        "required": ["rule_id"],
+    },
+    # Необратимо, как «забыть»: человек написал правило словами, и восстановить
+    # его формулировку потом неоткуда.
+    auto_from=3,
+)
+def drop_rule(ctx: ToolContext, rule_id: int) -> ToolResult:
+    if not knowledge.drop_rule(ctx.db, ctx.actor.id, rule_id):
+        return ToolResult(
+            summary=f"Правила #{rule_id} нет. Действующие правила перечислены в "
+                    f"системном промпте — переспроси у человека, какое снять.",
+            ok=False,
+        )
+    return ToolResult(summary=f"Снял правило #{rule_id} — больше ему не следую.",
+                      data={"rule_id": rule_id})
+
+
+@tool(
+    name="set_character",
+    module=MODULE,
+    title="Задать характер",
+    description="""
+    Переписать свой характер — то, как ты говоришь с этим человеком: «отвечай
+    суше и без смайликов», «можно неформально, с иронией». Сюда идёт только
+    манера речи, роль и тон; что делать и куда записывать — это set_rule.
+    Текст заменяет прежний характер целиком, поэтому пиши его заново со всем, что
+    остаётся в силе, а не одной поправкой. Характер, который тебе задали в промпте,
+    ты видишь в блоке «Как ты говоришь».
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "text": {"type": "string",
+                     "description": "Характер целиком, словами человека: «сухо и по делу»"},
+        },
+        "required": ["text"],
+    },
+    # Меняет манеру везде и сразу, но обратимо и видно на экране «Профиль и агент» —
+    # тот же ряд, что и запись в личные данные.
+    auto_from=2,
+)
+def set_character(ctx: ToolContext, text: str) -> ToolResult:
+    if not (text or "").strip():
+        return ToolResult(
+            summary="Пустой характер не задать. Человек хочет вернуть привычную "
+                    "манеру — он стирает поле сам на экране «Профиль и агент».",
+            ok=False,
+        )
+    # Правим того, за кого работает ассистент: характер — его, а не того, кто
+    # разговаривает от его лица.
+    updated = instructions.set_character(ctx.db, ctx.subject, text)
+    return ToolResult(
+        summary=f"Теперь говорю так: «{updated}». Это записано в характер на экране "
+                f"«Профиль и агент» — человек может поправить его там.",
+        data={"character": updated},
+    )
+
+
+@tool(
+    name="add_memo",
+    module=MODULE,
+    title="Дописать памятку",
+    description="""
+    Дописать строку в памятку одной области — то, что ты обязан учитывать везде,
+    где эта область в деле: «нет желчного, гастрит» про питание, «по средам
+    приходит уборщица» про дом. area — название области из списка включённых
+    модулей в системном промпте. Это про факты и обстоятельства человека, а не
+    про твоё поведение: «записывай состояние на доску» — это set_rule.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "area": {"type": "string", "description": "Название области: «Питание», «Знания»"},
+            "text": {"type": "string", "description": "Что дописать — одной фразой"},
+        },
+        "required": ["area", "text"],
+    },
+    auto_from=2,
+)
+def add_memo(ctx: ToolContext, area: str, text: str) -> ToolResult:
+    from app.core.access import enabled_modules
+    from app.modules import by_name, names
+
+    text = (text or "").strip()
+    if not text:
+        return ToolResult(summary="Пустую строку в памятку не дописать.", ok=False)
+
+    known = by_name()
+    allowed = [known[name] for name in enabled_modules(ctx.db, ctx.subject.id, names())
+               if name in known and known[name].memo_hint]
+    lowered = area.strip().lower()
+    matched = ([m for m in allowed if m.title.lower() == lowered]
+               or [m for m in allowed if m.name.lower() == lowered]
+               or [m for m in allowed if lowered and lowered in m.title.lower()])
+    if len(matched) != 1:
+        available = ", ".join(f"«{m.title}»" for m in allowed)
+        return ToolResult(
+            summary=f"Области «{area}» у этого человека нет. Памятку можно писать "
+                    f"сюда: {available or 'пока некуда'}.",
+            ok=False,
+        )
+
+    module = matched[0]
+    current = instructions.memo(ctx.db, ctx.subject.id, module.name)
+    merged = f"{current}\n{text}".strip() if current else text
+    # Не тихая обрезка: памятка — слова человека, и молча укоротить их значит
+    # соврать ему о том, что он теперь просил учитывать.
+    if len(merged) > instructions.MEMO_LIMIT:
+        return ToolResult(
+            summary=f"Памятка области «{module.title}» уже заполнена до предела "
+                    f"({instructions.MEMO_LIMIT} знаков) — дописать некуда. Скажи "
+                    f"человеку, что её надо сократить на экране «Профиль и агент».",
+            ok=False,
+        )
+
+    instructions.set_memo(ctx.db, ctx.subject.id, module.name, merged)
+    return ToolResult(
+        summary=f"Дописал в памятку области «{module.title}»: {text}",
+        data={"module": module.name},
+    )
+
+
+@tool(
+    name="set_board_instruction",
+    module=MODULE,
+    title="Поправить инструкцию доски",
+    description="""
+    Переписать инструкцию доски — то, как тебе читать и вести её содержимое:
+    «в кормлениях всегда указывай время и объём в миллилитрах». board — название
+    доски из системного промпта. Текст заменяет прежнюю инструкцию целиком, а не
+    дописывается к ней: прежнюю ты видишь в перечне досок. Инструкцию доски правит
+    только её владелец — она меняет твоё поведение для всех, кому доска доступна.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "board": {"type": "string", "description": "Название доски"},
+            "instruction": {"type": "string",
+                            "description": "Инструкция целиком: как читать и вести доску"},
+        },
+        "required": ["board", "instruction"],
+    },
+    # Один ряд с заведением доски: остаётся жить и действует на всех допущенных.
+    auto_from=3,
+)
+def set_board_instruction(ctx: ToolContext, board: str, instruction: str) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+
+    updated = knowledge.update_board(ctx.db, ctx.actor.id, grant.board.id,
+                                     name=grant.board.name, instruction=instruction,
+                                     section_id=grant.board.section_id)
+    if updated is None:
+        return ToolResult(
+            summary=f"Инструкцию доски «{grant.board.name}» правит только её владелец — "
+                    f"этот человек им не является. Скажи ему об этом.",
+            ok=False,
+        )
+    return ToolResult(
+        summary=f"Инструкция доски «{grant.board.name}» теперь такая: "
+                f"{updated.instruction or 'пусто'}",
+        data={"board_id": updated.id},
+        card={"type": "board", "board": updated.name,
+              "text": updated.instruction or "без инструкции",
+              "url": knowledge.board_url(grant)},
+    )

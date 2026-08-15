@@ -15,7 +15,13 @@ from typing import Any, Dict, List, Optional
 OFFLINE_NOTE = "Это офлайн-режим без модели: понимаю только простые фразы."
 
 #: Ключевые слова → инструмент. Порядок важен: первое совпадение выигрывает.
-RULES = [
+#: Таблица называется по тому, чем она является, — «правило» теперь занято
+#: уговором человека с ассистентом, и путать их в одном файле незачем.
+KEYWORDS = [
+    # Уговор — раньше запоминания: «с этого момента запомни, что…» — это правило,
+    # а не факт о человеке.
+    ("set_rule", ("с этого момента", "с этих пор", "заведи правило", "договоримся",
+                  "впредь", "всегда записывай")),
     ("remember", ("запомни", "запомнить", "не забудь", "напомни")),
     # Придумать еду — раньше, чем её записать: «придумай что-нибудь на ужин» иначе
     # уедет в log_meal по слову «на ужин». Рецепт — ещё раньше: «рецепт борща» уже
@@ -65,13 +71,18 @@ def _last_user_text(messages: List[dict]) -> str:
 
 def _pick_tool(text: str, available: set) -> Optional[str]:
     lowered = text.lower()
-    for name, keywords in RULES:
+    for name, keywords in KEYWORDS:
         if name in available and any(word in lowered for word in keywords):
             return name
     return None
 
 
 def _arguments_for(name: str, text: str) -> Dict[str, Any]:
+    if name == "set_rule":
+        cleaned = re.sub(r"^\s*(с этого момента|с этих пор|заведи правило|договоримся|впредь)[,:]?\s*",
+                         "", text, flags=re.I)
+        return {"text": cleaned.strip() or text.strip()}
+
     if name == "remember":
         cleaned = re.sub(r"^\s*(запомни|запомнить|не забудь|напомни)[,:]?\s*", "", text, flags=re.I)
         return {"text": cleaned.strip() or text.strip()}
@@ -193,6 +204,6 @@ def json_completion(system: str, user_content) -> dict:
 
     if "обычную жизнь дома" in system:
         return {"verdict": "check", "reason": "Офлайн-режим: разобрать кадр некому",
-                "message": "Кто-то у камеры в необычное время. Это оценка правил, а не факт."}
+                "message": "Кто-то у камеры в необычное время. Это оценка сита, а не факт."}
 
     return {"note": OFFLINE_NOTE}

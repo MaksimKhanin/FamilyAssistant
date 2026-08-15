@@ -361,11 +361,21 @@ class Agent:
         # Характер и памятки — того, за кого работает ассистент: весь системный
         # промпт написан про него, от имени до нормы самостоятельности. Памятки
         # едут только по включённым модулям — по тем же, что дали инструменты.
+        #
+        # Правила — исключение: они записи на доске, а доски смотрят глазами
+        # того, кто разговаривает, а не «от лица» (ADR-0005). Едут параметром,
+        # а не припиской в хвост, как перечень досок: место у них в промпте
+        # определённое — рядом с характером и выше того, что не отменяется ничем.
+        rules = ()
+        if "memory" in modules:
+            from app.modules.memory.knowledge import rules_for_prompt
+            rules = rules_for_prompt(db, actor.id)
         system = system_prompt(
             subject, modules,
             character=instructions.character(subject),
             memos=instructions.for_prompt(db, subject.id, modules),
             autonomy=policy.dials(db, subject.family_id)[0],
+            rules=rules,
         )
         if "memory" in modules:
             # Названия и инструкции досок — в промпт; содержимое остаётся за

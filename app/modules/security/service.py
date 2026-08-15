@@ -7,10 +7,10 @@ is genuinely worth a look, and everything else quietly lands in a log.
 The filter is a cascade, cheapest first:
 
     YOLO дома     →  человек/машина в кадре вообще есть?   (иначе кадр не доедет сюда)
-    правила       →  время, зона, класс объекта             (детерминированно, мгновенно)
+    сито          →  время, зона, класс объекта             (детерминированно, мгновенно)
     модель        →  только для спорных случаев             (classify_event, по желанию)
 
-`decide` is the rules step and is pure — no database, no clock, no I/O — so the
+`decide` is the sieve step and is pure — no database, no clock, no I/O — so the
 household's «что считать тревогой» is one readable function that can be tested.
 """
 from dataclasses import dataclass
