@@ -3,7 +3,9 @@ import pytest
 
 from app.agent import policy
 from app.agent.llm import LLMResponse, LLMUnavailable, ToolCall
-from app.agent.runtime import Agent, OFFLINE_REPLY, approve_action, reject_action
+from app.agent.runtime import (
+    Agent, OFFLINE_REPLY, UNBACKED_REPLY, approve_action, reject_action,
+)
 from app.core.models import ActionLog, ChatMessage, PendingAction
 from app.modules.memory.models import BoardEntry
 from tests.conftest import FakeLLM
@@ -218,15 +220,20 @@ def test_a_made_up_report_becomes_a_real_call(db, member):
 
 
 def test_a_made_up_report_never_reaches_the_human(db, member):
-    """Даже если модель настаивает: перечень вызовов — не её слова."""
+    """Даже если модель настаивает: перечень вызовов — не её слова.
+
+    Срезать один перечень мало: слова над ним («переименовала и запомнила»)
+    — такой же отчёт о несделанном, и человеку уходит правда вместо них.
+    """
     policy.set_autonomy(db, member.family_id, 3)
     llm = FakeLLM([LLMResponse(content=FABRICATED), LLMResponse(content=FABRICATED)])
     reply = Agent(llm).respond(db, member, "запомни этот рецепт")
 
-    assert reply.text == "Готово, переименовала и запомнила рецепт."
+    assert reply.text == UNBACKED_REPLY
     assert "confirm_meal(" not in reply.text
     saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
     assert "remember(" not in saved.content
+    assert "запомнила" not in saved.content
 
 
 def test_a_made_up_report_stored_earlier_does_not_come_back_as_truth(db, member):
@@ -255,3 +262,98 @@ def test_a_refusal_is_remembered_too(db, member):
     trail = [m["content"] for m in llm.calls[0]["messages"][1:] if m["role"] == "system"][0]
     assert "lookup_product(" in trail
     assert "failed" in trail
+
+
+# --- отчёт о работе, которой не было --------------------------------------
+
+CLAIMED = "Готово, мой хороший. Я записала эти две идеи на доску «Планы на развитие»."
+
+
+def test_a_claim_without_a_call_becomes_a_real_call(db, member):
+    """Прогон #81: «занесла на доску», ноль вызовов, на доске пусто.
+
+    Перечня вызовов в таком ответе нет — есть одно «готово», и снаружи оно
+    неотличимо от работы. Просим сделать по-настоящему.
+    """
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([
+        LLMResponse(content=CLAIMED),
+        _call("remember", text="Максиму нравится идея графиков веса"),
+        LLMResponse(content="Записала на доску."),
+    ])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == "Записала на доску."
+    assert [t.status for t in reply.traces] == ["done"]
+    assert db.query(BoardEntry).count() == 1
+    assert any(m["role"] == "system" and m["content"].startswith("СТОП")
+               for m in llm.calls[1]["messages"])
+
+
+def test_a_claim_the_model_insists_on_never_reaches_the_human(db, member):
+    """Человеку уходит правда, а не слова о несделанном."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([LLMResponse(content=CLAIMED), LLMResponse(content=CLAIMED)])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == UNBACKED_REPLY
+    assert "записала" not in reply.text.lower()
+    assert db.query(BoardEntry).count() == 0
+    saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
+    assert saved.content == UNBACKED_REPLY
+
+
+def test_a_real_call_leaves_the_report_alone(db, member):
+    """«Записал» после настоящего вызова — правда, и трогать её нечего."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([_call("remember", text="Соня не ест грибы"),
+                   LLMResponse(content="Готово, записала.")])
+    reply = Agent(llm).respond(db, member, "запомни про Соню")
+
+    assert reply.text == "Готово, записала."
+
+
+def test_a_prepared_action_may_be_told_about(db, member):
+    """«Подготовил и жду „да“» — не отчёт о сделанном, а честные слова."""
+    policy.set_autonomy(db, member.family_id, 0)
+    llm = FakeLLM([_call("remember", text="купить хлеб"),
+                   LLMResponse(content="Подготовил действие, скажи «да».")])
+    reply = Agent(llm).respond(db, member, "запомни купить хлеб")
+
+    assert reply.text == "Подготовил действие, скажи «да»."
+
+
+def test_words_without_work_are_left_alone(db, member):
+    """Разговор без действий не трогаем: обмана в нём нет."""
+    llm = FakeLLM([LLMResponse(content="Могу записать это на доску — сказать когда?")])
+    reply = Agent(llm).respond(db, member, "а что ты умеешь?")
+
+    assert reply.text == "Могу записать это на доску — сказать когда?"
+
+
+def test_a_claim_stored_earlier_does_not_come_back_as_truth(db, member):
+    """Прогон #82: своё вчерашнее «готово» модель читает как сделанное."""
+    from app.agent.runtime import NOTHING_HAPPENED, save_message
+
+    save_message(db, member, "assistant", CLAIMED)
+    llm = FakeLLM([LLMResponse(content="Хорошо.")])
+    Agent(llm).respond(db, member, "и что дальше?")
+
+    messages = llm.calls[0]["messages"]
+    assert [m["content"] for m in messages if m["role"] == "assistant"] == [CLAIMED]
+    assert any(m["role"] == "system" and m["content"] == NOTHING_HAPPENED
+               for m in messages[1:])
+
+
+def test_a_reply_backed_by_a_call_is_not_marked_in_history(db, member):
+    """Пометка — про пустой след, а не про слово «записал» само по себе."""
+    policy.set_autonomy(db, member.family_id, 3)
+    Agent(FakeLLM([_call("remember", text="Соня не ест грибы"),
+                   LLMResponse(content="Готово, записала.")])).respond(db, member, "запомни")
+
+    llm = FakeLLM([LLMResponse(content="Хорошо.")])
+    Agent(llm).respond(db, member, "ну ладно")
+
+    from app.agent.runtime import NOTHING_HAPPENED
+    assert not any(m["content"] == NOTHING_HAPPENED
+                   for m in llm.calls[0]["messages"] if m["role"] == "system")
