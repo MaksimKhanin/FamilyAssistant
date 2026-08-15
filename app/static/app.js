@@ -352,8 +352,12 @@
     closeDrawer();
 
     // Панель чата переход пережила (hx-preserve), подложка под ней — нет.
-    // Приводим подложку к тому, что с панелью.
-    setChatOpen(document.getElementById('chat-panel').classList.contains('open'));
+    // Приводим подложку к тому, что с панелью. У администратора панели нет
+    // вовсе (ADR-0008), и без проверки здесь падало всё, что ниже: на его
+    // экранах не срабатывали ни «Установить приложение», ни исчезающий тост,
+    // ни сворачивание полосы разделов — каждый переход кончался исключением.
+    const chatPanel = document.getElementById('chat-panel');
+    setChatOpen(Boolean(chatPanel && chatPanel.classList.contains('open')));
 
     const toast = document.getElementById('toast');
     if (toast) setTimeout(() => toast.remove(), 2200);
@@ -556,6 +560,9 @@
 
   // Пункты меню и «Отмена» правки — делегированием: элементы новые на каждом экране.
   document.addEventListener('click', e => {
+    const copyButton = e.target.closest('[data-copy]');
+    if (copyButton) { copyFrom(copyButton); return; }
+
     const editButton = e.target.closest('[data-entry-edit-btn]');
     if (editButton) {
       openEntryEdit(editButton.closest('[data-entry]'));
@@ -617,21 +624,37 @@
 
   /* ===================== мелочи отдельных экранов ======================= */
 
-  /** Приглашение на экране онбординга: ссылка приходит аргументом. */
-  function copyInvite(url, button) {
-    const done = () => { button.textContent = 'Ссылка скопирована';
-                         setTimeout(() => button.textContent = 'Скопировать приглашение', 2000); };
-    // clipboard API есть только на HTTPS — на локальном HTTP показываем ссылку как есть
-    if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => prompt('Ссылка:', url));
-    else prompt('Ссылка для приглашения:', url);
-  }
-
-  /** Приглашение на экране семьи: ссылка лежит в поле рядом с кнопкой. */
-  function copyInviteField() {
-    const field = document.getElementById('invite-link');
+  /** Кнопка «Скопировать» рядом с полем: [data-copy="#id-поля"].
+   *
+   * Молча копировать нельзя: без ответа кнопка выглядит нерабочей, и человек
+   * жмёт её снова. А буфер обмена доступен не всегда — clipboard API есть
+   * только на HTTPS и localhost, а execCommand доживает свой век. Поэтому в
+   * худшем случае поле остаётся выделенным, и кнопка честно говорит, что
+   * дальше — руками.
+   */
+  function copyFrom(button) {
+    const field = document.querySelector(button.dataset.copy);
+    if (!field) return;
+    field.focus();
     field.select();
-    if (navigator.clipboard) navigator.clipboard.writeText(field.value);
-    else document.execCommand('copy');   // http без TLS: clipboard API недоступен
+    field.setSelectionRange(0, field.value.length);   // iOS не выделяет по select()
+
+    const say = text => {
+      if (button.dataset.said) return;
+      button.dataset.said = '1';
+      const was = button.textContent;
+      button.textContent = text;
+      setTimeout(() => { button.textContent = was; delete button.dataset.said; }, 2200);
+    };
+    const byHand = () => say('Выделил — скопируйте');
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(field.value).then(() => say('Скопировано'), byHand);
+      return;
+    }
+    let done = false;
+    try { done = document.execCommand('copy'); } catch (_) { done = false; }
+    done ? say('Скопировано') : byHand();
   }
 
   /** Правка КБЖУ руками: кнопки «−» и «+» рядом с числом. */
@@ -658,7 +681,7 @@
 
   window.panel = {
     openChat, closeChat, openDrawer, closeDrawer, suggest,
-    copyInvite, copyInviteField, step, showMode, recalc,
+    step, showMode, recalc,
   };
 
   // Первая загрузка и каждый последующий переход проходят через это.

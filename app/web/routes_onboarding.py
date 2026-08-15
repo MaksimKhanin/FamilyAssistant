@@ -43,7 +43,8 @@ def onboarding(
         steps=STEPS,
         module_list=module_list,
         matrix=access_matrix(db, current.family_id, [m.name for m in module_list]),
-        member_rows=[{"user": m, "avatar": avatar(m), "invite_url": invite_url(m)} for m in members],
+        member_rows=[{"user": m, "avatar": avatar(m), "invite_url": invite_url(m, request)}
+                     for m in members],
         can_toggle=True,
     )
     return render(request, "onboarding.html", context)

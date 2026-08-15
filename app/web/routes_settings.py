@@ -226,6 +226,10 @@ def accounts_screen(
     members_info = accounts.overview(db, current)
     for row in members_info:
         row["avatar"] = avatar(row["user"])
+        # Ссылка живёт в карточке человека, пока он ею не воспользовался. Раньше
+        # она показывалась ровно один раз — после выпуска — и, стоило уйти с
+        # экрана, найти её было негде: оставалось выпускать новую.
+        row["invite_link"] = invite_url(row["user"], request)
 
     context.update(
         module_list=module_list,
@@ -233,11 +237,11 @@ def accounts_screen(
         members_info=members_info,
         notice=notice,
         error=error,
-        # Ссылка показывается один раз, сразу после выпуска: копировать её больше неоткуда.
-        invite_link=(invite_url(invited_user)
-                     if invited_user is not None and invited_user.family_id == viewed.family_id
-                     else None),
-        invited_user=invited_user,
+        # Кого только что пригласили — у того карточка подсвечена: список длинный,
+        # и после «Добавить участника» надо видеть, куда смотреть.
+        invited_id=(invited_user.id
+                    if invited_user is not None and invited_user.family_id == viewed.family_id
+                    else None),
     )
     return render(request, "settings/accounts.html", context)
 
@@ -267,14 +271,16 @@ def toggle_module(
 def add_member(
     display_name: str = Form(...),
     relation: str = Form(""),
+    username: str = Form(""),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
     try:
-        member = accounts.create_member(db, current, display_name, relation)
+        member = accounts.create_member(db, current, display_name, relation, username)
     except accounts.AccountError as e:
         return _back(error=str(e))
-    return _back(notice=f"Добавил: {member.display_name}. Передайте ссылку — по ней задаётся пароль.",
+    return _back(notice=f"Добавил: {member.display_name}, логин «{member.username}». "
+                        f"Ссылка на пароль — в его карточке.",
                  invited=member.id)
 
 
@@ -283,14 +289,15 @@ def rename_member(
     user_id: int,
     display_name: str = Form(...),
     relation: str = Form(""),
+    username: str = Form(None),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
     try:
-        accounts.rename(db, current, user_id, display_name, relation)
+        member = accounts.rename(db, current, user_id, display_name, relation, username)
     except accounts.AccountError as e:
         return _back(error=str(e))
-    return _back(notice="Сохранил.")
+    return _back(notice=f"Сохранил: {member.display_name}, логин «{member.username}».")
 
 
 @router.post("/accounts/member/{user_id}/role")
