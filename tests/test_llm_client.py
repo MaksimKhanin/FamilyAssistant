@@ -158,13 +158,26 @@ def test_the_chat_stays_silent_while_estimates_think(calls):
     assert calls[1]["reasoning_effort"] == "high"
 
 
-def test_planning_thinks_where_the_chat_does_not(calls):
-    """Подбор рациона — единственная задача, которой размышление включено по умолчанию.
+def test_nothing_thinks_by_default(calls):
+    """Ни одна задача не думает, пока хозяин дома не попросил (ADR-0009).
 
-    Это и есть «динамика»: выбирает её не отдельный классификатор, а сама модель —
-    тем, что взяла инструмент идей питания, а не запись блюда (ADR-0007).
+    Подбор питания был последним местом, где размышление стояло по умолчанию.
+    Оно обещало собранный рацион, а давало минуту ожидания и ответ не лучше
+    обычного — чаще всего вовсе пустой, потому что мысли съедали бюджет JSON.
     """
     client = LLMClient(settings())
+
+    client.chat([{"role": "user", "content": "запиши омлет"}], task=ROUTINE)
+    calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))
+    client.json_completion("система", "что бы поесть", task=PLANNING)
+
+    assert calls[0]["reasoning_effort"] == "none"
+    assert calls[1]["reasoning_effort"] == "none"
+
+
+def test_planning_can_be_raised_on_its_own(calls):
+    """Ручка осталась: у кого модель думает дёшево, включает подбор отдельно."""
+    client = LLMClient(settings(reasoning_plan="medium"))
 
     client.chat([{"role": "user", "content": "запиши омлет"}], task=ROUTINE)
     calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))
@@ -221,7 +234,8 @@ def test_a_thought_that_ate_the_answer_is_asked_again_without_thinking(calls):
         (200, {"choices": [{"message": {"content": '{"days": []}'}, "finish_reason": "stop"}]}),
     ])
 
-    result = LLMClient(settings()).json_completion("система", "идеи", task=PLANNING)
+    result = LLMClient(settings(reasoning_plan="medium")).json_completion("система", "идеи",
+                                                                         task=PLANNING)
 
     assert calls[0]["reasoning_effort"] == "medium"
     assert calls[1]["reasoning_effort"] == "none"      # переспросили молча
@@ -240,7 +254,7 @@ def test_a_silent_call_is_not_asked_twice(calls):
 
 def test_thinking_is_given_more_time_than_the_chat(calls):
     """Мысли идут тем же потоком, что и ответ: общий таймаут обрывает их на финише."""
-    client = LLMClient(settings(request_timeout=60))
+    client = LLMClient(settings(request_timeout=60, reasoning_plan="medium"))
 
     client.chat([{"role": "user", "content": "привет"}], task=ROUTINE)
     calls.responses.append((200, {"choices": [{"message": {"content": "{}"}}]}))

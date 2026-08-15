@@ -6,7 +6,7 @@ entry. That two-step shape is a product requirement — the number came from a m
 looking at a plate, and the person must be able to fix it in one gesture.
 """
 from app.agent.llm import PLANNING, LLMUnavailable, client as llm_client
-from app.agent.prompts import MEAL_PLAN_SYSTEM
+from app.agent.prompts import MEAL_IDEA_SYSTEM, MEAL_PLAN_SYSTEM, MEAL_RECIPE_SYSTEM
 from app.agent.registry import ALWAYS_ASK, ToolContext, ToolResult, tool
 from app.core import instructions
 from app.core.events import ACTIVITY_LOGGED, MEAL_CONFIRMED, MEAL_LOGGED, bus
@@ -15,7 +15,7 @@ from app.core.websearch import SearchUnavailable
 from app.modules.memory import knowledge
 from app.modules.nutrition import lookup, service
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SOURCE_PHOTO, SOURCE_TEXT,
+    ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SLOTS, SOURCE_PHOTO, SOURCE_TEXT,
 )
 from app.modules.nutrition.vision import (
     MealEstimate, estimate_from_image, safe_estimate_from_text,
@@ -538,39 +538,233 @@ def get_nutrition_stats(ctx: ToolContext, period: str = "day") -> ToolResult:
     )
 
 
+def _diet_context(ctx: ToolContext, with_today: bool = False) -> str:
+    """Всё, что человек написал о себе, — одним куском для подбора блюд.
+
+    Слагаемых четыре, и они не заменяют друг друга: цель и норма из профиля,
+    памятка про еду (болячки и цели), пожелания к рациону с экрана «План питания»
+    (вкусы и продукты) и записи с досок собеседника. Складываются они здесь, а не
+    в промпте: системный промпт одинаков для всех, а это — про одного человека
+    (ADR-0010).
+
+    Профиль и памятка — того, кому подбирают (`subject`), знания — того, кто
+    разговаривает (`actor`): доски видны ровно те же, что видит он сам (ADR-0005).
+    """
+    profile = service.get_profile(ctx.db, ctx.subject.id)
+    lines = [
+        f"Человек: {ctx.subject.display_name}. Цель: {profile.goal_label}. "
+        f"Суточная норма: {profile.daily_kcal} ккал."
+    ]
+
+    if with_today:
+        # Спросили «что поесть» днём — норма целиком тут врёт: у человека уже
+        # что-то съедено, и предлагать ему ужин на 2000 ккал не с чего.
+        today = service.period_stats(ctx.db, ctx.subject.id, "day").today
+        left = profile.daily_kcal - today.balance
+        lines.append(f"Сегодня уже получено {today.consumed} ккал, потрачено {today.burned}; "
+                     f"до нормы остаётся примерно {left} ккал.")
+
+    memo = instructions.memo(ctx.db, ctx.subject.id, MODULE)
+    if memo:
+        lines.append(f"Что человек просил учитывать: {memo}")
+    if profile.preferences:
+        lines.append(f"Пожелания к рациону, его словами: {profile.preferences}")
+
+    history = service.recent_meal_titles(ctx.db, ctx.subject.id)
+    lines.append(f"Что ел за последние дни: {', '.join(history) if history else 'записей пока нет'}.")
+
+    saved = service.saved_titles(ctx.db, ctx.subject.id)
+    if saved:
+        lines.append(f"Блюда, которые человек отметил в плане питания: {', '.join(saved)}.")
+
+    notes = _known(ctx, limit=10)
+    if notes:
+        lines.append(f"Что известно с досок {ctx.actor.display_name}: " + "; ".join(notes))
+    return "\n".join(lines)
+
+
+@tool(
+    name="suggest_dish",
+    module=MODULE,
+    title="Предложить блюдо",
+    description="""
+    Предложить одно блюдо: «что бы мне поесть?», «придумай ужин», «у меня много
+    огурцов — что из них сделать?».
+    wish — просьба человека его словами, целиком.
+    products — продукты, которые у него есть или которые он назвал, через запятую.
+    slot — приём пищи, только если человек его назвал.
+    Инструмент учитывает цель, остаток дневной нормы, памятку про еду, пожелания
+    к рациону и то, что человек уже отметил в плане питания.
+    Отвечает одним блюдом с цифрами — назови их. Рацион на несколько дней здесь
+    не собирают: он живёт на экране «План питания».
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "wish": {"type": "string",
+                     "description": "Просьба человека целиком, его словами"},
+            "products": {"type": "string",
+                         "description": "Продукты, которые у него есть, через запятую"},
+            "slot": {"type": "string", "enum": list(SLOTS),
+                     "description": "Приём пищи, если человек его назвал"},
+        },
+    },
+    read_only=True,
+)
+def suggest_dish(ctx: ToolContext, wish: str = None, products: str = None,
+                 slot: str = None) -> ToolResult:
+    prompt = _diet_context(ctx, with_today=True)
+    if wish:
+        prompt += f"\nЧеловек просит: {wish.strip()}"
+    if products:
+        prompt += (f"\nПродукты, которые у него есть и которые стоит пустить в дело: "
+                   f"{products.strip()}")
+    if slot:
+        prompt += f"\nЭто на {slot.strip()}."
+
+    try:
+        raw = llm_client.json_completion(MEAL_IDEA_SYSTEM, prompt, max_tokens=500, task=PLANNING)
+    except LLMUnavailable:
+        return ToolResult(summary="Сейчас не могу придумать блюдо — модель не отвечает.", ok=False)
+
+    title = str(raw.get("title") or "").strip()[:128]
+    if not title:
+        return ToolResult(summary="Не получилось придумать блюдо — попробуем ещё раз?", ok=False)
+
+    dish = {
+        "type": "dish",
+        "title": title,
+        "slot": str(raw.get("slot") or slot or "")[:16],
+        "kcal": int(raw.get("kcal") or 0),
+        "protein": int(raw.get("protein") or 0),
+        "fat": int(raw.get("fat") or 0),
+        "carbs": int(raw.get("carbs") or 0),
+        "portion": str(raw.get("portion") or "")[:128],
+        "why": str(raw.get("why") or "")[:255],
+    }
+    question = str(raw.get("question") or "").strip()
+
+    details = [f"Предлагаю: {title} — примерно {dish['kcal']} ккал "
+               f"(Б {dish['protein']} / Ж {dish['fat']} / У {dish['carbs']})."]
+    if dish["portion"]:
+        details.append(f"Порция: {dish['portion']}.")
+    if dish["why"]:
+        details.append(dish["why"].rstrip(".") + ".")
+    # Что делать дальше, знает не человек, а инструмент: рецепт и отметка в план —
+    # два следующих шага, и оба стоит назвать вслух ровно один раз.
+    details.append("Человек может попросить рецепт или отметить блюдо кнопкой на "
+                   "карточке — тогда оно останется в плане питания.")
+    if question:
+        details.append(f"Спроси у человека: {question}")
+
+    return ToolResult(summary=" ".join(details), data={"title": title, "kcal": dish["kcal"],
+                                                       "question": question}, card=dish)
+
+
+@tool(
+    name="dish_recipe",
+    module=MODULE,
+    title="Расписать рецепт",
+    description="""
+    Расписать рецепт блюда: продукты с количеством, шаги и калорийность порции.
+    Нужен, когда человек спрашивает «как это готовить», «распиши рецепт»,
+    «а поподробнее».
+    name — название блюда, о котором идёт речь; если оно только что прозвучало в
+    разговоре, возьми его оттуда.
+    wish — пожелание к рецепту, если оно было: «без духовки», «на двоих»,
+    «без сливок».
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Название блюда"},
+            "wish": {"type": "string",
+                     "description": "Пожелание к рецепту, если человек его назвал"},
+        },
+        "required": ["name"],
+    },
+    read_only=True,
+)
+def dish_recipe(ctx: ToolContext, name: str, wish: str = None) -> ToolResult:
+    prompt = f"Блюдо: {name.strip()}.\n{_diet_context(ctx)}"
+    if wish:
+        prompt += f"\nПожелание к рецепту: {wish.strip()}"
+
+    try:
+        raw = llm_client.json_completion(MEAL_RECIPE_SYSTEM, prompt, max_tokens=800, task=PLANNING)
+    except LLMUnavailable:
+        return ToolResult(summary="Сейчас не могу расписать рецепт — модель не отвечает.", ok=False)
+
+    recipe = _recipe_card(raw, fallback_title=name)
+    if recipe is None:
+        return ToolResult(summary=f"Не получилось расписать рецепт «{name}» — попробуем ещё раз?",
+                          ok=False)
+
+    return ToolResult(summary=recipe_text(recipe), data={"title": recipe["title"],
+                                                         "recipe": recipe_text(recipe)},
+                      card=recipe)
+
+
+def _recipe_card(raw: dict, fallback_title: str) -> dict:
+    """Ответ модели о рецепте — в карточку. Рецепт без шагов рецептом не считается."""
+    steps = [str(step).strip()[:255] for step in (raw.get("steps") or [])[:12] if str(step).strip()]
+    if not steps:
+        return None
+    return {
+        "type": "recipe",
+        "title": str(raw.get("title") or fallback_title).strip()[:128],
+        "portions": max(1, int(raw.get("portions") or 1)),
+        "kcal": int(raw.get("kcal") or 0),
+        "protein": int(raw.get("protein") or 0),
+        "fat": int(raw.get("fat") or 0),
+        "carbs": int(raw.get("carbs") or 0),
+        "ingredients": [str(item).strip()[:128]
+                        for item in (raw.get("ingredients") or [])[:20] if str(item).strip()],
+        "steps": steps,
+        "note": str(raw.get("note") or "").strip()[:255],
+    }
+
+
+def recipe_text(recipe: dict) -> str:
+    """Рецепт словами — одинаково в чате, в логе действий и на экране плана.
+
+    Одно представление на три места намеренно: рецепт, сохранённый у блюда,
+    человек потом читает на экране, а модель — в истории разговора, и расходиться
+    им незачем.
+    """
+    lines = [f"{recipe['title']} — {recipe['portions']} порц., "
+             f"примерно {recipe['kcal']} ккал на порцию "
+             f"(Б {recipe['protein']} / Ж {recipe['fat']} / У {recipe['carbs']})."]
+    if recipe["ingredients"]:
+        lines.append("Продукты: " + "; ".join(recipe["ingredients"]) + ".")
+    lines.append("Как готовить:")
+    lines.extend(f"{number}. {step}" for number, step in enumerate(recipe["steps"], 1))
+    if recipe["note"]:
+        lines.append(recipe["note"])
+    return "\n".join(lines)
+
+
 @tool(
     name="suggest_meal_plan",
     module=MODULE,
-    title="Предложить идеи питания",
+    title="Собрать рацион на несколько дней",
     description="""
-    Предложить идеи питания на ближайшие дни с опорой на историю, цель и то, что
-    записано в памяти (предпочтения, аллергии). Это идеи, а не предписание — так и подавай.
+    Собрать рацион на несколько дней для экрана «План питания».
+    В разговоре не используется: там на вопрос «что поесть» отвечают одним блюдом
+    (suggest_dish), а рацион человек перебирает на экране, где его можно отметить
+    и оставить.
     """,
     parameters={"type": "object", "properties": {}},
+    # Экранный инструмент: его дёргает кнопка «Предложить идеи», а не модель.
+    # Из чата он не виден вовсе — рацион на неделю в ленте разговора не читают
+    # (ADR-0010).
+    internal=True,
     auto_from=1,
 )
 def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
-    profile = service.get_profile(ctx.db, ctx.subject.id)
-    history = service.recent_meal_titles(ctx.db, ctx.subject.id)
-    notes = _known(ctx, limit=10)
-    memo = instructions.memo(ctx.db, ctx.subject.id, MODULE)
-
-    prompt = (
-        f"Человек: {ctx.subject.display_name}. Цель: {profile.goal_label}. "
-        f"Суточная норма: {profile.daily_kcal} ккал.\n"
-        f"Что ел за последние дни: {', '.join(history) if history else 'записей пока нет'}.\n"
-        f"Что известно с досок {ctx.actor.display_name}: "
-        f"{'; '.join(notes) if notes else 'ничего особенного'}."
-    )
-    # Идеи — то место, где памятка весит больше всего: гастрит и «без острого»
-    # меняют не цифру в плане, а сам список блюд.
-    if memo:
-        prompt += f"\nЧто человек просил учитывать: {memo}"
+    prompt = _diet_context(ctx)
 
     try:
-        # Единственная задача ассистента, где модели есть что обдумывать: уложиться
-        # в норму, свести цель, обойти то, что человеку нельзя, и не повторить
-        # вчерашнее — всё сразу. Отсюда и `PLANNING` вместо общей ручки чата.
         raw = llm_client.json_completion(MEAL_PLAN_SYSTEM, prompt, max_tokens=900, task=PLANNING)
     except LLMUnavailable:
         return ToolResult(summary="Сейчас не могу собрать идеи — модель не отвечает.", ok=False)
@@ -591,6 +785,10 @@ def suggest_meal_plan(ctx: ToolContext) -> ToolResult:
 
     if not days:
         return ToolResult(summary="Не получилось собрать идеи — попробуем ещё раз?", ok=False)
+
+    # Подбор переживает уход с экрана: раньше он жил ровно до следующего перехода,
+    # и отметить в нём было нечего — отмечать можно только то, что сохранено.
+    service.replace_plan(ctx.db, ctx.subject.id, days)
 
     comment = str(raw.get("comment") or "").strip()
     lines = [f"{d['title']}: " + ", ".join(m["name"] for m in d["meals"]) + f" (≈{d['kcal']} ккал)" for d in days]
