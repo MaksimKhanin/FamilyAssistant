@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
 {% import "partials/screen_head.html" as sh %}
 {# Профиль открывают из шапки разговора — и возвращаются туда же. #}
 {% block shell_class %}screen-focus{% endblock %}
@@ -212,6 +213,20 @@
         <button class="btn" type="submit">Сохранить пароль</button>
       </form>
     {% endif %}
+
+    {# Второе место для выхода после меню — и искать его будут именно здесь:
+       «зайти под другой учётной записью» это про себя, а не про навигацию.
+       Условия нет: выходит тот, кто вошёл, даже если смотрит от чужого лица. #}
+    <div class="card tight stack">
+      <div class="card-title">Учётная запись</div>
+      <p class="muted">
+        Вы вошли как {{ current_user.display_name }} · @{{ current_user.username }}.
+        После выхода панель спросит логин и пароль заново.
+      </p>
+      <form method="post" action="/logout" hx-boost="false">
+        <button class="btn ghost" type="submit">{{ ic.icon("logout", 15) }} Выйти</button>
+      </form>
+    </div>
 
     {% if not is_admin %}
     {# Модули здесь только видно: включает их администратор — выключенный модуль

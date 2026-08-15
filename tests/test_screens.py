@@ -249,6 +249,47 @@ def test_the_knowledge_head_keeps_the_profile_button(as_member):
     assert row.index('href="/settings/profile"') < row.index('class="section-strip"')
 
 
+# --- меню достижимо с любого экрана ---------------------------------------------
+
+#: Экраны, у которых на телефоне своя шапка вместо шапки каркаса: та скрыта
+#: (.screen-chat .header, .screen-focus .header), и кнопку меню каждый такой
+#: экран обязан показать сам — иначе с него не попасть никуда, кроме «назад».
+OWN_HEAD_SCREENS = ["/chat", "/memory", "/settings/profile"]
+
+
+@pytest.mark.parametrize("path", OWN_HEAD_SCREENS)
+def test_a_screen_with_its_own_head_still_opens_the_drawer(as_member, path):
+    assert "panel.openDrawer()" in as_member.get(path).text, path
+
+
+@pytest.mark.parametrize("path", MEMBER_SCREENS)
+def test_every_member_screen_can_reach_the_menu(as_member, path):
+    """На телефоне выдвижное меню — единственный путь к разделам, которых нет
+    в нижней панели. Кнопка, которая его открывает, должна быть на каждом
+    экране: либо в шапке каркаса, либо в собственной шапке экрана."""
+    if path == "/chat/panel":         # партиал панели, а не экран
+        return
+    assert "panel.openDrawer()" in as_member.get(path, follow_redirects=True).text, path
+
+
+# --- выход из учётной записи ------------------------------------------------------
+
+@pytest.mark.parametrize("path", ["/", "/chat", "/settings/profile"])
+def test_the_menu_offers_a_way_out(as_member, path):
+    """Войти под другой учётной записью нельзя, не выйдя из этой."""
+    assert 'action="/logout"' in as_member.get(path).text, path
+
+
+def test_the_admin_can_log_out_too(as_admin):
+    assert 'action="/logout"' in as_admin.get("/settings/accounts").text
+
+
+def test_logging_out_drops_the_session(as_member):
+    assert as_member.post("/logout", follow_redirects=False).status_code == 303
+
+    assert as_member.get("/", follow_redirects=False).headers["location"] == "/login"
+
+
 # --- разделители дня в разговоре ------------------------------------------------
 
 def test_the_history_is_split_by_days():
