@@ -13,6 +13,7 @@ Every invocation lands in `action_log`, which is what the «Что агент д
 card shows. Nothing here is module-specific.
 """
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -42,6 +43,39 @@ TRAIL_SUMMARY_LIMIT = 120  # сколько знаков сводки инстр
 OFFLINE_REPLY = (
     "Сейчас не могу подумать — не отвечает модель. "
     "Записи и уведомления при этом работают: попробуйте ещё раз чуть позже."
+)
+
+#: Чем открывается служебная запись о работе инструментов. Слова важны дважды:
+#: по ним модель понимает, что запись не её, и по ним же мы узнаём собственную
+#: подделку в её ответе (`_looks_fabricated`).
+TRAIL_HEADER = "Что вернули инструменты (служебная запись системы, не твои слова):"
+
+#: Как выглядит выдуманный отчёт о вызовах. Модель, которой каждый ход показывали
+#: перечень её же инструментов внутри её же реплики, рано или поздно дописывает
+#: такой перечень сама — вместо того чтобы позвать инструмент. Снаружи это не
+#: отличить от работы: человеку сказано «переименовала и запомнила», а не сделано
+#: ни того, ни другого.
+#:
+#: Первым вариантом идёт ровно та приписка, которой перечень возили раньше: её
+#: формат сменился, а строки в базе остались, и читать их как правду тоже нельзя.
+#: Служебная запись — в скобках или с начала строки: перечень вызовов посреди
+#: фразы моделью не пишется, а «вот что я сделала:» в живой речи встречается.
+_FABRICATED_TRAIL = re.compile(
+    r"\n*(?:\[\s*(?:что\s+я\s+(?:тогда\s+)?сделал[аио]?\b"
+    r"|что\s+я\s+вызвал[аи]?\b"
+    r"|что\s+вернули\s+инструменты\b)"
+    r"|^[ \t]*что\s+вернули\s+инструменты\b)"
+    r".*\Z",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+
+#: Что сказать модели, поймав её на таком отчёте. Формулировка резкая по той же
+#: причине, что и у «СТОП» в `_handle_call`: мягкую модель дочитывает как совет.
+FABRICATION_NUDGE = (
+    "СТОП: ты перечислил вызовы инструментов, но не вызвал ни одного — значит, "
+    "ничего не сделано, и говорить человеку обратное нельзя. Такие перечни пишет "
+    "система, а не ты. Нужно действие — вызови инструмент прямо сейчас; не нужно — "
+    "ответь одними словами, без перечня."
 )
 
 
@@ -93,10 +127,12 @@ def _trail(payload: dict) -> str:
     ни номера записи, которую сам же завёл, ни того, что поиск уже отвечал
     отказом, — и на «пицца была 20 см» ему остаётся выдумывать цифры.
 
-    Восстанавливается это не настоящими `tool_calls`, а припиской к реплике.
+    Восстанавливается это не настоящими `tool_calls`, а служебной записью.
     Причина в окне: пара «assistant с tool_calls» + «tool с ответом» неразрывна,
     и скользящее окно рано или поздно разрежет её пополам — половина провайдеров
-    на такую историю отвечает ошибкой. Приписке резать нечего.
+    на такую историю отвечает ошибкой. Записи резать нечего.
+
+    Едет она отдельным сообщением, а не припиской к реплике (`load_history`).
     """
     lines = []
     for trace in payload.get("traces") or []:
@@ -115,6 +151,17 @@ def _trail(payload: dict) -> str:
 
 
 def load_history(db: Session, user: User, limit: int = HISTORY_LIMIT) -> List[dict]:
+    """История разговора глазами модели: реплики и служебные записи между ними.
+
+    След инструментов идёт отдельным сообщением, а не припиской к реплике
+    ассистента, и это не оформление. Приписка внутри реплики показывала модели
+    ход за ходом, что реплика ассистента выглядит вот так: слова, а под ними
+    перечень вызовов. Языковая модель продолжает узор, который видит, — и в
+    какой-то момент дописывает перечень сама, не вызвав ничего. Прогон #74:
+    «переименовала блюдо и запомнила рецепт», ноль вызовов, оба действия не
+    сделаны. Своих слов в чужой роли модель не пишет, поэтому узор и переехал
+    из её реплики наружу.
+    """
     rows = (
         db.query(ChatMessage)
         .filter(ChatMessage.user_id == user.id)
@@ -124,17 +171,35 @@ def load_history(db: Session, user: User, limit: int = HISTORY_LIMIT) -> List[di
     )
     history = []
     for row in reversed(rows):
-        if not row.content:
+        # В базе могли осесть реплики с выдуманным (и со старым, настоящим)
+        # перечнем вызовов — в модель они не едут ни в каком виде.
+        content = _own_words(row.content)
+        if content:
+            history.append({"role": row.role, "content": content})
+        if row.role != "assistant":
             continue
-        content = row.content
-        if row.role == "assistant":
-            trail = _trail(message_payload(row))
-            if trail:
-                # Приписка едет только в модель: в базе строка остаётся чистой,
-                # а панель читает её же — человеку это видеть незачем.
-                content = f"{content}\n\n[что я тогда сделал:\n{trail}]"
-        history.append({"role": row.role, "content": content})
+        trail = _trail(message_payload(row))
+        if trail:
+            # Служебная запись живёт только в запросе к модели: в базе строка
+            # остаётся чистой, а панель читает её же — человеку это ни к чему.
+            history.append({"role": "system", "content": f"{TRAIL_HEADER}\n{trail}"})
     return history
+
+
+def _own_words(text: str) -> str:
+    """Реплика без перечня вызовов: и без выдуманного, и без старого настоящего.
+
+    Перечень — служебная запись; в словах ассистента ему места нет ни на экране,
+    ни в истории следующего хода, где он читался бы как правда о сделанном.
+    Режем до конца реплики: перечень по своей природе хвост, а хвост, начавшийся
+    с рассказа о несделанном, дальше правдой не становится.
+    """
+    return _FABRICATED_TRAIL.sub("", text or "").strip()
+
+
+def _looks_fabricated(text: str) -> bool:
+    """Модель отчиталась о вызовах прямо в тексте — значит, не вызвала."""
+    return bool(text) and _own_words(text) != text.strip()
 
 
 def save_message(db: Session, user: User, role: str, content: str,
@@ -222,6 +287,7 @@ class Agent:
         cards: List[Dict[str, Any]] = []
         answer = ""
 
+        nudged = False
         try:
             for _ in range(MAX_STEPS):
                 response = self.llm.chat(
@@ -233,12 +299,23 @@ class Agent:
                     task=ROUTINE,
                 )
                 if not response.tool_calls:
-                    answer = response.content
+                    answer = _own_words(response.content)
+                    # Модель написала отчёт о вызовах вместо вызовов. Молча срезать
+                    # перечень мало: слова над ним («переименовала, запомнила»)
+                    # останутся такой же неправдой. Показываем ей, что вышло, и
+                    # даём сделать по-настоящему — один раз, чтобы не кружить.
+                    if not nudged and _looks_fabricated(response.content):
+                        nudged = True
+                        logger.warning("Модель отчиталась о вызовах, которых не было "
+                                       "— прошу вызвать инструменты по-настоящему")
+                        messages.append({"role": "assistant", "content": response.content})
+                        messages.append({"role": "system", "content": FABRICATION_NUDGE})
+                        continue
                     break
 
                 messages.append({
                     "role": "assistant",
-                    "content": response.content or None,
+                    "content": _own_words(response.content) or None,
                     "tool_calls": [
                         {"id": c.id, "type": "function",
                          "function": {"name": c.name, "arguments": json.dumps(c.arguments, ensure_ascii=False)}}
@@ -335,7 +412,8 @@ def _fallback_answer(traces: List[Trace]) -> str:
     done = [t for t in traces if t.status == "done"]
     if done:
         return done[-1].summary
-    return "Готово."
+    # Ни слов, ни работы: «Готово» здесь было бы отчётом ни о чём.
+    return "Похоже, ответ не сложился. Скажите, пожалуйста, ещё раз?"
 
 
 def _log_action(db: Session, user: User, spec: ToolSpec, arguments: dict,
