@@ -49,33 +49,54 @@
       </button>
     </div>
 
-    {# Разговора у администратора нет: ассистент отвечает участнику, а админская
-       учётка — служебная (ADR-0008). #}
-    {% if not is_admin %}
-      <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
-        {{ ic.icon("chat") }} Разговор
-      </a>
-    {% endif %}
-
-    {% for group in nav_groups %}
-      {% if group.title %}<div class="nav-group-title">{{ group.title }}</div>{% endif %}
-      {% for item in group.entries %}
-        <a class="nav-item {% if active_path == item.url %}active{% endif %}" href="{{ item.url }}">
-          {{ ic.icon(item.icon) }} {{ item.label }}
-          {% if item.badge_key and badges.get(item.badge_key) %}
-            <span class="nav-badge">{{ badges[item.badge_key] }}</span>
-          {% endif %}
+    {# Прокручивается только список разделов: марка сверху и учётная запись снизу
+       остаются на месте. Иначе на телефоне «Выйти» уезжало под нижний край —
+       разделов больше, чем помещается в экран. #}
+    <div class="sidebar-scroll">
+      {# Разговора у администратора нет: ассистент отвечает участнику, а админская
+         учётка — служебная (ADR-0008). #}
+      {% if not is_admin %}
+        <a class="nav-item accent {% if active_path == '/chat' %}active{% endif %}" href="/chat">
+          {{ ic.icon("chat") }} Разговор
         </a>
-      {% endfor %}
-    {% endfor %}
-
-    <div class="assistant-card">
-      {% if is_admin %}
-        <span class="pulse-dot"></span>Настройки для всей семьи
-      {% else %}
-        <span class="pulse-dot"></span>Ассистент на связи
       {% endif %}
+
+      {% for group in nav_groups %}
+        {% if group.title %}<div class="nav-group-title">{{ group.title }}</div>{% endif %}
+        {% for item in group.entries %}
+          <a class="nav-item {% if active_path == item.url %}active{% endif %}" href="{{ item.url }}">
+            {{ ic.icon(item.icon) }} {{ item.label }}
+            {% if item.badge_key and badges.get(item.badge_key) %}
+              <span class="nav-badge">{{ badges[item.badge_key] }}</span>
+            {% endif %}
+          </a>
+        {% endfor %}
+      {% endfor %}
+
+      <div class="assistant-card">
+        {% if is_admin %}
+          <span class="pulse-dot"></span>Настройки для всей семьи
+        {% else %}
+          <span class="pulse-dot"></span>Ассистент на связи
+        {% endif %}
+      </div>
     </div>
+
+    {# Выход стоит в меню, а не на одном экране: войти под другой учётной записью
+       хотят с любого места, и искать для этого «Профиль» незачем. Показан тот,
+       кто вошёл, а не тот, от чьего лица смотрят: выходит человек за экраном.
+
+       hx-boost="false" — как у смены оформления: после выхода документ должен
+       перезагрузиться целиком, вместе с темой и куками, а не подмениться телом. #}
+    <form class="sidebar-foot" method="post" action="/logout" hx-boost="false">
+      <div style="min-width:0">
+        <div class="sidebar-who">{{ current_user.display_name }}</div>
+        <div class="tiny">@{{ current_user.username }}</div>
+      </div>
+      <button class="btn ghost small spacer" type="submit">
+        {{ ic.icon("logout", 15) }} Выйти
+      </button>
+    </form>
   </aside>
 
   <main>

@@ -10,6 +10,11 @@
 {% macro screen_head(title, back="/chat", profile=true) %}
   <div class="screen-head-row">
     <a class="icon-btn" href="{{ back }}" aria-label="В разговор">{{ ic.icon("chevron-left", 19) }}</a>
+    {# Та же кнопка меню, что в шапке каркаса и в шапке разговора: у этих экранов
+       шапка каркаса на телефоне скрыта, и без неё остальные разделы были
+       недостижимы — «назад» уводило в разговор, и только туда. #}
+    <button class="icon-btn" type="button" onclick="panel.openDrawer()"
+            aria-label="Меню">{{ ic.icon("grid", 18) }}</button>
     <div class="screen-title">{{ title }}</div>
     {% if profile %}
       <a class="icon-btn spacer" href="/settings/profile" aria-label="Профиль и агент">
