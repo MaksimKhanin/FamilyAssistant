@@ -9,13 +9,15 @@ gets rendered message bubbles back, including the tool traces and action cards.
 открывают, а оверлей поверх чего-то каждый раз требовал сначала попасть на это
 «что-то». На компьютере сбоку есть место, и панель остаётся.
 """
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.agent.runtime import AgentReply, agent, approve_action, message_payload, reject_action
 from app.core.auth import get_current_user, get_viewed_user
-from app.core.clock import local_now, to_local
+from app.core.clock import day_bounds_utc, local_now, local_today, to_local
 from app.core.db import get_db
 from app.core.models import ChatMessage, User
 from app.core.templating import render, ru_date
@@ -24,6 +26,27 @@ from app.web.context import screen_context
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 HISTORY_ON_OPEN = 12
+
+# --- очистка переписки ------------------------------------------------------
+
+#: Тот же набор окон, что у чистки статистики питания: «сегодня», «последние
+#: семь дней», «последние 30 дней» — и отдельно «всё» без окна вообще.
+PERIODS = {"day": 1, "week": 7, "month": 30}
+PERIOD_LABELS = {"all": "Всё", "day": "Сегодня", "week": "Неделя", "month": "Месяц"}
+PERIOD_WINDOWS = {"all": "всю переписку", "day": "переписку за сегодня",
+                  "week": "переписку за последние семь дней",
+                  "month": "переписку за последние 30 дней"}
+
+
+def clear_history(db: Session, user_id: int, period: str = "all") -> int:
+    """Стереть переписку — всю или за скользящее окно до сегодня включительно."""
+    query = db.query(ChatMessage).filter(ChatMessage.user_id == user_id)
+    if period in PERIODS:
+        start, _ = day_bounds_utc(local_today() - timedelta(days=PERIODS[period] - 1))
+        query = query.filter(ChatMessage.created_at >= start)
+    removed = query.delete(synchronize_session=False)
+    db.commit()
+    return removed
 
 SUGGESTIONS = [
     "Съел суп и салат",

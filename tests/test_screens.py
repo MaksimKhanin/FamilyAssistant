@@ -5,10 +5,14 @@
 их все разом — а поймать это без такого прогона можно было только руками,
 открыв семнадцать адресов подряд.
 """
+from datetime import timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.clock import utc_now
 from app.core.db import get_db
+from app.core.models import ChatMessage
 from app.main import app
 
 #: Всё, что участник может открыть по ссылке из навигации, панели или уведомления.
@@ -353,3 +357,54 @@ def test_the_agent_screen_sets_the_dials_for_everyone(as_admin):
     assert "Самостоятельность" in markup
     assert "/settings/agent/tools/log_meal" in markup
     assert "одинаково для всех" in markup
+
+
+def _message(db, user, days_ago=0):
+    row = ChatMessage(user_id=user.id, role="user", content="Привет",
+                      created_at=utc_now() - timedelta(days=days_ago))
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_clearing_the_whole_history_removes_every_message(as_member, db, member, other):
+    _message(db, member, days_ago=0)
+    _message(db, member, days_ago=40)
+    _message(db, other, days_ago=0)
+
+    response = as_member.post("/settings/profile/chat/clear", data={"period": "all"},
+                              follow_redirects=False)
+
+    assert response.status_code == 303
+    assert db.query(ChatMessage).filter(ChatMessage.user_id == member.id).count() == 0
+    # Чужая переписка не тронута: история — личные данные, а не общая на семью.
+    assert db.query(ChatMessage).filter(ChatMessage.user_id == other.id).count() == 1
+
+
+def test_clearing_by_period_keeps_older_messages(as_member, db, member):
+    _message(db, member, days_ago=0)
+    _message(db, member, days_ago=40)
+
+    as_member.post("/settings/profile/chat/clear", data={"period": "week"}, follow_redirects=False)
+
+    remaining = db.query(ChatMessage).filter(ChatMessage.user_id == member.id).all()
+    assert len(remaining) == 1
+    assert remaining[0].created_at < utc_now() - timedelta(days=30)
+
+
+def test_clearing_the_history_shows_a_notice_with_the_count(as_member, db, member):
+    _message(db, member, days_ago=0)
+    _message(db, member, days_ago=0)
+
+    response = as_member.post("/settings/profile/chat/clear", data={"period": "all"},
+                              follow_redirects=True)
+
+    assert "2 сообщения" in response.text
+
+
+def test_an_admin_cannot_reach_the_clear_history_route(as_admin):
+    """У администратора нет разговора (ADR-0008), значит и стирать ему нечего."""
+    response = as_admin.post("/settings/profile/chat/clear", data={"period": "all"},
+                             follow_redirects=False)
+
+    assert response.status_code == 403

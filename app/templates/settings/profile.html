@@ -197,6 +197,29 @@
         </div>
       {% endfor %}
     </div>
+
+    {# Переписка живёт своей карточкой, а не рядом с расписаниями: это не «что
+       ассистенту можно», а свои данные, которые можно стереть, — тот же смысл,
+       что у чистки записей в питании, только для разговора. #}
+    <div class="card tight stack">
+      <div class="card-title">Переписка с ассистентом</div>
+      <p class="muted">
+        {{ chat_message_count|counted("сообщение", "сообщения", "сообщений") }} хранится сейчас.
+        Стереть можно всё сразу или только за недавнее время — вернуть стёртое будет нельзя.
+      </p>
+      <form class="row wrap" style="gap:8px;align-items:center" method="post" action="/settings/profile/chat/clear"
+            hx-confirm="Стереть переписку с ассистентом? Вернуть её будет нельзя.">
+        <span class="tiny">Стереть</span>
+        <select class="field" name="period" style="width:auto" aria-label="Какую переписку стереть"
+                {% if not can_edit %}disabled{% endif %}>
+          {% for value, label in chat_periods.items() %}
+            <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn ghost small" type="submit" style="color:var(--alarm-text)"
+                {% if not can_edit %}disabled{% endif %}>Стереть</button>
+      </form>
+    </div>
     {% endif %}
 
     {# Пароль — единственное, что есть у обеих ролей: свой меняет каждый сам. #}

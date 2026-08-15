@@ -28,10 +28,13 @@ from app.core import push
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
-from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ScheduledJob, User
-from app.core.templating import render
+from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ChatMessage, ScheduledJob, User
+from app.core.templating import counted, render
 from app.modules import names as module_names, togglable
 from app.web.context import avatar, screen_context
+from app.web.routes_chat import PERIOD_LABELS as CHAT_PERIOD_LABELS
+from app.web.routes_chat import PERIOD_WINDOWS as CHAT_PERIOD_WINDOWS
+from app.web.routes_chat import clear_history
 from app.web.routes_invite import invite_url
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -433,6 +436,8 @@ def profile_screen(
         autonomy_levels=AUTONOMY_LEVELS,
         jobs=_jobs(db, viewed),
         job_labels=JOB_LABELS,
+        chat_periods=CHAT_PERIOD_LABELS,
+        chat_message_count=db.query(ChatMessage).filter(ChatMessage.user_id == viewed.id).count(),
         recent_actions=(
             db.query(ActionLog)
             .filter(ActionLog.user_id == viewed.id, ActionLog.created_at >= since)
@@ -517,6 +522,25 @@ def update_profile(
     if can_act_as(current, viewed):
         nutrition_service.update_profile(db, viewed.id, daily_kcal=daily_kcal, goal=goal)
     return RedirectResponse("/settings/profile", status_code=303)
+
+
+@router.post("/profile/chat/clear")
+def clear_chat_history(
+    period: str = Form("all"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Стереть переписку с ассистентом — свою, целиком или за период."""
+    if not can_act_as(current, viewed):
+        return RedirectResponse("/settings/profile", status_code=303)
+
+    period = period if period in CHAT_PERIOD_LABELS else "all"
+    removed = clear_history(db, viewed.id, period)
+    window = CHAT_PERIOD_WINDOWS[period]
+    notice = (f"Стёр {window}: {counted(removed, 'сообщение', 'сообщения', 'сообщений')}."
+              if removed else f"{window.capitalize()} стирать было нечего.")
+    return RedirectResponse(f"/settings/profile?{urlencode({'notice': notice})}", status_code=303)
 
 
 # --- модель и знания (администратор) --------------------------------------
