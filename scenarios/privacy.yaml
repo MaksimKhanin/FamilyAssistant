@@ -1,0 +1,48 @@
+# Приватность: чужие цифры не показываются, чужой разговор не открывается.
+#
+# Полоса аватаров в шапке позволяет смотреть панель глазами другого участника —
+# и ровно на этом месте приватность и проверяется: видно, что человек сегодня
+# что-то записал, но не видно сколько. Отдельно проверяется, что переключение
+# аватара не открывает чужую переписку и чужие трейсы.
+name: Чужое остаётся чужим
+user: leva
+reset:
+  autonomy: 3
+
+steps:
+  - name: у Марины есть свои записи о еде
+    tool: log_meal
+    user: marina
+    arguments: {text: "борщ и хлеб"}
+    expect:
+      rows:
+        - {table: meals, min: 2, user: marina}
+
+  - name: Лёва смотрит панель глазами Марины
+    post: /switch-member/1
+    expect:
+      status: 303
+
+  - name: чужих калорий на главной не видно
+    open: /
+    expect:
+      status: 200
+      text_not_contains: ["борщ", "ккал"]
+
+  - name: и на экране питания тоже
+    open: /nutrition/meal
+    expect:
+      status: 200
+      text_not_contains: "борщ"
+
+  - name: чужие трейсы не открываются подменой номера
+    open: /settings/my-traces/export.json?run_id=1
+    expect:
+      status: 200
+      text_not_contains: "борщ"
+
+  - name: разговор остаётся своим
+    open: /chat
+    expect:
+      status: 200
+      text_not_contains: "борщ"

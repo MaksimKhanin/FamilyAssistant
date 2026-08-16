@@ -1,0 +1,52 @@
+# Новый человек в семье: администратор завёл — тот вошёл по ссылке — работает.
+#
+# Первый опыт нового участника целиком: без него человек в панель не попадает
+# вовсе. Проверяется и обратная сторона — что одноразовая ссылка одноразовая, а
+# новичок не получает лишнего вместе с входом.
+name: Приглашение участника
+user: admin
+reset:
+  autonomy: 2
+
+steps:
+  - name: администратор заводит участника
+    post: /settings/accounts/member
+    data: {display_name: "Соня", relation: "дочь", username: "sonya"}
+    # Код приглашения рождается по ходу — запоминаем его для следующих шагов.
+    capture:
+      code: {table: users, where: {username: sonya}, column: invite_code}
+    expect:
+      status: 303
+      rows:
+        - {table: users, min: 4, contains: "sonya", user: admin}
+
+  - name: карточка нового участника показывает ссылку-приглашение
+    open: /settings/accounts
+    expect:
+      status: 200
+      text_contains: "Соня"
+
+  - name: по ссылке заводится пароль
+    post: /invite/${code}
+    user: anon
+    data: {password: "sonya12345", password_repeat: "sonya12345"}
+    expect:
+      status: 303
+
+  - name: ссылка сгорела и второй раз не работает
+    open: /invite/${code}
+    user: anon
+    expect:
+      status: 404
+
+  - name: новичок попадает на свою главную
+    open: /
+    user: sonya
+    expect:
+      status: 200
+
+  - name: и админского раздела ему не видно
+    open: /settings/accounts
+    user: sonya
+    expect:
+      status: 403

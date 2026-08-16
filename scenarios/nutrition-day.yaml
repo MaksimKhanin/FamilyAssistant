@@ -1,0 +1,47 @@
+# День питания: сказал словами — увидел на экране — спросил итог.
+#
+# Самый обычный путь, каким панелью и пользуются. Проверяется не то, что
+# ассистент вежливо ответил, а то, что после его слов в базе появилась запись,
+# и что экран показывает именно её.
+name: День питания
+user: marina
+reset:
+  autonomy: 2
+
+model:
+  chat:
+    - when: "суп"
+      tool: log_meal
+      arguments: {text: "суп и салат"}
+    - when: "сколько"
+      tool: get_nutrition_stats
+      arguments: {period: "day"}
+    # Пересказа тут нет намеренно: когда очередь кончилась, ход доигрывает
+    # офлайн-разбор, а он пересказывает человеку то, что вернул инструмент, —
+    # ровно так же, как это сделала бы живая модель.
+
+steps:
+  - name: записал приём пищи словами
+    say: "съел суп и салат"
+    expect:
+      tool: log_meal
+      no_warnings: true
+      rows:
+        - {table: meals, min: 2, contains: "суп"}
+
+  - name: экран питания показывает записанное
+    open: /nutrition/meal
+    expect:
+      status: 200
+      text_contains: "суп"
+
+  - name: спросил итог дня
+    say: "сколько сегодня?"
+    expect:
+      tool: get_nutrition_stats
+      reply_contains: "ккал"
+
+  - name: экран статистики открывается
+    open: /nutrition/stats
+    expect:
+      status: 200
