@@ -16,7 +16,7 @@
     </div>
 
     <input class="field" type="number" name="value" id="activity-value" min="0" step="1"
-           placeholder="Сколько" oninput="panel.recalc()">
+           placeholder="Сколько{{ ' ' + kinds[0][2] if kinds else '' }}" oninput="panel.recalc()">
     <p class="muted" id="activity-estimate">≈ 0 ккал</p>
     <p class="tiny">Оценка по простым коэффициентам — точность как у шагомера, не как у лаборатории.</p>
     <button class="btn green" type="submit">Записать</button>
