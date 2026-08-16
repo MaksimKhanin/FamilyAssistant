@@ -369,6 +369,10 @@
 
     if (document.getElementById('push-state')) paintPushCard();
 
+    // Единица в подсказке поля должна соответствовать реально выбранной
+    // радиокнопке сразу, а не только после первого ручного переключения.
+    if (document.getElementById('activity-value')) recalc();
+
     collapseSectionStrip();
 
     // Разговор открывается на последнем сообщении, а не на начале истории:
@@ -671,12 +675,14 @@
     button.classList.add('on');
   }
 
-  /** Активность: прикидка потраченных калорий, пока человек печатает. */
+  /** Активность: прикидка потраченных калорий, пока человек печатает, и подсказка единицы. */
   function recalc() {
     const selected = document.querySelector('input[name="kind"]:checked');
-    const value = parseFloat(document.getElementById('activity-value').value) || 0;
+    const field = document.getElementById('activity-value');
+    const value = parseFloat(field.value) || 0;
     const kcal = Math.round(value * parseFloat(selected.dataset.rate));
     document.getElementById('activity-estimate').textContent = '≈ ' + kcal + ' ккал';
+    field.placeholder = 'Сколько' + (selected.dataset.unit ? ' ' + selected.dataset.unit : '');
   }
 
   window.panel = {

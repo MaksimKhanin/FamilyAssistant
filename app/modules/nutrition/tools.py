@@ -24,6 +24,13 @@ from app.modules.nutrition.vision import (
 MODULE = "nutrition"
 logger = get_logger("nutrition.tools")
 
+# Собрано из ACTIVITY_KCAL/ACTIVITY_LABELS/ACTIVITY_UNITS, чтобы описание для
+# модели не могло разойтись с тем, что показывает форма ручного ввода.
+_ACTIVITY_KIND_HINTS = ", ".join(
+    f"{key} — {ACTIVITY_LABELS[key].lower()} (value в «{ACTIVITY_UNITS[key]}»)"
+    for key in ACTIVITY_KCAL
+)
+
 
 def _meal_card(meal, subtitle: str = None) -> dict:
     return {
@@ -474,10 +481,9 @@ def delete_activity(ctx: ToolContext, activity_id: int = None) -> ToolResult:
     name="log_activity",
     module=MODULE,
     title="Записать активность",
-    description="""
+    description=f"""
     Записать активность и оценить потраченные калории.
-    kind: steps — шаги (value в шагах), walk — прогулка, workout — тренировка,
-    bike — велосипед (value в минутах).
+    kind: {_ACTIVITY_KIND_HINTS}.
     """,
     parameters={
         "type": "object",
