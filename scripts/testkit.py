@@ -503,7 +503,7 @@ def main(argv: List[str] = None):
         show(stand.reset(autonomy=args.autonomy, seed=not args.no_seed))
     elif args.command == "say":
         result = stand.say(args.user, args.text)
-        if args.brief:
+        if args.brief and not result.get("refused"):
             result = {"reply": result["reply"],
                       "tools": [t["tool"] for t in result["traces"]],
                       "pending": result["pending"], "warnings": result["warnings"],

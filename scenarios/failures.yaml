@@ -41,6 +41,18 @@ steps:
       rows:
         - {table: board_entries, max: 1}
 
+  # Тот же мусор, но напрямую — без сценарной реплики поверх, которая маскирует
+  # то, что реально уехало бы человеку: `registry.execute()` кладёт str(исключения)
+  # прямо в summary тулла (см. app/agent/registry.py), а в офлайн-режиме и у
+  # многих моделей summary неотличимого тула едет в ответ дословно (`stub.chat`:
+  # summary or «Готово.»). Опечатка в типе аргумента не должна превращаться в
+  # текст питоновской трассировки на экране у человека.
+  - name: сырое исключение инструмента не долетает до человека
+    tool: write_entry
+    arguments: {board: 12345, text: null}
+    expect:
+      reply_not_contains: ["AttributeError", "TypeError", "object has no attribute", "Traceback"]
+
   - name: пустое имя инструмента
     model:
       chat:

@@ -47,8 +47,15 @@ def _due(job: ScheduledJob, now: datetime) -> bool:
     return True
 
 
-def _digest_text(db: Session, user: User, kind: str) -> str:
-    """Compose a job's message from the tools the person actually has switched on."""
+def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
+    """Compose a job's message from the tools the person actually has switched on.
+
+    `now` — тот же момент, для которого `run_jobs` уже решил, что задаче пора
+    сработать. Статистика досок считает по нему свои сутки/неделю (`window` в
+    `app/modules/memory/stats.py`); без явной передачи `digest_parts` брала бы
+    `utc_now()` заново — второй, отдельный от прогона момент времени, из-за
+    которого цифра могла молча не попасть в собственную сводку.
+    """
     from app.agent.runtime import run_tool_directly
     from app.core.access import is_module_enabled
     from app.modules.memory import stats
@@ -77,7 +84,7 @@ def _digest_text(db: Session, user: User, kind: str) -> str:
     # Здесь же и единственный поход к модели за формулировкой: он платный по
     # времени, поэтому задач у доски не больше пяти.
     try:
-        parts.extend(stats.digest_parts(db, user, kind))
+        parts.extend(stats.digest_parts(db, user, kind, now=now))
     except Exception:
         logger.exception(f"Статистика досок для {user.display_name} не собралась — "
                          f"остальная сводка уходит без неё")
@@ -102,7 +109,7 @@ def run_jobs(db: Session, now: datetime):
         if user is None:
             continue
 
-        text = _digest_text(db, user, job.kind)
+        text = _digest_text(db, user, job.kind, to_utc(now))
         job.last_run_at = to_utc(now)
         db.commit()
 

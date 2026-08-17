@@ -10,13 +10,20 @@
 принял заглушку за работающую модель.
 """
 import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+from app.core.clock import local_now
 
 OFFLINE_NOTE = "Это офлайн-режим без модели: понимаю только простые фразы."
 
 #: Ключевые слова → инструмент. Порядок важен: первое совпадение выигрывает.
 #: Таблица называется по тому, чем она является, — «правило» теперь занято
 #: уговором человека с ассистентом, и путать их в одном файле незачем.
+#:
+#: «напомни» здесь тоже есть — это запасной путь на случай, когда в реплике нет
+#: понятного времени (см. `_pick_tool`): «напомни, что я тебе говорила» это не
+#: срочное напоминание, а факт для памяти.
 KEYWORDS = [
     # Уговор — раньше запоминания: «с этого момента запомни, что…» — это правило,
     # а не факт о человеке.
@@ -57,6 +64,48 @@ def _days_from(text: str, default: int) -> int:
     return next((days for word, days in WORD_DAYS if word in lowered), default)
 
 
+_WEEKDAYS = {"понедельник": 0, "вторник": 1, "сред": 2, "четверг": 3,
+             "пятниц": 4, "суббот": 5, "воскресень": 6}
+#: «в 21:00» / «в 9» / «в 9 утра» / «в 9 вечера» — ровно то, что говорят вслух
+#: про напоминание. Час с минутами — первая группа, голый час со словом времени
+#: суток — вторая: без минут «в 9 вечера» тоже законное напоминание.
+_TIME_RE = re.compile(r"\bв\s*(\d{1,2})[:.](\d{2})\b|\bв\s*(\d{1,2})\s*(утра|дня|вечера|ночи)?(?:\s|$)")
+
+
+def _parse_reminder_time(text: str, now: datetime) -> Optional[datetime]:
+    """«Завтра в 9 утра» → конкретный момент, или None, если время не названо.
+
+    Тот же смысл, что и у set_reminder для настоящей модели («вычисли дату и
+    время из слов человека»), но по трём словам, а не по пониманию: без явного
+    часа не гадаем — это не напоминание, а обычный факт для `remember`.
+    """
+    lowered = text.lower()
+    day = now
+    if "послезавтра" in lowered:
+        day = now + timedelta(days=2)
+    elif "завтра" in lowered:
+        day = now + timedelta(days=1)
+    elif "сегодня" not in lowered:
+        for word, weekday in _WEEKDAYS.items():
+            if word in lowered:
+                ahead = (weekday - now.weekday()) % 7
+                day = now + timedelta(days=ahead or 7)
+                break
+
+    match = _TIME_RE.search(lowered)
+    if not match:
+        return None
+    if match.group(1):
+        hour, minute = int(match.group(1)), int(match.group(2))
+    else:
+        hour, minute = int(match.group(3)), 0
+        if match.group(4) in ("вечера", "ночи") and hour < 12:
+            hour += 12
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
 def _last_user_text(messages: List[dict]) -> str:
     for message in reversed(messages):
         if message.get("role") != "user":
@@ -71,6 +120,13 @@ def _last_user_text(messages: List[dict]) -> str:
 
 def _pick_tool(text: str, available: set) -> Optional[str]:
     lowered = text.lower()
+    # «Напомни» с понятным временем — это set_reminder, а не заметка на память
+    # (см. описание инструмента remember: «для напоминаний со сроком —
+    # set_reminder»). Без времени в реплике гадать не о чем — тогда это уже
+    # обычная просьба запомнить, и решает общая таблица ниже.
+    if "set_reminder" in available and "напомни" in lowered:
+        if _parse_reminder_time(text, local_now()) is not None:
+            return "set_reminder"
     for name, keywords in KEYWORDS:
         if name in available and any(word in lowered for word in keywords):
             return name
@@ -86,6 +142,16 @@ def _arguments_for(name: str, text: str) -> Dict[str, Any]:
     if name == "remember":
         cleaned = re.sub(r"^\s*(запомни|запомнить|не забудь|напомни)[,:]?\s*", "", text, flags=re.I)
         return {"text": cleaned.strip() or text.strip()}
+
+    if name == "set_reminder":
+        when = _parse_reminder_time(text, local_now())
+        cleaned = re.sub(r"^\s*напомни( мне)?[,:]?\s*", "", text, flags=re.I)
+        cleaned = re.sub(r"\b(послезавтра|завтра|сегодня)\b", "", cleaned, flags=re.I)
+        for word in _WEEKDAYS:
+            cleaned = re.sub(rf"\b{word}\w*\b", "", cleaned, flags=re.I)
+        cleaned = _TIME_RE.sub("", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,:")
+        return {"text": cleaned or text.strip(), "at": when.strftime("%Y-%m-%d %H:%M")}
 
     if name == "log_meal":
         return {"text": text.strip()}
@@ -168,7 +234,14 @@ def json_completion(system: str, user_content) -> dict:
                 "note": "Офлайн-режим: цифры условные, поправьте вручную"}
 
     if "съеденное" in system:
-        return {"title": (text.strip()[:60] or "Приём пищи"), "kcal": 350, "protein": 14,
+        # `estimate_from_text` склеивает описание еды и то, что «известно об
+        # этом человеке» (цель, норма, памятки — см. `_person_context`), одной
+        # строкой через пустую строку между ними. Модели этот блок помечен
+        # «учитывай, но не упоминай в ответе»; заглушке эту границу нужно
+        # уважать явно, иначе служебный контекст обрежется прямо в название
+        # блюда, которое человек видит в списке съеденного.
+        food_text = text.split("\n\n", 1)[0].strip()
+        return {"title": (food_text[:60] or "Приём пищи"), "kcal": 350, "protein": 14,
                 "fat": 12, "carbs": 42, "portion": "обычная порция", "confidence": "low",
                 "note": "Офлайн-режим: цифры условные, поправьте вручную"}
 

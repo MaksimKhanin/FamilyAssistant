@@ -144,6 +144,11 @@ def execute(spec: ToolSpec, ctx: ToolContext, arguments: Dict[str, Any]) -> Tool
 
     try:
         return spec.handler(ctx, **clean)
-    except Exception as e:
+    except Exception:
+        # Полное исключение — только в лог: текст питоновской ошибки (тип,
+        # атрибут, где упало) — это не то, что можно честно сказать человеку в
+        # чате, а ответ инструмента модель нередко пересказывает дословно
+        # (офлайн-режим и часть моделей — всегда).
         logger.exception(f"Инструмент {spec.name} упал")
-        return ToolResult(summary=f"Не получилось выполнить: {e}", ok=False)
+        return ToolResult(summary="Не получилось выполнить — попробуйте ещё раз или переформулируйте.",
+                          ok=False)
