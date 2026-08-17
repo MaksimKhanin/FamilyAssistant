@@ -1,0 +1,54 @@
+# Лимит на число правил (20, ADR-0011) жил только в `add_rule`
+# (app/modules/memory/knowledge.py) — тул set_rule. Реестр «Поведение
+# помощника» — обычная доска, и обычный `POST /memory/entries/add` на неё
+# лимита не знал вовсе: двадцать первая запись ложилась как обычная запись
+# доски, в обход отказа, которым `add_rule` встречает двадцать первое правило.
+#
+# Пульт стенда видит в `board_entries` только записи с непустым `author_id`
+# (`app/testkit/snapshot.py`, `_scope`) — записи ассистента (`author_id=NULL`,
+# 20 «правило NN» ниже) для него невидимы, и это ожидаемо. Прямая запись
+# человека — видима, поэтому последняя проверка смотрит именно на неё: после
+# демо-строки на «Счётчики» (1 видимая запись) двадцать первая, отправленная
+# в обход тула, не должна добавить вторую.
+name: Лимит числа правил действует и при прямой записи на доску
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - {name: "правило 01", tool: set_rule, arguments: {text: "Правило 01"}}
+  - {name: "правило 02", tool: set_rule, arguments: {text: "Правило 02"}}
+  - {name: "правило 03", tool: set_rule, arguments: {text: "Правило 03"}}
+  - {name: "правило 04", tool: set_rule, arguments: {text: "Правило 04"}}
+  - {name: "правило 05", tool: set_rule, arguments: {text: "Правило 05"}}
+  - {name: "правило 06", tool: set_rule, arguments: {text: "Правило 06"}}
+  - {name: "правило 07", tool: set_rule, arguments: {text: "Правило 07"}}
+  - {name: "правило 08", tool: set_rule, arguments: {text: "Правило 08"}}
+  - {name: "правило 09", tool: set_rule, arguments: {text: "Правило 09"}}
+  - {name: "правило 10", tool: set_rule, arguments: {text: "Правило 10"}}
+  - {name: "правило 11", tool: set_rule, arguments: {text: "Правило 11"}}
+  - {name: "правило 12", tool: set_rule, arguments: {text: "Правило 12"}}
+  - {name: "правило 13", tool: set_rule, arguments: {text: "Правило 13"}}
+  - {name: "правило 14", tool: set_rule, arguments: {text: "Правило 14"}}
+  - {name: "правило 15", tool: set_rule, arguments: {text: "Правило 15"}}
+  - {name: "правило 16", tool: set_rule, arguments: {text: "Правило 16"}}
+  - {name: "правило 17", tool: set_rule, arguments: {text: "Правило 17"}}
+  - {name: "правило 18", tool: set_rule, arguments: {text: "Правило 18"}}
+  - {name: "правило 19", tool: set_rule, arguments: {text: "Правило 19"}}
+  - name: правило 20 — потолок достигнут
+    tool: set_rule
+    arguments: {text: "Правило 20"}
+    capture:
+      board_id: {table: boards, where: {name: "Поведение помощника"}, column: id}
+
+  - name: двадцать первое правило тулом честно отказано
+    tool: set_rule
+    arguments: {text: "Правило 21 тулом"}
+
+  - name: двадцать первая запись прямым постом на ту же доску тоже отказана
+    post: /memory/entries/add
+    data: {board_id: "${board_id}", text: "Двадцать первая запись в обход тула"}
+    expect:
+      status: 303
+      rows:
+        - {table: board_entries, max: 1}

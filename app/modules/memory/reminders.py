@@ -64,6 +64,23 @@ def add_reminder(db: Session, user_id: int, text: str, remind_at: datetime) -> R
     return reminder
 
 
+def cancel_reminder(db: Session, user_id: int, reminder_id: int) -> bool:
+    """Снять ещё не сработавшее напоминание — опечатался во времени, передумал,
+    поставил дважды. Сработавшее не трогает: то уже история, а не план, и его
+    убирает ретеншен."""
+    reminder = (
+        db.query(Reminder)
+        .filter(Reminder.id == reminder_id, Reminder.user_id == user_id,
+               Reminder.reminded_at.is_(None))
+        .one_or_none()
+    )
+    if reminder is None:
+        return False
+    db.delete(reminder)
+    db.commit()
+    return True
+
+
 def list_active(db: Session, user_id: int) -> List[Reminder]:
     """Ещё не сработавшие, ближайшие первыми."""
     return (

@@ -1,0 +1,44 @@
+# Два тупика у лимита правил (ADR-0011), найденные при обходе UX:
+# 1. Отказ на 21-м правиле (set_rule, app/modules/memory/tools.py) не нёс
+#    карточки со ссылкой на реестр — человеку было решать «сначала снимите
+#    лишнее», но некуда было нажать, чтобы туда попасть.
+# 2. Обрезка по RULE_LIMIT (add_rule, app/modules/memory/knowledge.py) резала
+#    текст тихо — подтверждающая карточка выглядела законченной мыслью, хотя
+#    хвост потерялся молча.
+name: Отказ по лимиту правил ведёт в реестр, обрезка видна
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: обрезанное правило видно с многоточием
+    tool: set_rule
+    arguments: {text: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+    expect:
+      reply_contains: "…"
+
+  - {name: "правило 02", tool: set_rule, arguments: {text: "Правило 02"}}
+  - {name: "правило 03", tool: set_rule, arguments: {text: "Правило 03"}}
+  - {name: "правило 04", tool: set_rule, arguments: {text: "Правило 04"}}
+  - {name: "правило 05", tool: set_rule, arguments: {text: "Правило 05"}}
+  - {name: "правило 06", tool: set_rule, arguments: {text: "Правило 06"}}
+  - {name: "правило 07", tool: set_rule, arguments: {text: "Правило 07"}}
+  - {name: "правило 08", tool: set_rule, arguments: {text: "Правило 08"}}
+  - {name: "правило 09", tool: set_rule, arguments: {text: "Правило 09"}}
+  - {name: "правило 10", tool: set_rule, arguments: {text: "Правило 10"}}
+  - {name: "правило 11", tool: set_rule, arguments: {text: "Правило 11"}}
+  - {name: "правило 12", tool: set_rule, arguments: {text: "Правило 12"}}
+  - {name: "правило 13", tool: set_rule, arguments: {text: "Правило 13"}}
+  - {name: "правило 14", tool: set_rule, arguments: {text: "Правило 14"}}
+  - {name: "правило 15", tool: set_rule, arguments: {text: "Правило 15"}}
+  - {name: "правило 16", tool: set_rule, arguments: {text: "Правило 16"}}
+  - {name: "правило 17", tool: set_rule, arguments: {text: "Правило 17"}}
+  - {name: "правило 18", tool: set_rule, arguments: {text: "Правило 18"}}
+  - {name: "правило 19", tool: set_rule, arguments: {text: "Правило 19"}}
+  - {name: "правило 20", tool: set_rule, arguments: {text: "Правило 20"}}
+
+  - name: отказ на 21-м несёт ссылку на реестр
+    tool: set_rule
+    arguments: {text: "Правило 21"}
+    expect:
+      reply_contains: "Правил уже 20"

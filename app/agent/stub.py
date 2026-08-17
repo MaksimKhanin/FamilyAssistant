@@ -222,11 +222,40 @@ def chat(messages: List[dict], tools: Optional[List[dict]] = None):
                                             arguments=_arguments_for(name, text))])
 
 
+#: Число в записи доски — «вода 456», «02:50 170». Первое найденное и берём:
+#: у настоящей модели `raw` в ответе честнее, у заглушки этого различения нет.
+_EVENT_VALUE_RE = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _board_event_guess(text: str) -> dict:
+    """Наивный разбор записи доски по её словарю типов (`BOARD_EVENTS_SYSTEM`).
+
+    Без этой ветки заглушка отвечала общей заметкой без «events» вовсе —
+    `extract_events` не отличает «заглушка не умеет разобрать» от «величин
+    правда нет», и статистика любой доски в обычном офлайн-режиме молча
+    показывала бы ноль всегда. Первый тип из словаря и первое число из текста
+    записи — грубо, но с честной низкой уверенностью, как и остальные ветки
+    этой заглушки.
+    """
+    dictionary, _, entry = text.partition("Запись:\n")
+    first_line = next((line for line in dictionary.splitlines() if line.strip().startswith("- ")), "")
+    kind = first_line.strip()[2:].split(" (", 1)[0].strip()
+    match = _EVENT_VALUE_RE.search(entry)
+    if not kind or not match:
+        return {"events": []}
+    value = float(match.group().replace(",", "."))
+    return {"events": [{"kind": kind, "value": value, "confidence": "low",
+                        "raw": entry.strip()[:120]}]}
+
+
 def json_completion(system: str, user_content) -> dict:
     """Подставные ответы там, где код ждёт JSON: оценка блюда, план, разбор события."""
     text = user_content if isinstance(user_content, str) else " ".join(
         part.get("text", "") for part in user_content if isinstance(part, dict)
     )
+
+    if "величины по словарю типов этой доски" in system:
+        return _board_event_guess(text)
 
     if "блюд" in system and "фотограф" in system:
         return {"title": "Блюдо с фото", "kcal": 420, "protein": 18, "fat": 16, "carbs": 48,

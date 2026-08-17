@@ -301,6 +301,16 @@ def add_entry(db: Session, user_id: int, board_id: int, text: str,
     if grant is None or grant.right == RIGHT_VIEW or not text:
         return None
     board = grant.board
+    if board.name == RULES_BOARD_NAME:
+        # Реестр правил — обычная доска (ADR-0011), и обычный ввод на неё идёт
+        # тем же путём, что и любая другая запись. Но лимит длины/числа у
+        # `add_rule` существует не как защита, а как гарантия для промпта
+        # (RULE_LIMIT/RULES_MAX выше): без него запись, пришедшая не через
+        # set_rule, а прямо с этой доски, ехала бы в каждый разговор без
+        # обрезки и без счёта. Та же гарантия здесь, что и там.
+        text = _trim_rule_text(text)
+        if len(list_rules(db, user_id)) >= RULES_MAX:
+            return None
     entry = BoardEntry(board_id=board.id, author_id=user_id, text=text)
     # Запись — и есть активность: по ней сортируются и доски, и полоса разделов.
     now = datetime.utcnow()
@@ -344,6 +354,9 @@ def edit_entry(db: Session, user_id: int, entry_id: int, text: str,
     text = text.strip()
     if entry is None or not text:
         return None
+    board = db.get(Board, entry.board_id)
+    if board is not None and board.name == RULES_BOARD_NAME:
+        text = _trim_rule_text(text)
     entry.text = text
     entry.edited_at = datetime.utcnow()
     db.commit()
@@ -623,6 +636,16 @@ class TooManyRules(Exception):
     """
 
 
+def _trim_rule_text(text: str) -> str:
+    """Обрезка правила по RULE_LIMIT — с явным «…», а не тихим обрывом на
+    полуслове. Подтверждающая карточка после обрезки читалась бы законченной
+    мыслью, которой на самом деле не было, — человек не заметил бы потери."""
+    text = (text or "").strip()
+    if len(text) <= RULE_LIMIT:
+        return text
+    return text[:RULE_LIMIT - 1].rstrip() + "…"
+
+
 def find_boards_by_name(db: Session, user_id: int, name: str) -> List[BoardGrant]:
     """Доска по имени среди доступных: точное совпадение без регистра, иначе
     вхождение. Несколько совпадений — повод переспросить, а не угадывать."""
@@ -789,7 +812,7 @@ def add_rule(db: Session, user_id: int, text: str,
     об одном и том же противоречат друг другу молча, и разбирать это придётся
     модели посреди разговора.
     """
-    text = (text or "").strip()[:RULE_LIMIT]
+    text = _trim_rule_text(text)
     if not text:
         return None
 

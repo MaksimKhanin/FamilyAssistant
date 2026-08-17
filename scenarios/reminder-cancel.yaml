@@ -1,0 +1,41 @@
+# Напоминание нельзя было отменить или изменить — никаким путём: ни тула, ни
+# маршрута, ни кнопки на экране (app/modules/memory/reminders.py умел только
+# add_reminder/list_*/due_*/purge_fired). Опечатался во времени или поставил
+# дважды — оно срабатывало как есть и ещё неделю висело в списке до автоочистки.
+name: Напоминание можно снять — тулом и с экрана
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: заводим напоминание тулом
+    tool: set_reminder
+    arguments: {text: "позвонить врачу", at: "2026-12-31 09:00"}
+    capture:
+      reminder_id: {table: reminders, where: {text: "позвонить врачу"}, column: id}
+    expect:
+      rows:
+        - {table: reminders, min: 1, contains: "позвонить врачу"}
+
+  - name: снимаем его тем же тулом
+    tool: cancel_reminder
+    arguments: {reminder_id: "${reminder_id}"}
+    expect:
+      reply_contains: "Снял напоминание"
+
+  - name: заводим второе напоминание и снимаем его с экрана
+    tool: set_reminder
+    arguments: {text: "полить цветы", at: "2026-12-31 10:00"}
+    capture:
+      reminder_id2: {table: reminders, where: {text: "полить цветы"}, column: id}
+
+  - name: кнопка «снять» на экране напоминаний работает
+    post: /reminders/${reminder_id2}/cancel
+    expect:
+      status: 303
+
+  - name: снятых напоминаний в базе не осталось
+    open: /reminders
+    expect:
+      status: 200
+      text_not_contains: ["позвонить врачу", "полить цветы"]

@@ -140,6 +140,38 @@ def set_reminder(ctx: ToolContext, text: str, at: str) -> ToolResult:
 
 
 @tool(
+    name="cancel_reminder",
+    module=MODULE,
+    title="Снять напоминание",
+    description="""
+    Снять ещё не сработавшее напоминание: опечатались во времени, поставили
+    дважды, передумали. Номер — reminder_id из данных set_reminder или из
+    списка на экране «Напоминания». Сработавшее этим инструментом не снять —
+    оно уже история, а не план.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "reminder_id": {"type": "integer", "description": "Номер напоминания"},
+        },
+        "required": ["reminder_id"],
+    },
+    # Необратимо, как drop_rule: время и текст напоминания нигде больше не
+    # хранятся, восстановить снятое напоминание неоткуда.
+    auto_from=3,
+)
+def cancel_reminder(ctx: ToolContext, reminder_id: int) -> ToolResult:
+    if not reminders.cancel_reminder(ctx.db, ctx.subject.id, reminder_id):
+        return ToolResult(
+            summary=f"Напоминания #{reminder_id} нет среди ещё не сработавших. "
+                    f"Переспроси у человека, какое снять.",
+            ok=False,
+        )
+    return ToolResult(summary=f"Снял напоминание #{reminder_id}.",
+                      data={"reminder_id": reminder_id})
+
+
+@tool(
     name="read_board",
     module=MODULE,
     title="Прочитать доску",
@@ -570,11 +602,17 @@ def set_rule(ctx: ToolContext, text: str, replaces: int = None) -> ToolResult:
     except knowledge.TooManyRules:
         having = "; ".join(f"#{number} {line}"
                            for number, line in knowledge.rules_for_prompt(ctx.db, ctx.actor.id))
+        # Тупик без выхода: список из двадцати правил без единой ссылки, куда
+        # идти чистить реестр, — та же карточка, что у успешного set_rule ниже.
+        board = knowledge.rules_board(ctx.db, ctx.actor.id)
+        grant = knowledge.board_access(ctx.db, ctx.actor.id, board.id) if board else None
         return ToolResult(
             summary=f"Правил уже {knowledge.RULES_MAX} — больше не заводится, иначе "
                     f"реестр перестанет быть обозримым. Скажи человеку, что сначала "
                     f"надо снять лишнее, и назови, что действует сейчас: {having}",
             ok=False,
+            card={"type": "board", "board": board.name, "text": having,
+                  "url": knowledge.board_url(grant)} if grant else None,
         )
     if entry is None:
         return ToolResult(summary="Пустое правило не завести.", ok=False)

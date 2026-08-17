@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user, get_viewed_user
+from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.clock import local_now, to_local
 from app.core.db import get_db
 from app.core.models import User
@@ -43,6 +43,18 @@ def reminders_screen(
         fired_retention_days=reminders.FIRED_RETENTION_DAYS,
     )
     return render(request, "memory/reminders.html", context)
+
+
+@reminders_router.post("/{reminder_id}/cancel")
+def cancel_reminder(
+    reminder_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    if can_act_as(current, viewed):
+        reminders.cancel_reminder(db, viewed.id, reminder_id)
+    return RedirectResponse("/reminders", status_code=303)
 
 
 # --- табло: экран одного показателя (тикет #32) --------------------------------

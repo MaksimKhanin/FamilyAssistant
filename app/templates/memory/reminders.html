@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
 {% block content %}
 
 <div class="two-col">
@@ -9,7 +10,15 @@
           <span class="badge task">напоминание</span>
           <span class="tiny">⏱ {{ reminder.remind_at|ru_datetime }}</span>
         </div>
-        <div>{{ reminder.text }}</div>
+        <div class="row" style="gap:8px;align-items:flex-start">
+          <div style="flex:1">{{ reminder.text }}</div>
+          <form method="post" action="/reminders/{{ reminder.id }}/cancel"
+                hx-confirm="Снять напоминание «{{ reminder.text }}»?">
+            <button class="btn ghost small" type="submit" title="Снять напоминание">
+              {{ ic.icon("close", 13) }}
+            </button>
+          </form>
+        </div>
       </div>
     {% else %}
       <div class="card stack">
