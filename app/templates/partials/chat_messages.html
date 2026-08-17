@@ -74,7 +74,7 @@
         </div>
       {% elif card.type == "dish" %}
         {# Одно блюдо — то, чем ассистент отвечает на «что бы мне поесть».
-           Отметить его можно прямо отсюда: тогда оно уезжает в план питания. #}
+           Запомнить его можно прямо отсюда: тогда оно уезжает в книгу рецептов. #}
         <div class="agent-card">
           <div class="name">{{ card.title }}</div>
           <div class="macros">
@@ -89,16 +89,18 @@
             </div>
           {% endif %}
           {% if card.why %}<div class="muted">{{ card.why }}</div>{% endif %}
-          <form class="actions" hx-post="/nutrition/plan/dishes"
+          <form class="actions" hx-post="/nutrition/recipes"
                 hx-target="#chat-body" hx-swap="beforeend">
             <input type="hidden" name="title" value="{{ card.title }}">
             <input type="hidden" name="slot" value="{{ card.slot }}">
             <input type="hidden" name="kcal" value="{{ card.kcal }}">
-            <button class="btn" type="submit">Оставить в плане</button>
+            <button class="btn" type="submit">Запомнить блюдо</button>
           </form>
           <a class="btn link" href="/nutrition/plan">Открыть план питания →</a>
         </div>
       {% elif card.type == "recipe" %}
+        {# Рецепт из разговора нигде не хранится, пока его не запомнили: кнопка
+           кладёт в книгу рецептов ровно тот текст, который человек прочитал. #}
         <div class="agent-card">
           <div class="name">{{ card.title }}</div>
           <div class="tiny">
@@ -112,6 +114,29 @@
             {% for step in card.steps %}<li>{{ step }}</li>{% endfor %}
           </ol>
           {% if card.note %}<div class="tiny">{{ card.note }}</div>{% endif %}
+          {% if card.remembered %}
+            <div class="tiny">Блюдо уже в книге рецептов — рецепт лёг к нему.</div>
+            <a class="btn link" href="/nutrition/recipes">Открыть книгу рецептов →</a>
+          {% else %}
+            <form class="actions" hx-post="/nutrition/recipes"
+                  hx-target="#chat-body" hx-swap="beforeend">
+              <input type="hidden" name="title" value="{{ card.title }}">
+              <input type="hidden" name="kcal" value="{{ card.kcal }}">
+              <input type="hidden" name="recipe" value="{{ card.text }}">
+              <button class="btn" type="submit">Запомнить рецепт</button>
+            </form>
+          {% endif %}
+        </div>
+      {% elif card.type == "recipe-book" %}
+        <div class="agent-card">
+          <div class="name">{{ card.title }}</div>
+          <div class="tiny">
+            {% if card.slot %}{{ card.slot }} · {% endif %}
+            {% if card.kcal %}≈ {{ card.kcal }} ккал · {% endif %}
+            {{ "рецепт записан" if card.has_recipe else "рецепт не расписан" }}
+          </div>
+          <div class="muted">В книге рецептов — я опираюсь на неё, когда предлагаю еду.</div>
+          <a class="btn link" href="/nutrition/recipes">Открыть книгу рецептов →</a>
         </div>
       {% elif card.type == "plan" %}
         <div class="agent-card">

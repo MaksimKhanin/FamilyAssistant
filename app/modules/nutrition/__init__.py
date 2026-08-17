@@ -18,6 +18,8 @@ module = Module(
         NavItem(slug="stats", label="Статистика", url="/nutrition/stats", icon="chart", group="Питание"),
         NavItem(slug="activity", label="Активность", url="/nutrition/activity", icon="pulse", group="Питание"),
         NavItem(slug="plan", label="План питания", url="/nutrition/plan", icon="book", group="Питание"),
+        NavItem(slug="recipes", label="Книга рецептов", url="/nutrition/recipes", icon="note",
+                group="Питание", short="Рецепты"),
     ],
     memo_hint=("Что учитывать, когда речь о еде: болезни и ограничения (нет желчного, "
                "гастрит, аллергия на орехи), к чему вы идёте (сбросить, набрать, "

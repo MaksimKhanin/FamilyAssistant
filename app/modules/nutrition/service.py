@@ -495,20 +495,75 @@ def add_idea(db: Session, user_id: int, title: str, slot: str = None, kcal: int 
     return idea
 
 
-def keep_dish(db: Session, user_id: int, title: str, slot: str = None,
-              kcal: int = 0) -> Optional[MealIdea]:
-    """Отметить блюдо из разговора. Нажали дважды — блюдо всё равно одно.
+def find_by_title(db: Session, user_id: int, title: str) -> Optional[MealIdea]:
+    """Блюдо этого человека с таким названием — отмеченное вперёд неотмеченного.
 
-    Кнопка живёт в ленте чата и остаётся там навсегда: человек пролистывает
-    вчерашний разговор и нажимает ещё раз, а второе «то же самое» в закрепе — это
-    не память ассистента, а его невнимательность.
+    Одно и то же блюдо приходит из двух мест: его предложили в разговоре и оно же
+    стоит в сегодняшнем подборе. Запомнить его вторым разом значит развести в книге
+    два одинаковых названия, из которых одно с рецептом, а другое без.
     """
-    title = (title or "").strip()
+    lowered = (title or "").strip().lower()[:128]
+    if not lowered:
+        return None
+    rows = (
+        db.query(MealIdea)
+        .filter(MealIdea.user_id == user_id)
+        .order_by(MealIdea.saved.desc(), MealIdea.id.desc())
+        .all()
+    )
+    return next((idea for idea in rows if idea.title.lower() == lowered), None)
+
+
+def remember_dish(db: Session, user_id: int, title: str, slot: str = None, kcal: int = 0,
+                  recipe: str = None) -> Optional[MealIdea]:
+    """Запомнить блюдо: отметить его и, если рецепт уже написан, положить рядом.
+
+    Это и есть запись в книге рецептов — отдельной таблицы у неё нет: книга и есть
+    отмеченные блюда, а известный рецепт — то же блюдо с расписанным рецептом
+    (ADR-0012).
+
+    Запомнить дважды нельзя: кнопка живёт в ленте чата навсегда, человек
+    пролистывает вчерашний разговор и нажимает ещё раз. Второе «то же самое» в
+    книге — не память ассистента, а его невнимательность.
+    """
+    title = (title or "").strip()[:128]
     if not title:
         return None
-    existing = next((idea for idea in saved_ideas(db, user_id)
-                     if idea.title.lower() == title.lower()[:128]), None)
-    return existing or add_idea(db, user_id, title, slot=slot, kcal=kcal, saved=True)
+
+    idea = find_by_title(db, user_id, title)
+    if idea is None:
+        idea = add_idea(db, user_id, title, slot=slot, kcal=kcal, saved=True)
+        if idea is None:
+            return None
+    else:
+        idea.saved = True
+        # Приём пищи и калорийность дописываются, но не переписываются: то, что
+        # уже стоит у блюда, человек видел на экране, а сюда они приезжают из
+        # разговора, где могли и не прозвучать.
+        if slot and not idea.slot:
+            idea.slot = _clean_slot(slot)
+        if kcal and not idea.kcal:
+            idea.kcal = max(0, int(kcal))
+
+    if (recipe or "").strip():
+        idea.recipe = recipe.strip()
+    db.commit()
+    db.refresh(idea)
+    return idea
+
+
+def forget_dish(db: Session, user_id: int, idea_id: int) -> bool:
+    """Убрать блюдо из книги рецептов.
+
+    Убирает ровно так же, как снятая отметка на экране плана: блюдо из подбора
+    остаётся стоять в своём дне, блюдо из разговора держалось одной отметкой и
+    вместе с ней исчезает.
+    """
+    idea = get_idea(db, user_id, idea_id)
+    if idea is None or not idea.saved:
+        return False
+    toggle_saved(db, user_id, idea_id)
+    return True
 
 
 def replace_plan(db: Session, user_id: int, days: List[dict]) -> List[PlanDay]:
@@ -550,7 +605,7 @@ def plan_days(db: Session, user_id: int) -> List[PlanDay]:
 
 
 def saved_ideas(db: Session, user_id: int, limit: int = 50) -> List[MealIdea]:
-    """Закреп: блюда, которые человек отметил, — свежие первыми."""
+    """Книга рецептов: блюда, которые человек отметил, — свежие первыми."""
     return (
         db.query(MealIdea)
         .filter(MealIdea.user_id == user_id, MealIdea.saved.is_(True))
@@ -560,10 +615,22 @@ def saved_ideas(db: Session, user_id: int, limit: int = 50) -> List[MealIdea]:
     )
 
 
-def saved_titles(db: Session, user_id: int, limit: int = 12) -> List[str]:
-    """Отмеченное — короткими строками для промпта: это то, что человеку зашло."""
-    return [f"{idea.title} (≈{idea.kcal} ккал)" if idea.kcal else idea.title
-            for idea in saved_ideas(db, user_id, limit=limit)]
+def book_titles(db: Session, user_id: int, limit: int = 12) -> List[str]:
+    """Книга рецептов короткими строками для промпта: это то, что человеку зашло.
+
+    Пометка про рецепт здесь не украшение: блюдо, которое человек не просто
+    отметил, а попросил запомнить с рецептом, он знает и готовит, — на такое
+    ассистент вправе опираться увереннее, чем на понравившееся название.
+    """
+    lines = []
+    for idea in saved_ideas(db, user_id, limit=limit):
+        marks = []
+        if idea.kcal:
+            marks.append(f"≈{idea.kcal} ккал")
+        if idea.recipe:
+            marks.append("рецепт записан")
+        lines.append(f"{idea.title} ({', '.join(marks)})" if marks else idea.title)
+    return lines
 
 
 def get_idea(db: Session, user_id: int, idea_id: int) -> Optional[MealIdea]:

@@ -579,9 +579,10 @@ def _diet_context(ctx: ToolContext, with_today: bool = False) -> str:
     history = service.recent_meal_titles(ctx.db, ctx.subject.id)
     lines.append(f"Что ел за последние дни: {', '.join(history) if history else 'записей пока нет'}.")
 
-    saved = service.saved_titles(ctx.db, ctx.subject.id)
-    if saved:
-        lines.append(f"Блюда, которые человек отметил в плане питания: {', '.join(saved)}.")
+    book = service.book_titles(ctx.db, ctx.subject.id)
+    if book:
+        lines.append("Книга рецептов — блюда, которые человек запомнил как свои: "
+                     + "; ".join(book) + ".")
 
     notes = _known(ctx, limit=10)
     if notes:
@@ -656,10 +657,11 @@ def suggest_dish(ctx: ToolContext, wish: str = None, products: str = None,
         details.append(f"Порция: {dish['portion']}.")
     if dish["why"]:
         details.append(dish["why"].rstrip(".") + ".")
-    # Что делать дальше, знает не человек, а инструмент: рецепт и отметка в план —
+    # Что делать дальше, знает не человек, а инструмент: рецепт и книга рецептов —
     # два следующих шага, и оба стоит назвать вслух ровно один раз.
-    details.append("Человек может попросить рецепт или отметить блюдо кнопкой на "
-                   "карточке — тогда оно останется в плане питания.")
+    details.append("Человек может попросить рецепт или запомнить блюдо кнопкой на "
+                   "карточке — тогда оно ляжет в книгу рецептов, и я буду опираться "
+                   "на него, когда предлагаю еду.")
     if question:
         details.append(f"Спроси у человека: {question}")
 
@@ -689,26 +691,149 @@ def suggest_dish(ctx: ToolContext, wish: str = None, products: str = None,
         },
         "required": ["name"],
     },
-    read_only=True,
+    # Читающим этот инструмент больше не назовёшь: рецепт блюда, которое уже в книге,
+    # он туда и дописывает (ADR-0012). Спрашивать за это разрешения незачем — человек
+    # сам попросил рецепт, а дописывается он к тому, что человек уже запомнил.
+    auto_from=0,
 )
 def dish_recipe(ctx: ToolContext, name: str, wish: str = None) -> ToolResult:
-    prompt = f"Блюдо: {name.strip()}.\n{_diet_context(ctx)}"
-    if wish:
-        prompt += f"\nПожелание к рецепту: {wish.strip()}"
-
     try:
-        raw = llm_client.json_completion(MEAL_RECIPE_SYSTEM, prompt, max_tokens=800, task=PLANNING)
+        recipe = _write_recipe(ctx, name, wish)
     except LLMUnavailable:
         return ToolResult(summary="Сейчас не могу расписать рецепт — модель не отвечает.", ok=False)
 
-    recipe = _recipe_card(raw, fallback_title=name)
     if recipe is None:
         return ToolResult(summary=f"Не получилось расписать рецепт «{name}» — попробуем ещё раз?",
                           ok=False)
 
-    return ToolResult(summary=recipe_text(recipe), data={"title": recipe["title"],
-                                                         "recipe": recipe_text(recipe)},
-                      card=recipe)
+    text = recipe_text(recipe)
+    known = _book_entry(ctx, recipe["title"], name)
+    if known is not None:
+        # Рецепт отмеченного блюда никуда не надо запоминать отдельно: блюдо уже
+        # в книге, и рецепт — его недостающая половина (ADR-0012).
+        service.set_recipe(ctx.db, ctx.subject.id, known.id, text)
+
+    details = [text]
+    if known is not None:
+        details.append("Это блюдо уже в книге рецептов — рецепт лёг к нему.")
+    else:
+        # Предложить запомнить — работа ассистента, а не человека: тот не знает,
+        # что рецепт где-то останется, и через день будет просить его заново.
+        details.append("Рецепт нигде не сохранён. Если он человеку подошёл, предложи "
+                       "запомнить его одной фразой — это remember_recipe, и блюдо "
+                       "попадёт в книгу рецептов.")
+
+    return ToolResult(summary="\n".join(details),
+                      data={"title": recipe["title"], "recipe": text,
+                            "remembered": known is not None},
+                      card={**recipe, "text": text, "remembered": known is not None})
+
+
+def _write_recipe(ctx: ToolContext, name: str, wish: str = None) -> dict:
+    """Расписать рецепт моделью. Без шагов рецепта нет — тогда None.
+
+    Отдельно от инструмента, потому что расписывают рецепт двое: `dish_recipe` по
+    просьбе «как это готовить» и `remember_recipe`, когда человек просит запомнить
+    рецепт, которого ещё никто не писал.
+    """
+    prompt = f"Блюдо: {name.strip()}.\n{_diet_context(ctx)}"
+    if wish:
+        prompt += f"\nПожелание к рецепту: {wish.strip()}"
+
+    raw = llm_client.json_completion(MEAL_RECIPE_SYSTEM, prompt, max_tokens=800, task=PLANNING)
+    return _recipe_card(raw, fallback_title=name)
+
+
+def _book_entry(ctx: ToolContext, *titles: str):
+    """Запись книги рецептов с таким названием — или ничего.
+
+    Названий два, потому что модель вольна поправить название блюда: человек
+    просил рецепт «трески», а рецепт вернулся «Запечённая треска с овощами».
+    """
+    for title in titles:
+        idea = service.find_by_title(ctx.db, ctx.subject.id, title or "")
+        if idea is not None and idea.saved:
+            return idea
+    return None
+
+
+@tool(
+    name="remember_recipe",
+    module=MODULE,
+    title="Запомнить блюдо в книге рецептов",
+    description="""
+    Запомнить блюдо в книге рецептов: «запомни рецепт», «запомни блюдо», «отметь блюдо»,
+    «добавь в книгу рецептов». Запомненное блюдо считается вкусом человека: его видят
+    и подбор блюда в разговоре, и рацион на экране «План питания».
+    name — название блюда, о котором идёт речь; если оно только что прозвучало в
+    разговоре, возьми его оттуда.
+    recipe — текст рецепта целиком, если ты его только что расписал: тогда в книгу
+    ляжет ровно тот рецепт, который человек прочитал, и расписывать заново не придётся.
+    with_recipe — true, когда человек просит запомнить именно рецепт, а рецепта ещё
+    никто не писал: инструмент распишет его сам. На «запомни блюдо» и «отметь блюдо»
+    оставляй false — там человеку нужна отметка, а не текст.
+    slot и kcal передавай, только если они звучали.
+    Предлагать запомнить рецепт ты вправе и сам, расписав его, — но зови этот
+    инструмент только после согласия человека.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Название блюда"},
+            "recipe": {"type": "string",
+                       "description": "Текст рецепта целиком, если он уже прозвучал в разговоре"},
+            "with_recipe": {"type": "boolean",
+                            "description": "Расписать рецепт сейчас, если его ещё нет"},
+            "slot": {"type": "string", "enum": list(SLOTS),
+                     "description": "Приём пищи, если человек его назвал"},
+            "kcal": {"type": "integer", "description": "Оценка калорийности, если она звучала"},
+        },
+        "required": ["name"],
+    },
+    # Запись в книгу человек и просит словами, а снять её — одно нажатие на экране.
+    # Спрашивать «запомнить ли?» после «запомни» значит не услышать просьбу.
+    auto_from=1,
+)
+def remember_recipe(ctx: ToolContext, name: str, recipe: str = None, with_recipe: bool = False,
+                    slot: str = None, kcal: int = 0) -> ToolResult:
+    title = (name or "").strip()
+    if not title:
+        return ToolResult(summary="Не понял, какое блюдо запомнить.", ok=False)
+
+    written = None
+    if with_recipe and not (recipe or "").strip():
+        try:
+            written = _write_recipe(ctx, title)
+        except LLMUnavailable:
+            written = None
+        if written is not None:
+            recipe = recipe_text(written)
+            title = written["title"]
+            kcal = kcal or written["kcal"]
+
+    idea = service.remember_dish(ctx.db, ctx.subject.id, title, slot=slot, kcal=kcal,
+                                 recipe=recipe)
+    if idea is None:
+        return ToolResult(summary="Не получилось запомнить это блюдо.", ok=False)
+
+    details = [f"Запомнил: {idea.title} — теперь оно в книге рецептов и учитывается, "
+               f"когда я предлагаю еду."]
+    if idea.recipe:
+        details.append("Рецепт лежит рядом с блюдом, на экране «Книга рецептов».")
+    elif with_recipe:
+        # Рецепт не получился, а блюдо всё равно запомнено: просьбу человека
+        # выполнили наполовину, и об этой половине надо сказать вслух.
+        details.append("Расписать рецепт сейчас не вышло. Скажи об этом человеку: "
+                       "блюдо запомнено, рецепт можно попросить позже.")
+    else:
+        details.append("Рецепт к нему не расписан — можно предложить расписать.")
+
+    return ToolResult(
+        summary=" ".join(details),
+        data={"idea_id": idea.id, "title": idea.title, "recipe": bool(idea.recipe)},
+        card={"type": "recipe-book", "idea_id": idea.id, "title": idea.title,
+              "slot": idea.slot_label, "kcal": idea.kcal, "has_recipe": bool(idea.recipe)},
+    )
 
 
 def _recipe_card(raw: dict, fallback_title: str) -> dict:

@@ -16,6 +16,7 @@ MEMBER_SCREENS = [
     "/", "/chat", "/chat/panel", "/memory", "/reminders",
     "/settings/profile", "/settings/family", "/settings/connectors",
     "/nutrition/meal", "/nutrition/stats", "/nutrition/activity", "/nutrition/plan",
+    "/nutrition/recipes",
     "/security/events", "/security/archive",
 ]
 
@@ -200,7 +201,10 @@ CARDS = [
      "why": "Лёгкий ужин из того, что есть дома"},
     {"type": "recipe", "title": "Салат из огурцов с фетой", "portions": 2, "kcal": 320,
      "protein": 12, "fat": 22, "carbs": 14, "ingredients": ["огурцы — 400 г"],
-     "steps": ["Нарезать огурцы.", "Заправить маслом."], "note": ""},
+     "steps": ["Нарезать огурцы.", "Заправить маслом."], "note": "",
+     "text": "Салат из огурцов с фетой — 2 порц.", "remembered": False},
+    {"type": "recipe-book", "idea_id": 4, "title": "Запечённая треска", "slot": "Ужин",
+     "kcal": 410, "has_recipe": True},
     {"type": "board", "board": "Память ассистента", "text": "Соня не ест грибы", "url": "/memory"},
     {"type": "stats-screen", "board": "Кормления", "name": "Молоко за день",
      "form": "столбики", "url": "/stats/1"},
