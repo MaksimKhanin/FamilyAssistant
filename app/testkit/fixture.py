@@ -105,11 +105,17 @@ def _seed(db: Session, users: Dict[str, User]):
                                     zone="улица")
     db.add(camera)
     db.flush()
+    # «Ночью» — вчера вечером по календарю, а не «N часов назад»: смещение на
+    # фиксированное число часов гуляло бы через полночь вместе с временем
+    # прогона сценария (после полуночи «8 часов назад» — уже сегодня), а ровно
+    # это различение и проверяет находка про несходящийся значок «События»
+    # (см. `events-badge-window.yaml`).
     db.add(security_models.SecurityEvent(
         family_id=marina.family_id, camera_id=camera.id,
         detected_class="person", reason="Человек у калитки ночью",
         verdict=security_models.VERDICT_ANOMALY, classified_by="rules",
-        happened_at=to_utc(now - timedelta(hours=8)),
+        happened_at=to_utc((now - timedelta(days=1)).replace(hour=23, minute=14,
+                                                              second=0, microsecond=0)),
     ))
     db.commit()
 

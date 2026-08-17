@@ -152,7 +152,11 @@ def badges(db: Session, viewed: User, enabled: Set[str]) -> Dict[str, int]:
     result: Dict[str, int] = {}
     if "security" in enabled:
         from app.modules.security import service as security_service
-        result["anomaly_count"] = security_service.anomaly_count(db, viewed.family_id, days=1)
+        # То же окно, что у самого экрана событий (`FEED_DAYS`, service.py) —
+        # значок обязан сходиться с тем, что человек увидит, открыв его
+        # (см. комментарий у `unseen_count`), а не считать только сегодня.
+        result["anomaly_count"] = security_service.unseen_count(
+            db, viewed.family_id, within_days=security_service.FEED_DAYS)
     return result
 
 

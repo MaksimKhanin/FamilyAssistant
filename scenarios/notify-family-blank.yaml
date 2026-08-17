@@ -1,0 +1,20 @@
+# notify_family (app/modules/security/tools.py) не проверяло message: пустая
+# или пробельная строка всё равно рассылалась всей семье («Отправил семье: »)
+# — пустое уведомление, которое некому даже прочитать.
+name: Пустое сообщение семье не рассылается
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: пустая строка отклонена
+    tool: notify_family
+    arguments: {message: ""}
+    expect:
+      reply_not_contains: "Отправил семье"
+
+  - name: строка из одних пробелов тоже отклонена
+    tool: notify_family
+    arguments: {message: "   "}
+    expect:
+      reply_not_contains: "Отправил семье"

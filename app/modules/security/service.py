@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.core import media as media_module
 from app.core.clock import days_ago_start_utc, to_local, utc_now
 from app.core.logging import get_logger
+from app.modules.security import retention
 from app.modules.security.models import (
     RESOLUTION_OURS, RESOLUTION_SEEN, VERDICT_ANOMALY, VERDICT_CHECK, VERDICT_NORMAL,
     Camera, MediaItem, SecurityEvent,
@@ -192,7 +193,10 @@ def _unseen(db: Session, family_id: int, older_than_days: int = 0, within_days: 
                 SecurityEvent.resolution.is_(None))
     )
     if older_than_days > 0:
-        query = query.filter(SecurityEvent.happened_at < utc_now() - timedelta(days=older_than_days))
+        # Верхняя граница та же, что у retention.purge, и по той же причине:
+        # без неё огромное N валит `datetime - timedelta` в OverflowError.
+        capped = min(older_than_days, retention.MAX_OLDER_THAN_DAYS)
+        query = query.filter(SecurityEvent.happened_at < utc_now() - timedelta(days=capped))
     if within_days:
         query = query.filter(SecurityEvent.happened_at >= days_ago_start_utc(within_days - 1))
     return query

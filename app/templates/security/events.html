@@ -20,7 +20,10 @@
       <input type="hidden" name="only" value="{{ active_filter }}">
       <select class="field" name="older_than" style="width:auto" aria-label="Что считать просмотренным">
         {% for value, label in seen_periods %}
-          <option value="{{ value }}">{{ label }}</option>
+          {# «Всё» без выбора — риск одним кликом погасить и сегодняшнюю,
+             никем не открытую тревогу; безопасный выбор по умолчанию —
+             «старше суток», как у соседнего выбора срока в архиве. #}
+          <option value="{{ value }}"{% if value == 1 %} selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
       <button class="btn small" type="submit">Просмотрено</button>
@@ -95,14 +98,18 @@
           {{ {"person": "Кто-то", "car": "Машина"}.get(alert.detected_class, "Движение") }}
           у камеры «{{ camera.label if camera else "—" }}»
         </h2>
-        <p class="muted">{{ alert.note or alert.reason }} Это оценка модели, а не факт.</p>
+        <p class="muted">{{ alert.note or alert.reason }}
+          {% if alert.classified_by == "model" %}Это оценка модели, а не факт.
+          {% else %}Это решило сито — по времени и зоне, без модели.{% endif %}</p>
         <div class="row wrap" style="gap:10px">
           <form method="post" action="/security/events/{{ alert.id }}/ours">
             <button class="btn" type="submit">Это свои, всё хорошо</button>
           </form>
           <a class="btn ghost" href="/security/events">Закрыть</a>
         </div>
-        <p class="tiny">Так же выглядит уведомление на телефоне.</p>
+        {% if alert.notified_at %}
+          <p class="tiny">Так же выглядит уведомление на телефоне.</p>
+        {% endif %}
       </div>
     </div>
   </div>

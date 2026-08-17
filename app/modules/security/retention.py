@@ -27,6 +27,12 @@ from app.modules.security.models import Camera, MediaItem, SecurityEvent
 
 logger = get_logger("security.retention")
 
+#: Верхняя граница «старше N суток» — не про политику хранения, а про то, что
+#: `datetime - timedelta(days=N)` при огромном N валит `OverflowError` мимо
+#: любой попытки её поймать понятным для человека сообщением. Десяти лет
+#: заведомо хватает всему, что вообще может значить «убери самое старое».
+MAX_OLDER_THAN_DAYS = 3650
+
 
 def _unlink(path: str) -> bool:
     if not path:
@@ -144,7 +150,7 @@ def purge(db: Session, family_id: int, older_than_days: int, camera_id: int = No
 
     Возвращает {"records": сколько записей убрано, "bytes": сколько освободилось}.
     """
-    older_than_days = max(1, older_than_days)
+    older_than_days = max(1, min(older_than_days, MAX_OLDER_THAN_DAYS))
     cutoff = utc_now() - timedelta(days=older_than_days)
 
     _drop_frames(_stale_events(db, cutoff, camera_id=camera_id, family_id=family_id).all())

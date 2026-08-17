@@ -266,6 +266,9 @@ def classify_event(ctx: ToolContext, event_id: int) -> ToolResult:
     auto_from=3,
 )
 def notify_family(ctx: ToolContext, message: str, severity: str = "info") -> ToolResult:
+    if not message or not message.strip():
+        return ToolResult(summary="Пустое сообщение семье не отправить — сначала сформулируйте, о чём.",
+                          ok=False)
     if severity not in SEVERITIES:
         severity = "info"
 

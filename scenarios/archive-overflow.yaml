@@ -1,0 +1,28 @@
+# `retention.purge()` и `service._unseen()` клэмпили только нижнюю границу
+# `older_than_days` (max(1, ...)) — огромное число валило
+# `utc_now() - timedelta(days=N)` в необработанный `OverflowError`. Путь через
+# тул хотя бы деградировал до общего «Не получилось выполнить» (registry.py),
+# а прямой POST на экран архива отдавал голую пятисотку без единого слова.
+name: Огромный older_than_days не валит архив
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: тул почистить архив не падает на огромном числе
+    tool: clear_archive
+    arguments: {older_than_days: 999999999999}
+    expect:
+      no_warnings: true
+
+  - name: тул пометить просмотренным не падает на огромном числе
+    tool: mark_events_seen
+    arguments: {older_than_days: 999999999999}
+    expect:
+      no_warnings: true
+
+  - name: прямой POST на экран архива тоже не падает
+    post: /security/archive/purge
+    data: {older_than: 999999999999}
+    expect:
+      status: 303
