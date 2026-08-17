@@ -577,10 +577,24 @@ def toggle_saved(db: Session, user_id: int, idea_id: int) -> Optional[MealIdea]:
     Снятая отметка у блюда, которого нет в текущем подборе, — это «убрать из
     закрепа»: держать такую строку больше не за что, и она удаляется. У блюда из
     подбора отметка просто гаснет: сам подбор никуда не делся.
+
+    Модель вправе повторить в новом подборе название, которое человек уже
+    закрепил (см. `replace_plan`) — та строка из дня остаётся его копией, пока
+    её не отметили. Отметить её — не завести второй закреп, а обнаружить, что
+    он уже есть: как и `keep_dish`, ищем совпадение по названию среди уже
+    закреплённого и переиспользуем его вместо дубля.
     """
     idea = get_idea(db, user_id, idea_id)
     if idea is None:
         return None
+    if not idea.saved:
+        existing = next((other for other in saved_ideas(db, user_id)
+                         if other.id != idea.id and other.title.lower() == idea.title.lower()),
+                        None)
+        if existing is not None:
+            db.delete(idea)
+            db.commit()
+            return existing
     idea.saved = not idea.saved
     if not idea.saved and idea.day_title is None:
         db.delete(idea)

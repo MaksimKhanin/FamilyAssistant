@@ -1,0 +1,39 @@
+# Модели разрешено повторить в новом подборе название, которое человек уже
+# закрепил (в разговоре или на экране) — так и должно быть. Поломка в другом:
+# `toggle_saved` (app/modules/nutrition/service.py) отмечал дневную копию по
+# id, не глядя, нет ли уже закреплённого блюда с тем же названием — и в
+# «Отмеченные блюда» оседали два одинаковых навсегда. `keep_dish` рядом эту
+# проверку всегда делал; `toggle_saved` — нет.
+#
+# Офлайн-заглушка на suggest_meal_plan отдаёт фиксированный список блюд
+# («Суп и салат» среди них), так что путь воспроизводится без режиссёра модели.
+name: Повторный подбор не плодит второй закреп
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: первый подбор
+    tool: suggest_meal_plan
+    capture:
+      dish_id: {table: meal_ideas, where: {title: "Суп и салат"}, column: id}
+    expect:
+      rows:
+        - {table: meal_ideas, min: 6}
+
+  - name: отметить блюдо дня
+    post: /nutrition/plan/dish/${dish_id}/save
+    expect:
+      status: 303
+
+  - name: второй подбор повторяет то же название
+    tool: suggest_meal_plan
+    capture:
+      dup_id: {table: meal_ideas, where: {title: "Суп и салат"}, column: id}
+
+  - name: отметить дневную копию не плодит второй закреп
+    post: /nutrition/plan/dish/${dup_id}/save
+    expect:
+      status: 303
+      rows:
+        - {table: meal_ideas, max: 6}

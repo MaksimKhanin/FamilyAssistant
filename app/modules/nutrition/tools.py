@@ -15,7 +15,7 @@ from app.core.websearch import SearchUnavailable
 from app.modules.memory import knowledge
 from app.modules.nutrition import lookup, service
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SLOTS, SOURCE_PHOTO, SOURCE_TEXT,
+    ACTIVITY_CEILING, ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, SLOTS, SOURCE_PHOTO, SOURCE_TEXT,
 )
 from app.modules.nutrition.vision import (
     MealEstimate, estimate_from_image, safe_estimate_from_text,
@@ -498,6 +498,19 @@ def delete_activity(ctx: ToolContext, activity_id: int = None) -> ToolResult:
 def log_activity(ctx: ToolContext, kind: str, value: float) -> ToolResult:
     if kind not in ACTIVITY_KCAL:
         return ToolResult(summary=f"Не знаю такой вид активности: {kind}", ok=False)
+    # Форма на экране пускает только value > 0 (routes.py); тул шёл в обход
+    # неё и принимал что угодно, включая отрицательные числа — те ложились в
+    # kcal со знаком минус и путали баланс дня («потрачено −105», а не 0).
+    if value is None or value <= 0:
+        return ToolResult(summary="Столько активности не бывает — назовите число больше нуля.",
+                          ok=False)
+    ceiling = ACTIVITY_CEILING.get(kind)
+    if ceiling and value > ceiling:
+        return ToolResult(
+            summary=f"{int(ceiling)} {ACTIVITY_UNITS.get(kind, '')} за раз — уже потолок; "
+                    f"назовите число поменьше или разбейте на несколько записей.",
+            ok=False,
+        )
 
     entry = service.log_activity(ctx.db, ctx.subject.id, kind, value)
     bus.publish(ACTIVITY_LOGGED, {"activity_id": entry.id, "user_id": ctx.subject.id})

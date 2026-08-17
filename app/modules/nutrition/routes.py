@@ -15,7 +15,7 @@ from app.core.models import User
 from app.core.templating import render
 from app.modules.nutrition import service
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, GOAL_LABELS, SOURCE_PHOTO, SOURCE_TEXT,
+    ACTIVITY_CEILING, ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, GOAL_LABELS, SOURCE_PHOTO, SOURCE_TEXT,
 )
 from app.modules.nutrition.service import PERIOD_LABELS, PERIOD_WINDOWS
 from app.modules.nutrition.vision import estimate_from_image, safe_estimate_from_text
@@ -277,7 +277,9 @@ def add_activity(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    if can_act_as(current, viewed) and kind in ACTIVITY_KCAL and value > 0:
+    ceiling = ACTIVITY_CEILING.get(kind)
+    if (can_act_as(current, viewed) and kind in ACTIVITY_KCAL and value > 0
+            and not (ceiling and value > ceiling)):
         entry = service.log_activity(db, viewed.id, kind, value)
         bus.publish(ACTIVITY_LOGGED, {"activity_id": entry.id, "user_id": viewed.id})
     return RedirectResponse("/nutrition/activity", status_code=303)

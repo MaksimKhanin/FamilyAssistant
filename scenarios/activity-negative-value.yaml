@@ -1,0 +1,24 @@
+# Веб-форма (app/modules/nutrition/routes.py) пускает только value > 0, а тул
+# log_activity (app/modules/nutrition/tools.py) той же проверки не имел — путь
+# через агента принимал отрицательные и нулевые числа. Отрицательное значение
+# ложится в kcal со знаком минус и путает баланс дня: «потрачено −105»
+# увеличивает, а не уменьшает профицит калорий.
+name: Активность с отрицательным числом отклоняется тулом
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: отрицательные минуты велосипеда отклонены
+    tool: log_activity
+    arguments: {kind: "bike", value: -15}
+    expect:
+      rows:
+        - {table: activity_log, max: 0}
+
+  - name: ноль минут тоже не активность
+    tool: log_activity
+    arguments: {kind: "steps", value: 0}
+    expect:
+      rows:
+        - {table: activity_log, max: 0}

@@ -1,0 +1,23 @@
+# Ни форма, ни тул log_activity не имели верхней границы: гигантское число
+# (99999 шагов, никаких ограничений сверху) проходило молча и уводило баланс
+# дня в область, которую никто не ждал увидеть.
+name: Абсурдная активность отклоняется потолком
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: тул отклоняет запредельное число шагов
+    tool: log_activity
+    arguments: {kind: "steps", value: 999999}
+    expect:
+      rows:
+        - {table: activity_log, max: 0}
+
+  - name: форма на экране отклоняет то же самое
+    post: /nutrition/activity
+    data: {kind: "bike", value: 100000}
+    expect:
+      status: 303
+      rows:
+        - {table: activity_log, max: 0}
