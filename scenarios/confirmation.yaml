@@ -1,0 +1,58 @@
+# Подтверждение: «спросит» значит спросит, и до «да» ничего не сделано.
+#
+# Самостоятельность на нуле — в этом положении ассистент готовит действие и
+# ждёт. Проверяется всё, что вокруг ожидания: что записи ещё нет, что слов
+# «записала» в ответе нет, что чужое «да» не принимается и что повторное «да»
+# не выполняет действие дважды.
+name: Подтверждение действия
+user: marina
+reset:
+  autonomy: 0
+
+model:
+  chat:
+    - when: "счётчик"
+      tool: write_entry
+      arguments: {board: "Счётчики", text: "вода 456"}
+    - content: "Подготовила запись — подтвердите, и я запишу."
+      keep: true
+
+steps:
+  - name: ассистент готовит запись и ждёт
+    say: "запиши на доску счётчиков: вода 456"
+    expect:
+      tool: write_entry
+      pending: 1
+      reply_not_contains: ["записала", "готово"]
+      rows:
+        - {table: board_entries, max: 1}
+
+  - name: карточка подтверждения висит в разговоре
+    open: /chat
+    expect:
+      status: 200
+
+  - name: чужое «да» не принимается
+    confirm: approve
+    user: leva
+    pending_id: 1
+    expect:
+      reply_contains: "только сам"
+      rows:
+        - {table: board_entries, max: 1, user: marina}
+
+  - name: своё «да» выполняет действие
+    confirm: approve
+    expect:
+      reply_contains: "вода 456"
+      pending: 0
+      rows:
+        - {table: board_entries, min: 2, contains: "вода 456"}
+
+  - name: повторное «да» ничего не повторяет
+    confirm: approve
+    pending_id: 1
+    expect:
+      reply_contains: "неактуально"
+      rows:
+        - {table: board_entries, max: 2}

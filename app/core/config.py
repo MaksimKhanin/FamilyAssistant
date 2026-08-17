@@ -168,6 +168,11 @@ class Settings:
     #: ingest-ключа — доступ «читать архив» и «включить тревогу» это разные права.
     control_base_url: str = ""
     control_api_token: str = ""
+    #: Ключ стенда — служебных ручек, которыми сценарии проходят снаружи
+    #: (`app/testkit`, docs/testkit.md). Пусто — стенда нет вовсе: ни роутов, ни
+    #: журнала запросов, ни подмены модели. Ручки ходят мимо входа и мимо ролей,
+    #: поэтому включаются только тем, что хозяин дома сам положил сюда ключ.
+    testkit_token: str = ""
     #: Задан ли `PUBLIC_BASE_URL` в окружении на самом деле. Умолчание у него
     #: правдоподобное («localhost») и потому опасное: ссылка-приглашение с ним
     #: собирается без единой ошибки и не открывается ни с одного другого
@@ -197,6 +202,7 @@ def load_settings() -> Settings:
         media_retention_days=_int("MEDIA_RETENTION_DAYS", 14),
         control_base_url=os.environ.get("CONTROL_BASE_URL", "").strip(),
         control_api_token=os.environ.get("CONTROL_API_TOKEN", "").strip(),
+        testkit_token=os.environ.get("TESTKIT_TOKEN", "").strip(),
         admin=AdminSettings(
             username=os.environ.get("ADMIN_USERNAME", "admin").strip(),
             password=os.environ.get("ADMIN_PASSWORD", ""),

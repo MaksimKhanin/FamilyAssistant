@@ -1,0 +1,46 @@
+# Фото тарелки: оценка → правка цифр → подтверждение → баланс дня.
+#
+# Путь, ради которого панель ставят на телефон. Проверяется не точность оценки —
+# её проверить нечем, — а то, что оценка помечена оценкой, правка становится
+# правкой, и в баланс дня уходит то число, которое человек подтвердил, а не то,
+# которое придумала модель.
+name: Приём пищи по фото
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  json:
+    # Оценка по фото: тот же JSON, что просит MEAL_PHOTO_SYSTEM.
+    - json: {title: "Паста с курицей", kcal: 780, protein: 40, fat: 24, carbs: 95,
+             portion: "большая тарелка", confidence: "medium",
+             note: "Соус на глаз — цифры примерные"}
+      keep: true
+
+steps:
+  - name: человек отправляет фото ассистенту
+    say: "вот что я съел"
+    image_b64: "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+    expect:
+      tool: log_meal
+      rows:
+        - {table: meals, min: 2, contains: "Паста"}
+
+  - name: оценка помечена оценкой, а не фактом
+    open: /nutrition/meal
+    expect:
+      status: 200
+      text_contains: "оценка"
+
+  - name: человек поправляет цифры и подтверждает
+    post: /nutrition/meal/2/confirm
+    data: {kcal: 600, protein: 35, fat: 20, carbs: 70}
+    expect:
+      status: 303
+      rows:
+        - {table: meals, contains: "corrected"}
+
+  - name: в балансе дня стоит подтверждённое число
+    say: "сколько сегодня?"
+    expect:
+      reply_contains: "920"

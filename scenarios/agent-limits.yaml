@@ -1,0 +1,61 @@
+# Пределы самостоятельности: что ассистент не сделает даже на полном доверии.
+#
+# Ползунок на максимуме — и всё равно есть вещи, которые спрашивают: одно «да»,
+# стирающее месяц записей, спрашивают всегда. Отдельно проверяется выключенный
+# тумблер: выключенного инструмента для модели не существует, и назвать его
+# по имени она не может.
+name: Пределы самостоятельности
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: стирание записей за период спрашивают и на полном доверии
+    model:
+      chat:
+        - tool: clear_nutrition_period
+          arguments: {period: "week"}
+        - content: "Подготовила — подтвердите."
+          keep: true
+    say: "удали все записи о еде за неделю"
+    expect:
+      pending: 1
+      reply_not_contains: ["удалила", "готово"]
+      rows:
+        - {table: meals, min: 1}
+
+  - name: отказ оставляет записи на месте
+    confirm: reject
+    expect:
+      rows:
+        - {table: meals, min: 1}
+      pending: 0
+
+  - name: администратор выключает инструмент целиком
+    post: /settings/agent/tools/write_entry
+    user: admin
+    data: {mode: "off"}
+    expect:
+      status: 303
+
+  - name: выключенного инструмента для модели не существует
+    model:
+      chat:
+        - tool: write_entry
+          arguments: {board: "Счётчики", text: "вода 999"}
+        - content: "Не получилось."
+          keep: true
+    say: "запиши на доску счётчиков: вода 999"
+    expect:
+      reply_not_contains: ["записала", "готово"]
+      rows:
+        - {table: board_entries, max: 1}
+
+  - name: ассистент не кружит бесконечно по инструментам
+    model:
+      chat:
+        - {tool: get_nutrition_stats, arguments: {period: "day"}, keep: true}
+    say: "считай, считай, считай"
+    expect:
+      no_warnings: false
+      reply_contains: ""

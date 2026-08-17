@@ -1,0 +1,64 @@
+# Знания и доступ: своё — своё, поделённое — видно, чужое — не видно.
+#
+# Ходят двое, и в этом весь смысл: приватность проверяется только вторыми
+# глазами. Доска заводится ассистентом, делится через панель — так, как это
+# делает человек, — и открывается вторым участником уже его собственным входом.
+name: Доски и доступ
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  chat:
+    - when: "заведи доску"
+      tool: create_board
+      arguments: {section: "Дом", name: "Самочувствие",
+                  instruction: "Записи о состоянии — со временем сообщения."}
+    - when: "устал"
+      tool: write_entry
+      arguments: {board: "Самочувствие", text: "проснулся, чувствую себя усталым"}
+    - content: "Сделала."
+      keep: true
+
+steps:
+  - name: ассистент заводит доску
+    say: "заведи доску «Самочувствие» в разделе Дом"
+    expect:
+      tool: create_board
+      rows:
+        - {table: boards, min: 2, contains: "Самочувствие"}
+
+  - name: и пишет на неё запись
+    say: "устал сегодня"
+    expect:
+      tool: write_entry
+      rows:
+        - {table: board_entries, min: 2, contains: "усталым"}
+
+  - name: чужой раздел второму участнику не виден
+    open: /memory
+    user: leva
+    expect:
+      status: 200
+      text_not_contains: "Самочувствие"
+
+  - name: владелец делится доской со всеми
+    post: /memory/boards/2/share-all
+    data: {right: view}
+    expect:
+      status: 303
+
+  - name: теперь доска видна второму участнику в «Общем»
+    open: /memory?section=common
+    user: leva
+    expect:
+      status: 200
+      text_contains: "Самочувствие"
+
+  - name: но писать на неё он не может
+    post: /memory/entries/add
+    user: leva
+    data: {board_id: 2, text: "чужая запись"}
+    expect:
+      rows:
+        - {table: board_entries, max: 2, user: marina}

@@ -23,6 +23,7 @@ from app.core.events import AGENT_MESSAGE, bus
 from app.core.logging import get_logger
 from app.core.templating import render
 from app.modules import load_modules
+from app import testkit
 from app.web import (
     routes_auth, routes_chat, routes_dashboard, routes_invite, routes_my_traces,
     routes_onboarding, routes_push, routes_settings, routes_traces,
@@ -103,6 +104,11 @@ app.include_router(routes_onboarding.router)
 for module in load_modules():
     for router in module.routers:
         app.include_router(router)
+
+# Стенд — служебные ручки, которыми сценарии проходят панель снаружи
+# (app/testkit, docs/testkit.md). Без ключа `TESTKIT_TOKEN` не подключается
+# ничего: ни роутов, ни middleware, ни подмены модели.
+testkit.install(app)
 
 
 @app.get("/healthz", include_in_schema=False)

@@ -1,0 +1,62 @@
+# Когда всё идёт не так: модель молчит, врёт схемой, просит несуществующее.
+#
+# Ассистент обязан оставаться честным и целым: сказать, что не может подумать,
+# не сделать вида, что сделал, и не уронить разговор пятисоткой. Проверяется
+# именно это, а не красота фраз.
+name: Отказы и мусор
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: модель недоступна — разговор остаётся живым
+    model:
+      chat:
+        - error: "Модель недоступна"
+    say: "съел суп"
+    expect:
+      reply_contains: "не могу подумать"
+      no_tools: true
+
+  - name: модель просит инструмент, которого нет
+    model:
+      chat:
+        - tool: "сделай_хорошо"
+          arguments: {}
+        - content: "Не вышло — такого я не умею."
+          keep: true
+    say: "сделай хорошо"
+    expect:
+      reply_not_contains: ["готово", "записала"]
+
+  - name: модель прислала мусор в аргументах
+    model:
+      chat:
+        - tool: "write_entry"
+          arguments: {board: 12345, text: null, лишнее: "поле"}
+        - content: "Кажется, не получилось."
+          keep: true
+    say: "запиши что-нибудь куда-нибудь"
+    expect:
+      rows:
+        - {table: board_entries, max: 1}
+
+  - name: пустое имя инструмента
+    model:
+      chat:
+        - tool_calls: [{name: "", arguments: {}}]
+        - content: "Ничего не вышло."
+          keep: true
+    say: "а теперь странное"
+    expect:
+      reply_not_contains: "готово"
+
+  - name: после всего этого панель цела
+    open: /
+    expect:
+      status: 200
+
+  - name: и разговор открывается
+    open: /chat
+    expect:
+      status: 200

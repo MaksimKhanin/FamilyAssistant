@@ -1,0 +1,98 @@
+# Доска со словарём величин: записи → цифры → задача статистики → табло.
+#
+# Самый длинный путь в панели и самый молодой: человек пишет словами, модель
+# вынимает величину, код складывает её в ряд, ассистент заводит экран, а сводка
+# приносит цифру утром. Ломается тут не одно место, а стык между ними, поэтому
+# сценарий идёт до конца — до пункта меню и до утренней сводки.
+name: Доска, статистика и табло
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  json:
+    # Разбор записи на величины — тот же JSON, что просит `BOARD_EVENTS_SYSTEM`.
+    - when: "170"
+      json: {events: [{kind: "кормление", at: "2026-08-16 02:50", value: 170,
+                       unit: "мл", confidence: "high", raw: "02:50 170"}]}
+    - when: "200"
+      json: {events: [{kind: "кормление", at: "2026-08-16 06:10", value: 200,
+                       unit: "мл", confidence: "high", raw: "06:10 200"}]}
+    # Фраза для сводки: числа считает код, словами их называет модель.
+    - when: "малыш"
+      json: {text: "Малыш съел 370 мл за сутки — как и позавчера."}
+  chat:
+    - when: "считай"
+      tool: track_board
+      arguments: {board: "Кормления", request: "сколько малыш съел за сутки",
+                  kind: "кормление", digest: "morning_digest"}
+    - when: "отдельный экран"
+      tool: show_stats
+      arguments: {board: "Кормления", name: "Кормления за сутки", form: "bars"}
+
+steps:
+  - name: человек заводит доску руками
+    post: /memory/boards/add
+    data: {section_id: 1, name: "Кормления",
+           instruction: "Строки вида «02:50 170» — время и миллилитры."}
+    expect:
+      status: 303
+      rows:
+        - {table: boards, min: 2, contains: "Кормления"}
+
+  - name: и словарь величин к ней
+    post: /memory/boards/2/types/add
+    data: {name: "кормление", unit: "мл"}
+    expect:
+      status: 303
+      rows:
+        - {table: board_event_types, min: 1, contains: "кормление"}
+
+  - name: первая запись разбирается на величину
+    post: /memory/entries/add
+    data: {board_id: 2, text: "02:50 170"}
+    expect:
+      status: 303
+      rows:
+        - {table: board_events, min: 1, contains: "170"}
+
+  - name: вторая запись тоже
+    post: /memory/entries/add
+    data: {board_id: 2, text: "06:10 200"}
+    expect:
+      status: 303
+      rows:
+        - {table: board_events, min: 2}
+
+  - name: ассистент ставит задачу статистики
+    say: "считай, сколько малыш съел за сутки, и говори утром"
+    expect:
+      tool: track_board
+      rows:
+        - {table: board_stats_tasks, min: 1}
+
+  - name: и выводит это на отдельный экран
+    say: "выведи это на отдельный экран столбиками"
+    expect:
+      tool: show_stats
+      rows:
+        - {table: board_stats_screens, min: 1}
+
+  - name: табло открывается и показывает цифру
+    open: /stats/1
+    expect:
+      status: 200
+      text_contains: "Кормления"
+
+  # Задача статистики цифру считает, но говорит её сводка, а сводки по умолчанию
+  # выключены: человек включает их себе сам на «Профиле и агенте».
+  - name: человек включает утреннюю сводку
+    post: /settings/profile/jobs/morning_digest
+    data: {enabled: "on"}
+    expect:
+      status: 303
+
+  - name: утренняя сводка приносит ту же цифру
+    tick: "2026-08-17 08:30:00"
+    expect:
+      messages_contain: "малыш"

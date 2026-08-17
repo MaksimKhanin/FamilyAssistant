@@ -19,6 +19,10 @@ os.environ.setdefault("MEDIA_ROOT", f"{_TMP}/media")
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("TIMEZONE", "UTC")   # тесты не должны зависеть от пояса машины
 os.environ.setdefault("LLM_BASE_URL", "http://localhost:0/v1")
+# Стенд (app/testkit) включается ключом и без него не существует. В тестах он
+# нужен включённым: у него есть свои тесты, и они проверяют в том числе то, что
+# без ключа ручки не открываются.
+os.environ.setdefault("TESTKIT_TOKEN", "test-stand-token-0123456789")
 os.environ.setdefault("LLM_MODEL", "test-model")
 
 import pytest  # noqa: E402
