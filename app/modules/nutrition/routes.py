@@ -1,5 +1,6 @@
-"""Web screens for the nutrition module: приём пищи, статистика, активность, план."""
+"""Web screens for the nutrition module: приём пищи, статистика, активность, план, книга рецептов."""
 from datetime import date
+from typing import Optional
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -301,7 +302,7 @@ def _plan_context(request: Request, db: Session, current: User, viewed: User,
     context = screen_context(request, db, current, viewed,
                              title="План питания", subtitle="Это идеи, а не предписание")
     context.update(days=service.plan_days(db, viewed.id),
-                   saved=service.saved_ideas(db, viewed.id),
+                   book=service.saved_ideas(db, viewed.id),
                    profile=service.get_profile(db, viewed.id),
                    preferences_limit=service.PREFERENCES_LIMIT,
                    goal_labels=GOAL_LABELS, error=error, comment=comment)
@@ -370,58 +371,137 @@ def toggle_dish(
     return RedirectResponse("/nutrition/plan", status_code=303)
 
 
+def _write_recipe(db: Session, current: User, viewed: User, idea_id: int) -> Optional[str]:
+    """Расписать рецепт блюду и сохранить прямо у него; вернуть текст ошибки.
+
+    Расписывается по просьбе, а не для всего подбора сразу: рецепт стоит
+    обращения к модели, а открывают его у одного-двух блюд из дюжины.
+    """
+    idea = service.get_idea(db, viewed.id, idea_id)
+    if idea is None:
+        return None
+
+    result = run_tool_directly(db, viewed, "dish_recipe", {"name": idea.title},
+                               mode="web", actor=current)
+    if not result.ok:
+        return result.summary
+    service.set_recipe(db, viewed.id, idea_id, result.data.get("recipe", ""))
+    return None
+
+
 @router.post("/plan/dish/{idea_id}/recipe")
-def dish_recipe(
+def plan_dish_recipe(
     request: Request,
     idea_id: int,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """«Рецепт» у блюда — расписать и сохранить прямо у него.
-
-    Расписывается по просьбе, а не для всего подбора сразу: рецепт стоит
-    обращения к модели, а открывают его у одного-двух блюд из дюжины.
-    """
+    """«Рецепт» у блюда подбора — расписать и показать прямо в дне."""
     if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
         return RedirectResponse("/nutrition/plan", status_code=303)
 
-    idea = service.get_idea(db, viewed.id, idea_id)
-    if idea is None:
-        return RedirectResponse("/nutrition/plan", status_code=303)
-
-    result = run_tool_directly(db, viewed, "dish_recipe", {"name": idea.title},
-                               mode="web", actor=current)
-    if result.ok:
-        service.set_recipe(db, viewed.id, idea_id, result.data.get("recipe", ""))
+    error = _write_recipe(db, current, viewed, idea_id)
+    if error is None:
         return RedirectResponse(f"/nutrition/plan#dish-{idea_id}", status_code=303)
     return render(request, "nutrition/plan.html",
-                  _plan_context(request, db, current, viewed, error=result.summary))
+                  _plan_context(request, db, current, viewed, error=error))
 
 
-@router.post("/plan/dishes")
-def keep_dish(
+# --- книга рецептов ---------------------------------------------------------
+
+def _book_context(request: Request, db: Session, current: User, viewed: User,
+                  error: str = None) -> dict:
+    context = screen_context(request, db, current, viewed, title="Книга рецептов",
+                             subtitle="Блюда, которые вы запомнили как свои")
+    context.update(book=service.saved_ideas(db, viewed.id), error=error)
+    return context
+
+
+@router.get("/recipes", response_class=HTMLResponse)
+def recipes_screen(
     request: Request,
-    title: str = Form(...),
-    slot: str = Form(""),
-    kcal: int = Form(0),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """«Оставить» на карточке блюда из разговора — блюдо уезжает в план питания.
+    if not can_see_figures(current, viewed):
+        return _private_notice(request, db, current, viewed, "Книга рецептов",
+                               "Запомненные блюда видит только их владелец")
+
+    return render(request, "nutrition/recipes.html", _book_context(request, db, current, viewed))
+
+
+@router.post("/recipes")
+def remember_dish(
+    request: Request,
+    title: str = Form(...),
+    slot: str = Form(""),
+    kcal: int = Form(0),
+    recipe: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """«Запомнить» на карточке из разговора — блюдо уезжает в книгу рецептов.
+
+    Одна ручка на две карточки: у блюда рецепта ещё нет, у рецепта он приезжает
+    вместе с блюдом. Разводить их значило бы завести два разных «запомнить» для
+    одной и той же записи в книге.
 
     Отвечает так же, как удаление записи из чата: репликой в ленту, если нажали
     в разговоре, и переходом на экран, если нажали на экране.
     """
-    idea = (service.keep_dish(db, viewed.id, title, slot=slot, kcal=kcal)
+    # Рецепт приезжает скрытым полем формы, а браузер отдаёт перевод строки как
+    # CRLF: в базе должен лежать тот же текст, что ушёл в чат, а не его версия
+    # с лишними символами.
+    recipe = (recipe or "").replace("\r\n", "\n")
+    idea = (service.remember_dish(db, viewed.id, title, slot=slot, kcal=kcal, recipe=recipe)
             if can_act_as(current, viewed) and can_see_figures(current, viewed) else None)
-    said = (f"Отметил блюдо: {idea.title}. Оно теперь в плане питания — там же можно "
-            f"попросить рецепт." if idea is not None
-            else "Не получилось отметить это блюдо.")
+
+    if idea is None:
+        said = "Не получилось запомнить это блюдо."
+    elif idea.recipe:
+        said = (f"Запомнил рецепт: {idea.title}. Он в книге рецептов, и я буду "
+                f"опираться на него, когда предлагаю еду.")
+    else:
+        said = (f"Запомнил блюдо: {idea.title}. Оно в книге рецептов — там же можно "
+                f"попросить рецепт.")
 
     if request.headers.get("HX-Request") and not request.headers.get("HX-Boosted"):
         return render(request, "partials/chat_messages.html",
                       {"request": request,
                        "messages": [{"role": "assistant", "text": said, "traces": [], "cards": []}]})
-    return RedirectResponse("/nutrition/plan", status_code=303)
+    return RedirectResponse("/nutrition/recipes", status_code=303)
+
+
+@router.post("/recipes/{idea_id}/recipe")
+def book_dish_recipe(
+    request: Request,
+    idea_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """«Расписать рецепт» у запомненного блюда — недостающая половина записи."""
+    if not can_act_as(current, viewed) or not can_see_figures(current, viewed):
+        return RedirectResponse("/nutrition/recipes", status_code=303)
+
+    error = _write_recipe(db, current, viewed, idea_id)
+    if error is None:
+        return RedirectResponse(f"/nutrition/recipes#dish-{idea_id}", status_code=303)
+    return render(request, "nutrition/recipes.html",
+                  _book_context(request, db, current, viewed, error=error))
+
+
+@router.post("/recipes/{idea_id}/forget")
+def forget_dish(
+    idea_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Убрать блюдо из книги: разонравилось или запомнилось по ошибке."""
+    if can_act_as(current, viewed) and can_see_figures(current, viewed):
+        service.forget_dish(db, viewed.id, idea_id)
+    return RedirectResponse("/nutrition/recipes", status_code=303)

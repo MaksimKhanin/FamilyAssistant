@@ -1,0 +1,73 @@
+# Книга рецептов: спросил, что поесть — расписал рецепт — запомнил — нашёл на экране.
+#
+# Путь целиком человеческий и проверяется целиком: важно не то, что ассистент
+# вежливо согласился запомнить, а то, что после его слов в книге появилась строка
+# с тем самым рецептом, и что в следующем разговоре он опирается на неё сам.
+name: Книга рецептов
+user: marina
+reset:
+  autonomy: 2
+
+model:
+  chat:
+    - when: "поесть"
+      tool: suggest_dish
+      arguments: {wish: "что бы мне поесть?"}
+    - when: "готовить"
+      tool: dish_recipe
+      arguments: {name: "Омлет с овощами"}
+    - when: "запомни"
+      tool: remember_recipe
+      arguments: {name: "Омлет с овощами", with_recipe: true, slot: "ужин", kcal: 420}
+    - when: "ужин"
+      tool: suggest_dish
+      arguments: {wish: "придумай ужин"}
+
+steps:
+  - name: спросил, что поесть — получил одно блюдо
+    say: "что бы мне поесть?"
+    expect:
+      tool: suggest_dish
+      no_warnings: true
+      reply_contains: "ккал"
+
+  - name: попросил рецепт — и рецепт нигде не лежит, пока его не запомнили
+    say: "а как это готовить?"
+    expect:
+      tool: dish_recipe
+      no_warnings: true
+      rows:
+        - {table: meal_ideas, max: 0}
+
+  - name: попросил запомнить рецепт
+    say: "запомни рецепт"
+    expect:
+      tool: remember_recipe
+      no_warnings: true
+      rows:
+        - {table: meal_ideas, min: 1, contains: "Омлет"}
+
+  - name: книга рецептов показывает запомненное
+    open: /nutrition/recipes
+    expect:
+      status: 200
+      text_contains: "Омлет"
+
+  - name: план питания ведёт в книгу
+    open: /nutrition/plan
+    expect:
+      status: 200
+      text_contains: "Книга рецептов"
+
+  - name: запомненное блюдо едет в следующий подбор
+    say: "придумай ужин"
+    expect:
+      tool: suggest_dish
+      no_warnings: true
+
+  - name: блюдо из разговора запоминается кнопкой на карточке
+    post: /nutrition/recipes
+    data: {title: "Запечённая треска", slot: "ужин", kcal: 410}
+    expect:
+      rows:
+        - {table: meal_ideas, min: 2, contains: "треска"}

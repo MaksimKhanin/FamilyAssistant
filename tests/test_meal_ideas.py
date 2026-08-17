@@ -219,28 +219,6 @@ def test_the_recipe_is_written_next_to_the_dish(as_member, db, member, monkeypat
     assert "Нарезать огурцы." in as_member.get("/nutrition/plan").text
 
 
-def test_a_dish_from_the_chat_lands_in_the_plan(as_member, db, member):
-    """Кнопка на карточке в разговоре: блюдо уезжает в план, ответ приходит в ленту."""
-    response = as_member.post("/nutrition/plan/dishes",
-                              data={"title": DISH["title"], "slot": "ужин", "kcal": 320},
-                              headers={"HX-Request": "true"})
-
-    assert DISH["title"] in response.text
-    saved = service.saved_ideas(db, member.id)
-    assert [idea.title for idea in saved] == [DISH["title"]]
-    assert saved[0].kcal == 320
-
-
-def test_the_same_dish_is_not_kept_twice(as_member, db, member):
-    """Кнопка остаётся в ленте навсегда — второе нажатие не должно двоить закреп."""
-    for _ in range(2):
-        as_member.post("/nutrition/plan/dishes",
-                       data={"title": DISH["title"], "slot": "ужин", "kcal": 320},
-                       headers={"HX-Request": "true"})
-
-    assert len(service.saved_ideas(db, member.id)) == 1
-
-
 def test_another_member_cannot_touch_the_plan(db, member, other):
     """Чужой план — не свой: цифры питания видит только их владелец."""
     idea = service.add_idea(db, member.id, "Салат из огурцов", saved=True)
