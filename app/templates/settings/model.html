@@ -72,6 +72,67 @@
         </div>
       </div>
 
+      {# Озвучка стоит рядом с ядром и зрением: это такой же выбор модели —
+         кем панель говорит вслух. Включает же её себе каждый участник сам,
+         у себя в профиле: слушать или читать глазами — дело личное. #}
+      <div class="card stack">
+        <div class="card-title">Озвучка ответов</div>
+        <p class="muted">Чем читать вслух то, что ассистент написал. Кому читать —
+          выбирает каждый участник у себя в профиле.</p>
+        <div class="grid auto-230">
+          {% for value, label, hint in speech_modes %}
+            <label class="card tight stack" style="cursor:pointer;gap:6px;
+                   {% if settings_row.speech_mode == value %}background:var(--surface-2){% endif %}">
+              <div class="row">
+                <input type="radio" name="speech_mode" value="{{ value }}"
+                       {% if settings_row.speech_mode == value %}checked{% endif %}>
+                <span style="font-weight:600">{{ label }}</span>
+              </div>
+              <div class="tiny">{{ hint }}</div>
+            </label>
+          {% endfor %}
+        </div>
+
+        {# Ключи и адрес модели живут в окружении, как и у самой модели. Пока имя
+           не названо, выбор «Модель озвучки» остаётся выбором, но звучит голос
+           устройства — молча подменять решение администратора нельзя, о подмене
+           надо сказать. #}
+        {% if speech_available %}
+          <div class="tiny">Модель озвучки: <span class="mono">{{ speech_model_name }}</span></div>
+        {% else %}
+          <div class="tiny" style="color:var(--alarm-text)">
+            Модель озвучки не задана в окружении (<span class="mono">SPEECH_MODEL</span>) —
+            панель читает голосом устройства, даже если выбрана модель.
+          </div>
+        {% endif %}
+
+        <div>
+          <div class="label">Голос</div>
+          <div class="row wrap" style="gap:6px;margin-top:6px">
+            {% for value, hint in speech_voices.items() %}
+              <label class="chip {% if settings_row.speech_voice == value %}active{% endif %}">
+                <input type="radio" name="speech_voice" value="{{ value }}" style="margin-right:4px"
+                       {% if settings_row.speech_voice == value %}checked{% endif %}>{{ value }}
+                <span class="tiny" style="margin-left:4px">{{ hint|lower }}</span>
+              </label>
+            {% endfor %}
+          </div>
+          <p class="tiny">Голос слышно только у модели: устройство читает тем, что стоит
+            в самом телефоне.</p>
+        </div>
+
+        <div>
+          <div class="row">
+            <span class="label">Скорость чтения</span>
+            <span class="spacer stepper-value" id="speech-rate-label">{{ speech_rate }} %</span>
+          </div>
+          <input type="range" name="speech_rate"
+                 min="{{ speech_rate_range[0] }}" max="{{ speech_rate_range[1] }}"
+                 step="{{ speech_rate_range[2] }}" value="{{ speech_rate }}"
+                 oninput="document.getElementById('speech-rate-label').textContent = this.value + ' %'">
+        </div>
+      </div>
+
       <div class="card stack">
         <div class="row">
           <span class="card-title">Потолок расходов на облако</span>

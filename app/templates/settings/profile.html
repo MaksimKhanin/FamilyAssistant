@@ -146,6 +146,38 @@
       </p>
     </div>
 
+    {# Озвучка — рядом с уведомлениями: и то и другое про то, как панель себя
+       ведёт на этом телефоне, а не про то, что ассистент знает. Тумблер свой у
+       каждого, голос за ним — общий, и его здесь только видно. #}
+    <div class="card tight stack">
+      <div class="row" style="gap:12px">
+        <div style="flex:1">
+          <span class="card-title">Озвучивать ответы</span>
+          <p class="muted" style="margin:2px 0 0">
+            Панель прочитает вслух то, что ассистент написал. Пузыри и карточки
+            остаются на месте — читать глазами по-прежнему можно.
+          </p>
+        </div>
+        <form method="post" action="/settings/profile/speech">
+          <input type="hidden" name="enabled" value="{{ 'off' if viewed_speech.enabled else 'on' }}">
+          <button class="toggle {% if viewed_speech.enabled %}on{% endif %}" type="submit"
+                  aria-label="{{ 'Выключить озвучку' if viewed_speech.enabled else 'Включить озвучку' }}"
+                  aria-pressed="{{ 'true' if viewed_speech.enabled else 'false' }}"
+                  {% if not can_edit %}disabled{% endif %}><span></span></button>
+        </form>
+      </div>
+      <p class="tiny">
+        {% if viewed_speech.effective_mode == "model" %}
+          Читает модель озвучки, голос «{{ viewed_speech.voice }}», {{ viewed_speech.rate }} % скорости.
+          Текст ответа при этом уходит провайдеру.
+        {% else %}
+          Читает голос самого устройства, {{ viewed_speech.rate }} % скорости — ничего не уходит из дома.
+          {%- if viewed_speech.mode == "model" %} Модель озвучки семье выбрана, но на сервере не настроена.{% endif %}
+        {% endif %}
+        Чем читать — выбирает администратор на всю семью.
+      </p>
+    </div>
+
     {# Лог агента — на подложке, а не карточкой: это не настройка, а отчёт. #}
     <div class="card tight stack" style="background:var(--surface-3);border-color:transparent">
       <div class="card-title">Что агент делал сегодня</div>

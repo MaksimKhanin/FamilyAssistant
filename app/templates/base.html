@@ -32,6 +32,14 @@
 {# Полоса прогресса и панель чата переживают переход: hx-preserve оставляет
    существующий узел на месте вместо того, чтобы рисовать его заново. #}
 <div id="nav-progress" hx-preserve="true"></div>
+{# Озвучка: браузер узнаёт из разметки, читать ли ответ вслух и чьим голосом.
+   Узел рисуется заново на каждом переходе и вовсе исчезает, когда человек
+   выключил озвучку у себя в профиле, — тумблер действует сразу, а не после
+   перезагрузки панели (app/static/app.js, app/core/speech.py). #}
+{% if speech and speech.enabled %}
+  <div id="speech-settings" hidden data-mode="{{ speech.effective_mode }}"
+       data-rate="{{ speech.rate }}"></div>
+{% endif %}
 {# Класс каркаса ставит экран, а не body: тело документа подменяется целиком,
    и класс на нём не менялся бы при переходе. #}
 <div class="layout {% if is_admin %}admin{% endif %} {% block shell_class %}{% endblock %}">

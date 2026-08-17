@@ -114,6 +114,31 @@ class WebSearchSettings:
 
 
 @dataclass
+class SpeechSettings:
+    """Модель озвучки: OpenAI-совместимый `/audio/speech`.
+
+    Тот же приём, что и у самой модели: адрес и ключ знает только окружение, а
+    в панели выбирают поведение — кем читать и каким голосом. Умолчания для
+    адреса и ключа берутся у `LLM_*`: чаще всего это один и тот же провайдер, и
+    заставлять хозяина дома переписывать те же две строки незачем.
+
+    Имя модели умолчания не имеет нарочно: пока его не назвали, озвучка моделью
+    не предлагается вовсе, и панель читает ответы голосом устройства — он
+    работает всегда, ничего не стоит и никуда не уходит из дома.
+    """
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    #: Формат ответа провайдера. mp3 играет везде, включая iOS.
+    audio_format: str = "mp3"
+    request_timeout: float = 30.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.model)
+
+
+@dataclass
 class AdminSettings:
     """Первый вход в систему — администратор, заводится из окружения при первом старте.
 
@@ -183,6 +208,7 @@ class Settings:
     admin: AdminSettings = field(
         default_factory=lambda: AdminSettings("", "", "", "", "Семья", False))
     llm: LLMSettings = field(default_factory=lambda: LLMSettings("", "", "", "", 0.3, 1024, 60.0))
+    speech: SpeechSettings = field(default_factory=SpeechSettings)
     web_search: WebSearchSettings = field(default_factory=WebSearchSettings)
 
 
@@ -229,6 +255,15 @@ def load_settings() -> Settings:
             reasoning_plan=os.environ.get("LLM_REASONING_PLAN", "off").strip().lower(),
             extra_body=_json_env("LLM_EXTRA_BODY"),
             stub=_flag("LLM_STUB", False),
+        ),
+        speech=SpeechSettings(
+            base_url=(os.environ.get("SPEECH_BASE_URL", "").strip()
+                      or os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")),
+            api_key=(os.environ.get("SPEECH_API_KEY", "").strip()
+                     or os.environ.get("LLM_API_KEY", "")),
+            model=os.environ.get("SPEECH_MODEL", "").strip(),
+            audio_format=os.environ.get("SPEECH_FORMAT", "mp3").strip().lower() or "mp3",
+            request_timeout=float(os.environ.get("SPEECH_TIMEOUT", "30")),
         ),
         web_search=WebSearchSettings(
             provider=os.environ.get("WEB_SEARCH_PROVIDER", "").strip().lower(),

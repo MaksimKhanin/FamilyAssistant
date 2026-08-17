@@ -25,8 +25,10 @@ from app.core import connectors as connector_service
 from app.core import family as family_service
 from app.core import instructions
 from app.core import push
+from app.core import speech
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
+from app.core.config import settings as app_settings
 from app.core.db import get_db
 from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ScheduledJob, User
 from app.core.templating import render
@@ -423,6 +425,11 @@ def profile_screen(
         memo_modules=memo_modules,
         memo_limit=instructions.MEMO_LIMIT,
         push_devices=push.device_count(db, viewed.id),
+        # Озвучка: тумблер свой, а голос — семейный. Показываем и то и другое,
+        # иначе непонятно, чей голос зазвучит и почему его нельзя выбрать здесь.
+        # Ключ свой, не `speech` из каркаса: тот про человека за экраном (читать
+        # вслух будет его телефон), а карточка — про того, чей профиль открыт.
+        viewed_speech=speech.choice(family_service.get_settings(db, viewed.family_id), viewed),
         notice=notice,
         error=error,
         module_list=module_list,
@@ -458,6 +465,24 @@ def set_theme(
     """Оформление своё у каждого — и меняет его человек всегда себе."""
     if theme in THEMES:
         current.theme = theme
+        db.commit()
+    return RedirectResponse("/settings/profile", status_code=303)
+
+
+@router.post("/profile/speech")
+def toggle_speech(
+    enabled: str = Form("off"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Читать ли ответы вслух — своё у каждого, как оформление и характер.
+
+    Чем читать, решает администратор на всю семью: этот тумблер только включает
+    и выключает звук, голос за ним общий (app/core/speech.py).
+    """
+    if can_act_as(current, viewed):
+        viewed.speech_enabled = enabled == "on"
         db.commit()
     return RedirectResponse("/settings/profile", status_code=303)
 
@@ -535,13 +560,21 @@ def model_screen(
 ):
     context = screen_context(request, db, current, viewed,
                              title="Модель и знания",
-                             subtitle="Ядро, зрение, деньги и база знаний семьи")
+                             subtitle="Ядро, зрение, голос, деньги и база знаний семьи")
     settings_row = family_service.get_settings(db, viewed.family_id)
     context.update(
         settings_row=settings_row,
         core_models=CORE_MODELS,
         vlm_modes=VLM_MODES,
         yolo_models=YOLO_MODELS,
+        # Озвучка: кем читать — выбор на всю семью, как и остальные модели.
+        # Включает же её себе каждый участник сам, на своём профиле.
+        speech_modes=speech.MODES,
+        speech_voices=speech.VOICES,
+        speech_available=app_settings.speech.configured,
+        speech_model_name=app_settings.speech.model,
+        speech_rate=speech.normalize_rate(settings_row.speech_rate),
+        speech_rate_range=(speech.RATE_MIN, speech.RATE_MAX, speech.RATE_STEP),
         rag_sources=family_service.RAG_SOURCES,
         rag_values=family_service.rag_sources(settings_row),
     )
@@ -569,6 +602,16 @@ async def update_model(
             settings_row.cloud_budget_eur = max(0, min(60, int(form["cloud_budget"])))
         except ValueError:
             pass
+    # Озвучку моделью выбрать можно и до того, как модель названа в окружении:
+    # выбор семьи от этого не портится, а панель читает голосом устройства, пока
+    # модели нет (app/core/speech.py). Ронять настройку из-за незаполненного
+    # окружения значило бы молча отменять решение администратора.
+    if form.get("speech_mode") in speech.MODE_KEYS:
+        settings_row.speech_mode = form["speech_mode"]
+    if form.get("speech_voice") in speech.VOICES:
+        settings_row.speech_voice = form["speech_voice"]
+    if "speech_rate" in form:
+        settings_row.speech_rate = speech.normalize_rate(form["speech_rate"])
     settings_row.frames_stay_home = form.get("frames_stay_home") == "on"
     db.commit()
 

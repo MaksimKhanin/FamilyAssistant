@@ -10,10 +10,12 @@ gets rendered message bubbles back, including the tool traces and action cards.
 «что-то». На компьютере сбоку есть место, и панель остаётся.
 """
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from app.agent.runtime import AgentReply, agent, approve_action, message_payload, reject_action
+from app.core import family as family_service
+from app.core import speech
 from app.core.auth import get_current_user, get_viewed_user
 from app.core.clock import local_now, to_local
 from app.core.db import get_db
@@ -125,6 +127,36 @@ async def send(
     # Пузырь с репликой человека рисует сам браузер — сразу, не дожидаясь модели
     # (см. htmx:beforeRequest в base.html). Здесь — только ответ ассистента.
     return _render(request, [{"role": "assistant", "text": reply.text, **reply.to_payload()}])
+
+
+@router.post("/speech")
+def speak(
+    text: str = Form(""),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """Звук ответа, когда семья выбрала озвучку моделью.
+
+    Голосом устройства панель читает сама, никого не спрашивая, — сюда она
+    приходит только за живым голосом. Ответ 409 не ошибка, а «читай сам»:
+    браузер на него переключается на синтез устройства, и человек всё равно
+    слышит ответ (`app/static/app.js`).
+
+    Озвучивается то, что прислал браузер, — тот же текст, что он уже показывает
+    пузырём. Читать заново из базы было бы честнее на вид, но у ответа нет
+    адреса: он приезжает по HTMX разметкой, а не идентификатором.
+    """
+    settings_row = family_service.get_settings(db, current.family_id)
+    choice = speech.choice(settings_row, current)
+    if not choice.enabled or choice.effective_mode != "model":
+        return Response(status_code=409)
+    try:
+        audio = speech.synthesize(text, voice=choice.voice, rate=choice.rate)
+    except speech.SpeechUnavailable:
+        return Response(status_code=409)
+    # Ответ не кешируется: следующий будет другим, а этот больше не понадобится.
+    return Response(audio, media_type=speech.media_type(),
+                    headers={"Cache-Control": "no-store"})
 
 
 @router.post("/actions/{pending_id}/approve", response_class=HTMLResponse)
