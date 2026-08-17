@@ -370,11 +370,19 @@ class Agent:
         if "memory" in modules:
             from app.modules.memory.knowledge import rules_for_prompt
             rules = rules_for_prompt(db, actor.id)
+        # Ручки — того же человека, что и характер. В промпт едет не только
+        # уровень, но и чей он, и личные исключения по инструментам: человек
+        # правит всё это словами, и ассистент, не знающий текущего положения,
+        # менял бы его вслепую (ADR-0012).
+        resolved = policy.dials(db, subject)
         system = system_prompt(
             subject, modules,
             character=instructions.character(subject),
             memos=instructions.for_prompt(db, subject.id, modules),
-            autonomy=policy.dials(db, subject.family_id)[0],
+            autonomy=resolved.autonomy,
+            own_autonomy=not resolved.follows_family,
+            tool_exceptions=[(row["spec"].title, row["spec"].name, row["mode"])
+                             for row in policy.own_exceptions(db, subject)],
             rules=rules,
         )
         if "memory" in modules:

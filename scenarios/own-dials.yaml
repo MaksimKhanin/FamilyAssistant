@@ -1,0 +1,81 @@
+# Человек меняет инструкцию ассистента: спрашивать или делать.
+#
+# Проверяется не «инструмент вернул ok», а то, ради чего ручка заводилась
+# (ADR-0012): сказанное словами меняет поведение системы, а не только обещание
+# модели. После «спрашивай, прежде чем писать на доски» запись правда уходит в
+# подтверждение — на той же самостоятельности, на которой минуту назад проходила
+# сама. И обратная граница: выключенное администратором себе не включается.
+name: Свои ручки ассистента
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  # На доске уже лежит «вода 123» из сборки стенда — считаем от неё.
+  - name: на полном доверии запись на доску проходит сама
+    model:
+      chat:
+        - tool: write_entry
+          arguments: {board: "Счётчики", text: "вода 456"}
+        - content: "Записала."
+          keep: true
+    say: "запиши на доску счётчиков: вода 456"
+    expect:
+      tool: write_entry
+      pending: 0
+      rows:
+        - {table: board_entries, min: 2, contains: "вода 456"}
+
+  - name: «спрашивай меня» ставит ручку, а не обещание
+    model:
+      chat:
+        - tool: set_tool_mode
+          arguments: {tool: "write_entry", mode: "ask"}
+        - content: "Хорошо, теперь буду спрашивать."
+          keep: true
+    say: "с этого момента спрашивай меня, прежде чем писать на доски"
+    expect:
+      tool: set_tool_mode
+      rows:
+        - {table: user_tool_policies, min: 1, contains: "write_entry"}
+
+  - name: следующая запись ждёт «да»
+    model:
+      chat:
+        - tool: write_entry
+          arguments: {board: "Счётчики", text: "вода 789"}
+        - content: "Подготовила — подтвердите."
+          keep: true
+    say: "запиши на доску счётчиков: вода 789"
+    expect:
+      pending: 1
+      reply_not_contains: ["записала", "готово"]
+      rows:
+        - {table: board_entries, max: 2}
+
+  - name: подтверждение доводит запись до доски
+    confirm: approve
+    expect:
+      pending: 0
+      rows:
+        - {table: board_entries, min: 3, contains: "вода 789"}
+
+  - name: администратор выключает инструмент на весь дом
+    post: /settings/agent/tools/notify_family
+    user: admin
+    data: {mode: "off"}
+    expect:
+      status: 303
+
+  - name: выключенное администратором себе не включается
+    model:
+      chat:
+        - tool: set_tool_mode
+          arguments: {tool: "notify_family", mode: "auto"}
+        - content: "Не вышло: это выключено администратором."
+          keep: true
+    say: "разреши себе писать всей семье без спроса"
+    expect:
+      reply_not_contains: ["включила", "готово"]
+      rows:
+        - {table: user_tool_policies, max: 1}

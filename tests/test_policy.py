@@ -1,8 +1,11 @@
 """Autonomy policy: what the assistant may do by itself.
 
-Обе ручки — самостоятельность и режим инструмента — семейные: их задаёт
-администратор сразу для всех (ADR-0008). Личным остаётся только флаг модуля.
+У обеих ручек — самостоятельности и режима инструмента — два слоя: дом, который
+задаёт администратор, и своё, которым человек его перебивает (ADR-0012). Флаг
+модуля остался админским: сам себе человек область не открывает.
 """
+import pytest
+
 from app.agent import policy, registry
 from app.core.access import set_module_enabled
 from app.core.models import MODE_ASK, MODE_AUTO, MODE_OFF
@@ -81,8 +84,8 @@ def test_tool_switched_off_disappears_too(db, member):
     assert "notify_family" not in names
 
 
-def test_the_dials_are_shared_by_the_whole_family(db, member, other):
-    """Самостоятельность и режимы — общие: администратор задаёт их на всех разом."""
+def test_the_family_dials_are_the_default_for_everyone(db, member, other):
+    """Пока никто не крутил своего, обе ручки работают на всех одинаково."""
     policy.set_autonomy(db, member.family_id, 3)
     remember = registry.get("remember")
 
@@ -92,3 +95,98 @@ def test_the_dials_are_shared_by_the_whole_family(db, member, other):
     policy.set_mode(db, member.family_id, "remember", MODE_ASK)
 
     assert policy.resolve_mode(db, other, remember) == MODE_ASK
+
+
+# --- своё поверх общего (ADR-0012) ----------------------------------------
+
+def test_own_autonomy_beats_the_family_one_and_only_for_its_owner(db, member, other):
+    """Тот, кому переспрашивания мешают, снимает их себе, никого не трогая."""
+    policy.set_autonomy(db, member.family_id, 0)          # дом: всё спрашивает
+    remember = registry.get("remember")
+
+    policy.set_own_autonomy(db, member, 3)
+
+    assert policy.resolve_mode(db, member, remember) == MODE_AUTO
+    assert policy.resolve_mode(db, other, remember) == MODE_ASK
+
+
+def test_own_autonomy_tightens_as_readily_as_it_loosens(db, member):
+    """Ручка личная, а не поблажка: ею и просят спрашивать почаще."""
+    policy.set_autonomy(db, member.family_id, 3)
+    policy.set_own_autonomy(db, member, 0)
+
+    assert policy.resolve_mode(db, member, registry.get("remember")) == MODE_ASK
+
+
+def test_dropping_the_own_autonomy_follows_the_house_again(db, member):
+    """«Как у всех» — это отсутствие своей настройки, а не ещё одно значение.
+
+    Разница видна, когда администратор передумает: тот, кто отказался от своей,
+    поедет за домом дальше, а не застынет на том, что было в момент отказа.
+    """
+    policy.set_autonomy(db, member.family_id, 0)
+    policy.set_own_autonomy(db, member, 3)
+    policy.set_own_autonomy(db, member, None)
+
+    assert policy.dials(db, member).follows_family
+    policy.set_autonomy(db, member.family_id, 2)
+    assert policy.dials(db, member).autonomy == 2
+
+
+def test_own_tool_mode_beats_both_the_slider_and_the_family_exception(db, member):
+    policy.set_autonomy(db, member.family_id, 3)
+    policy.set_mode(db, member.family_id, "remember", MODE_AUTO)
+
+    policy.set_own_mode(db, member, "remember", MODE_ASK)
+
+    assert policy.resolve_mode(db, member, registry.get("remember")) == MODE_ASK
+
+
+def test_a_family_exception_still_beats_the_personal_slider(db, member):
+    """Точная настройка бьёт общую, чья бы она ни была.
+
+    Иначе личный ползунок молча снимал бы исключение, выставленное на весь дом
+    руками, — а его выставляли как раз потому, что ползунка мало.
+    """
+    policy.set_mode(db, member.family_id, "remember", MODE_ASK)
+    policy.set_own_autonomy(db, member, 3)
+
+    assert policy.resolve_mode(db, member, registry.get("remember")) == MODE_ASK
+
+
+def test_what_the_administrator_switched_off_stays_off(db, member):
+    """Единственный настоящий запрет в доме — и себе он не включается."""
+    policy.set_mode(db, member.family_id, "notify_family", MODE_OFF)
+
+    with pytest.raises(policy.LockedByFamily):
+        policy.set_own_mode(db, member, "notify_family", MODE_AUTO)
+
+    policy.set_own_autonomy(db, member, 3)
+    assert policy.resolve_mode(db, member, registry.get("notify_family")) == MODE_OFF
+    assert "notify_family" not in {s.name for s in policy.available_tools(db, member)}
+
+
+def test_switching_a_tool_off_for_yourself_keeps_it_on_the_screen(db, member):
+    """Выключенный себе инструмент пропадает у модели, но остаётся ручкой в профиле.
+
+    Иначе включить его обратно стало бы нечем: на экране пусто, а сказать
+    ассистенту — он о таком инструменте уже не знает.
+    """
+    policy.set_own_mode(db, member, "write_entry", MODE_OFF)
+
+    assert "write_entry" not in {s.name for s in policy.available_tools(db, member)}
+    assert "write_entry" in {row["spec"].name for row in policy.own_overview(db, member)}
+    assert [row["spec"].name for row in policy.own_exceptions(db, member)] == ["write_entry"]
+
+
+def test_the_personal_screen_does_not_offer_a_disabled_module(db, other):
+    set_module_enabled(db, other.id, "nutrition", False)
+
+    names = {row["spec"].name for row in policy.own_overview(db, other)}
+    assert "log_meal" not in names
+    assert "remember" in names
+
+
+def test_an_unknown_tool_is_not_stored_as_a_personal_exception(db, member):
+    with pytest.raises(ValueError):
+        policy.set_own_mode(db, member, "не-инструмент", MODE_ASK)

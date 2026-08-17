@@ -6,14 +6,17 @@
 иначе человек получал бы чужие доски руками ассистента.
 
 Здесь же живут инструменты, которыми ассистент правит сам себя: правило,
-характер, памятка, инструкция доски. Они не про знания, но модуль знаний —
-единственный, который включён всегда, а инструмент, меняющий поведение
-ассистента, не должен исчезать оттого, что человеку выключили область.
+характер, памятка, инструкция доски, а с ADR-0012 ещё и то, о чём он спрашивает
+разрешения. Они не про знания, но модуль знаний — единственный, который включён
+всегда, а инструмент, меняющий поведение ассистента, не должен исчезать оттого,
+что человеку выключили область.
 """
 from datetime import datetime, timedelta
 
+from app.agent import policy, registry
 from app.agent.registry import ToolContext, ToolResult, tool
 from app.core import instructions
+from app.core.models import AUTONOMY_LEVELS, MODE_ASK, MODE_AUTO, MODE_OFF
 from app.core.templating import ru_datetime
 from app.modules.memory import knowledge, reminders, screens, stats
 from app.modules.memory.models import RIGHT_VIEW
@@ -619,6 +622,160 @@ def drop_rule(ctx: ToolContext, rule_id: int) -> ToolResult:
         )
     return ToolResult(summary=f"Снял правило #{rule_id} — больше ему не следую.",
                       data={"rule_id": rule_id})
+
+
+#: Слова, которыми режим называется человеку. Те же, что на экране «Профиль и
+#: агент», — ассистент и панель должны говорить об одном одинаково.
+_MODE_SAID = {
+    MODE_AUTO: "делаю сам, без вопросов",
+    MODE_ASK: "готовлю и жду вашего «да»",
+    MODE_OFF: "не пользуюсь вовсе",
+}
+
+
+def _known_tools(ctx: ToolContext) -> list:
+    """Инструменты, про которые этому человеку есть что настраивать.
+
+    Не `policy.available_tools`: выключенный себе инструмент из того списка
+    пропал бы, и включить его обратно словами стало бы нечем — человеку
+    пришлось бы идти на экран за тем, что он одной фразой и выключил.
+    """
+    from app.core.access import is_module_enabled
+
+    return [spec for spec in registry.all_specs()
+            if is_module_enabled(ctx.db, ctx.subject.id, spec.module)]
+
+
+def _resolve_tool(ctx: ToolContext, name: str):
+    """Инструмент по имени или по названию из промпта — или отказ со списком."""
+    lowered = (name or "").strip().lower()
+    known = _known_tools(ctx)
+    matched = ([s for s in known if s.name.lower() == lowered]
+               or [s for s in known if s.title.lower() == lowered])
+    if len(matched) == 1:
+        return matched[0], None
+
+    available = ", ".join(f"{s.name} ({s.title})" for s in known)
+    return None, ToolResult(
+        summary=f"Инструмента «{name}» у этого человека нет. Настроить можно вот "
+                f"эти: {available}. Переспроси, что именно он имел в виду.",
+        ok=False,
+    )
+
+
+@tool(
+    name="set_tool_mode",
+    module=MODULE,
+    title="Спрашивать или делать",
+    description="""
+    Задать, как ты обходишься с одним своим инструментом у этого человека:
+    auto — делаешь сам, ask — готовишь действие и ждёшь его «да», off — не
+    пользуешься вовсе, family — снять его личную настройку и вернуться к тому,
+    как задано в доме. Это ответ на «спрашивай меня, прежде чем писать на доски»,
+    «не переспрашивай про напоминания» и «больше ничего не записывай сам».
+    tool — имя инструмента (log_meal, write_entry), то самое, которым ты его
+    вызываешь. Действует только на этого человека и меняет то, как система тебя
+    держит, — правилом (set_rule) этого не сделать. Что стоит сейчас, ты видишь
+    в системном промпте. Выключенное администратором на весь дом не включается:
+    инструмент вернёт отказ, и его надо пересказать человеку.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string", "description": "Имя инструмента, например write_entry"},
+            "mode": {"type": "string", "enum": ["auto", "ask", "off", "family"],
+                     "description": "auto — сам, ask — спрашивать, off — не пользоваться, "
+                                    "family — как задано в доме"},
+        },
+        "required": ["tool", "mode"],
+    },
+    # Тот же ряд, что характер и правило: личное, обратимое и видное на экране
+    # «Профиль и агент». При обычной самостоятельности человек увидит кнопку «да».
+    auto_from=2,
+)
+def set_tool_mode(ctx: ToolContext, tool: str, mode: str) -> ToolResult:
+    spec, refusal = _resolve_tool(ctx, tool)
+    if refusal is not None:
+        return refusal
+
+    wanted = None if mode == "family" else mode
+    try:
+        policy.set_own_mode(ctx.db, ctx.subject, spec.name, wanted)
+    except policy.LockedByFamily:
+        return ToolResult(
+            summary=f"«{spec.title}» выключен администратором на всю семью — сам себе "
+                    f"человек его вернуть не может. Скажи ему, что это меняется только "
+                    f"на админском экране «Агент и инструменты».",
+            ok=False,
+        )
+    except ValueError as e:
+        return ToolResult(summary=str(e), ok=False)
+
+    if wanted is None:
+        now = policy.dials(ctx.db, ctx.subject).mode(spec)
+        return ToolResult(
+            summary=f"Снял личную настройку «{spec.title}» — теперь как в доме: "
+                    f"{_MODE_SAID.get(now, now)}.",
+            data={"tool": spec.name, "mode": now},
+        )
+    return ToolResult(
+        summary=f"Про «{spec.title}» теперь так: {_MODE_SAID[wanted]}. Это только для "
+                f"этого человека; поправить можно на экране «Профиль и агент».",
+        data={"tool": spec.name, "mode": wanted},
+    )
+
+
+@tool(
+    name="set_autonomy",
+    module=MODULE,
+    title="Задать самостоятельность",
+    description="""
+    Задать, насколько ты вообще действуешь без спроса у этого человека: 0 — всё
+    спрашиваешь, 1 — спрашиваешь про важное, 2 — сам делаешь рутину, 3 —
+    максимально самостоятельно. Это ответ на «ничего не делай без спроса» и
+    «действуй сам, хватит переспрашивать» — то есть на просьбу сразу про все
+    инструменты; про один инструмент — set_tool_mode. follow_family: true снимает
+    его личную настройку и возвращает к общей, заданной в доме. Настройка личная:
+    у остальных в семье ничего не меняется. Что стоит сейчас, ты видишь в
+    системном промпте — не переставляй то, что уже стоит.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "level": {"type": "integer", "enum": [0, 1, 2, 3],
+                      "description": "0 — всё спрашиваешь, 3 — максимально самостоятельно"},
+            "follow_family": {"type": "boolean",
+                              "description": "Снять личную настройку и вернуться к общей"},
+        },
+    },
+    # Одна фраза меняет поведение всех инструментов сразу — это ряд «сообщить
+    # всей семье»: при обычной самостоятельности спрашиваем, на максимальной нет
+    # (там человек уже сказал, что доверяет).
+    auto_from=3,
+)
+def set_autonomy(ctx: ToolContext, level: int = None, follow_family: bool = False) -> ToolResult:
+    if follow_family:
+        policy.set_own_autonomy(ctx.db, ctx.subject, None)
+        now = policy.dials(ctx.db, ctx.subject).autonomy
+        return ToolResult(
+            summary=f"Снял его личную настройку самостоятельности — теперь как в доме: "
+                    f"«{AUTONOMY_LEVELS[now]}».",
+            data={"autonomy": now, "own": False},
+        )
+    if level is None or int(level) not in AUTONOMY_LEVELS:
+        return ToolResult(
+            summary="Уровень самостоятельности — целое от 0 до 3: 0 — всё спрашиваю, "
+                    "3 — максимально самостоятельно. Переспроси у человека, чего он хочет.",
+            ok=False,
+        )
+
+    policy.set_own_autonomy(ctx.db, ctx.subject, int(level))
+    return ToolResult(
+        summary=f"Теперь для этого человека: «{AUTONOMY_LEVELS[int(level)]}». Настройка "
+                f"его личная — у остальных в семье ничего не изменилось; поправить её "
+                f"можно на экране «Профиль и агент».",
+        data={"autonomy": int(level), "own": True},
+    )
 
 
 @tool(

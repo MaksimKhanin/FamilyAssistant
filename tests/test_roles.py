@@ -55,6 +55,10 @@ def test_the_profile_is_shared_but_only_the_password_and_the_theme():
     assert not roles.may_open(ADMIN, "/settings/profile/character", "POST")
     assert not roles.may_open(ADMIN, "/settings/profile/memo/nutrition", "POST")
     assert not roles.may_open(ADMIN, "/settings/profile", "POST")
+    # Свои ручки ассистента — оттуда же: у администратора ассистента нет вовсе,
+    # и настраивать ему нечего (ADR-0008, ADR-0012).
+    assert not roles.may_open(ADMIN, "/settings/profile/autonomy", "POST")
+    assert not roles.may_open(ADMIN, "/settings/profile/tools/remember", "POST")
 
 
 def test_each_role_has_its_own_home():
