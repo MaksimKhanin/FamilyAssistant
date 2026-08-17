@@ -425,10 +425,11 @@ def track_board(ctx: ToolContext, board: str, request: str, kind: str = None,
             ok=False,
         )
     except stats.TooManyTasks:
+        having = "; ".join(f"«{t.kind}» — {t.request}" for t in stats.list_tasks(ctx.db, grant.board.id))
         return ToolResult(
-            summary=f"На доске «{grant.board.name}» уже пять задач статистики — больше "
-                    f"не заводится, чтобы сводка не стала отчётом. Скажи человеку, что "
-                    f"сначала надо снять лишнюю.",
+            summary=f"На доске «{grant.board.name}» уже пять задач статистики ({having}) — "
+                    f"больше не заводится, чтобы сводка не стала отчётом. Переспроси у "
+                    f"человека, какую снять (drop_stat), и заведи новую на освободившееся место.",
             ok=False,
         )
     if task is None:
@@ -448,6 +449,56 @@ def track_board(ctx: ToolContext, board: str, request: str, kind: str = None,
         card={"type": "board", "board": grant.board.name, "text": task.request,
               "url": knowledge.board_url(grant)},
     )
+
+
+@tool(
+    name="drop_stat",
+    module=MODULE,
+    title="Снять задачу статистики",
+    description="""
+    Снять регулярную задачу статистики по доске: «хватит считать воду», «сними
+    последнюю задачу». board — название доски, kind — тип величины из словаря
+    доски (см. track_board). Табло, заведённое по этой задаче, пропадает вместе
+    с ней — своего смысла без задачи у него нет. Снимает автор задачи или
+    владелец доски.
+    """,
+    parameters={
+        "type": "object",
+        "properties": {
+            "board": {"type": "string", "description": "Название доски"},
+            "kind": {"type": "string", "description": "Тип величины, которую больше не считать"},
+        },
+        "required": ["board", "kind"],
+    },
+    # Необратимо, как drop_rule: ряд, накопленный задачей, уходит вместе с ней.
+    auto_from=3,
+)
+def drop_stat(ctx: ToolContext, board: str, kind: str) -> ToolResult:
+    grant, refusal = _resolve_board(ctx, board)
+    if refusal is not None:
+        return refusal
+
+    tasks = stats.list_tasks(ctx.db, grant.board.id)
+    named = (kind or "").strip().lower()
+    matched = [t for t in tasks if t.kind.lower() == named]
+    if len(matched) != 1:
+        having = "; ".join(f"«{t.kind}» — {t.request}" for t in tasks)
+        return ToolResult(
+            summary=f"Задачи «{kind}» по доске «{grant.board.name}» не нашёл. "
+                    f"Сейчас считается: {having or 'ничего'}. Переспроси у человека, "
+                    f"какую снять.",
+            ok=False,
+        )
+
+    if not stats.delete_task(ctx.db, ctx.actor.id, matched[0].id):
+        return ToolResult(
+            summary=f"Снять задачу «{matched[0].kind}» может только тот, кто её поставил, "
+                    f"или владелец доски «{grant.board.name}».",
+            ok=False,
+        )
+    return ToolResult(summary=f"Снял задачу «{matched[0].kind}» по доске «{grant.board.name}». "
+                              f"Табло по ней, если было заведено, тоже пропало.",
+                      data={"board_id": grant.board.id, "kind": matched[0].kind})
 
 
 @tool(

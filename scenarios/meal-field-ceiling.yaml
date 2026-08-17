@@ -1,0 +1,36 @@
+# Правка цифр блюда не имела верхней границы: «999999999999» в поле «Ккал»
+# тихо проходила и уводила дневной и недельный баланс в область, которую
+# никто не ждал увидеть, — вместе с комментарием ассистента, посчитанным по
+# той же цифре (см. UX-находку про абсурдные числа блюда).
+name: Абсурдная правка блюда отклоняется потолком
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  chat:
+    - when: "пицц"
+      tool: log_meal
+      arguments: {text: "пицца"}
+
+steps:
+  - name: записал приём пищи словами
+    say: "съел пиццу"
+    expect:
+      tool: log_meal
+      rows:
+        - {table: meals, min: 2, contains: "пицц"}
+
+  - name: запредельная правка зажимается потолком, а не проходит как есть
+    post: /nutrition/meal/2/confirm
+    data: {kcal: 999999999999, protein: 999999, fat: 999999, carbs: 999999}
+    expect:
+      status: 303
+      rows:
+        - {table: meals, contains: "20000"}
+
+  - name: баланс дня не уезжает в абсурд
+    open: /nutrition/stats
+    expect:
+      status: 200
+      text_not_contains: "999999999999"

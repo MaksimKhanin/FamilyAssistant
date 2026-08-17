@@ -115,7 +115,17 @@ NOTICES = {
     "board-shared": "Нельзя удалить: доской пользуются другие. Сначала отзовите доступ.",
     "section-shared": "Нельзя удалить раздел: в нём есть доска с активным доступом. "
                       "Сначала отзовите доступ.",
+    "no-access": "Не получилось: прав на эту запись уже нет — доступ мог измениться.",
+    "section-duplicate": "Раздел с таким именем уже есть — их придётся различать по "
+                         "порядку в списке. Можно переименовать один из них.",
 }
+
+
+def _name_taken(db: Session, current: User, name: str, except_id: int = None) -> bool:
+    """Уже есть раздел с таким же именем — не запрет, а материал для notice-подсказки."""
+    name = name.strip().lower()
+    return any(s.name.strip().lower() == name for s in knowledge.list_sections(db, current.id)
+               if s.id != except_id)
 
 
 def _board_view(db: Session, current: User, grant, members) -> dict:
@@ -190,9 +200,12 @@ def add_section(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    duplicate = _name_taken(db, current, name)
     section = knowledge.create_section(db, current.id, name)
-    target = f"/memory?section={section.id}" if section else "/memory"
-    return RedirectResponse(target, status_code=303)
+    if section is None:
+        return RedirectResponse("/memory", status_code=303)
+    notice = "&notice=section-duplicate" if duplicate else ""
+    return RedirectResponse(f"/memory?section={section.id}{notice}", status_code=303)
 
 
 @router.post("/sections/{section_id}/rename")
@@ -202,8 +215,10 @@ def rename_section(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    duplicate = _name_taken(db, current, name, except_id=section_id)
     knowledge.rename_section(db, current.id, section_id, name)
-    return RedirectResponse(f"/memory?section={section_id}", status_code=303)
+    notice = "&notice=section-duplicate" if duplicate else ""
+    return RedirectResponse(f"/memory?section={section_id}{notice}", status_code=303)
 
 
 @router.post("/sections/{section_id}/pin")
@@ -378,7 +393,8 @@ def edit_entry(
     entry = knowledge.get_entry(db, current.id, entry_id)
     board_id = entry.board_id if entry else None
     knowledge.edit_entry(db, current.id, entry_id, text)
-    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+    return RedirectResponse(_entry_action_url(db, current, board_id, denied=entry is None),
+                            status_code=303)
 
 
 @router.post("/entries/{entry_id}/delete")
@@ -390,7 +406,20 @@ def delete_entry(
     entry = knowledge.get_entry(db, current.id, entry_id)
     board_id = entry.board_id if entry else None
     knowledge.delete_entry(db, current.id, entry_id)
-    return RedirectResponse(_board_url(db, current, board_id), status_code=303)
+    return RedirectResponse(_entry_action_url(db, current, board_id, denied=entry is None),
+                            status_code=303)
+
+
+def _entry_action_url(db: Session, current: User, board_id: int, denied: bool) -> str:
+    """Куда вернуть после правки/удаления записи — с явной пометкой, если её не пустили.
+
+    Без этого правка на доске, где права понизили посреди разговора, тихо не
+    применялась: человек видел тот же экран и не понимал, что не так (UX-находка).
+    """
+    url = _board_url(db, current, board_id)
+    if not denied:
+        return url
+    return url + ("&" if "?" in url else "?") + "notice=no-access"
 
 
 # --- словарь величин доски (тикет #30) -----------------------------------------

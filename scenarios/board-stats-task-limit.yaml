@@ -1,0 +1,47 @@
+# Задачу статистики нельзя было снять: ни тула, ни экрана для этого не было,
+# `stats.delete_task` в сервисном слое не вызывался ниоткуда, а отказ на
+# пятой задаче советовал «сначала снять лишнюю» — то, что сделать было нечем
+# (UX-находка при проверке потолка 5 задач на доску).
+name: Задачу статистики можно снять тулом, а не только упереться в потолок
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: заводим тип величины и задачу статистики по нему
+    post: /memory/boards/1/types/add
+    data: {name: "вода", unit: "л"}
+    expect:
+      status: 303
+
+  - name: ставим задачу
+    tool: track_board
+    arguments: {board: "Счётчики", request: "считай воду", kind: "вода"}
+    expect:
+      reply_contains: "Буду считать"
+      rows:
+        - {table: board_stats_tasks, min: 1, contains: "вода"}
+
+  - name: снять чужим по имени типа тулом нельзя — не находит
+    tool: drop_stat
+    arguments: {board: "Счётчики", kind: "кофе"}
+    expect:
+      reply_contains: "не нашёл"
+      rows:
+        - {table: board_stats_tasks, min: 1}
+
+  - name: снять по верному типу — можно, и задача правда исчезает
+    tool: drop_stat
+    arguments: {board: "Счётчики", kind: "вода"}
+    expect:
+      reply_contains: "Снял задачу"
+      rows:
+        - {table: board_stats_tasks, max: 0}
+
+  - name: освободившееся место снова доступно — потолок не залип
+    tool: track_board
+    arguments: {board: "Счётчики", request: "считай воду заново", kind: "вода"}
+    expect:
+      reply_contains: "Буду считать"
+      rows:
+        - {table: board_stats_tasks, min: 1}

@@ -257,6 +257,16 @@ def check(expect: dict, step_result: dict, stand: Stand, user: str) -> List[str]
         problems.append(f"инструменты вызывались, а не должны были: {tools}")
     if "status" in expect and step_result.get("status") != expect["status"]:
         problems.append(f"код ответа {step_result.get('status')}, ждали {expect['status']}")
+    if "location_contains" in expect:
+        location = step_result.get("location") or ""
+        for needle in _as_list(expect["location_contains"]):
+            if needle.lower() not in location.lower():
+                problems.append(f"переход ведёт не туда: «{location}», ждали «{needle}»")
+    if "location_not_contains" in expect:
+        location = step_result.get("location") or ""
+        for needle in _as_list(expect["location_not_contains"]):
+            if needle.lower() in location.lower():
+                problems.append(f"переход ведёт с лишним: «{location}» содержит «{needle}»")
     if "text_not_contains" in expect:
         for needle in _as_list(expect["text_not_contains"]):
             if needle.lower() in (step_result.get("text") or "").lower():
@@ -288,11 +298,14 @@ def check(expect: dict, step_result: dict, stand: Stand, user: str) -> List[str]
             problems.append(f"в таблице {table} строк {len(rows)}, ждали не меньше {rule['min']}")
         if "max" in rule and len(rows) > int(rule["max"]):
             problems.append(f"в таблице {table} строк {len(rows)}, ждали не больше {rule['max']}")
-        if "contains" in rule:
+        if "contains" in rule or "not_contains" in rule:
             haystack = json.dumps(rows, ensure_ascii=False).lower()
-            for needle in _as_list(rule["contains"]):
+            for needle in _as_list(rule.get("contains") or []):
                 if str(needle).lower() not in haystack:
                     problems.append(f"в таблице {table} нет «{needle}»")
+            for needle in _as_list(rule.get("not_contains") or []):
+                if str(needle).lower() in haystack:
+                    problems.append(f"в таблице {table} есть лишнее «{needle}»")
     return problems
 
 

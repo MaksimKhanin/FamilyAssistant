@@ -1,0 +1,36 @@
+# Разделы с одинаковым именем заводились без единого слова — в отличие от
+# логинов участников, которые панель различает сама («sonya» → «sonya2»).
+# Человек мог не заметить, что завёл два «Дом», и путаться в них потом
+# (UX-находка).
+name: Дублирующееся имя раздела получает подсказку
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: заводим ещё один раздел «Дом» — он уже есть с реюма
+    post: /memory/sections/add
+    data: {name: "Дом"}
+    expect:
+      status: 303
+      location_contains: "notice=section-duplicate"
+
+  - name: подсказка видна на экране
+    open: /memory?section=2&notice=section-duplicate
+    expect:
+      status: 200
+      text_contains: "уже есть"
+
+  - name: раздел с уникальным именем подсказку не получает
+    post: /memory/sections/add
+    data: {name: "Работа"}
+    expect:
+      status: 303
+      location_not_contains: "notice"
+
+  - name: переименование в чужое занятое имя тоже подсказывает
+    post: /memory/sections/3/rename
+    data: {name: "Дом"}
+    expect:
+      status: 303
+      location_contains: "notice=section-duplicate"

@@ -1,0 +1,44 @@
+# Понижение доступа к доске посреди работы раньше молчало: правка/удаление
+# чужой уже недоступной записи тихо редиректили на «/memory» без единого
+# слова, и человек не понимал, почему его правка не применилась (UX-находка).
+name: Понижение доступа к доске объясняет отказ, а не молчит
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: делимся доской с правом редактирования
+    post: /memory/boards/1/share
+    data: {member_id: 2, right: "edit"}
+    expect:
+      status: 303
+
+  - name: второй участник пишет свою запись
+    user: leva
+    post: /memory/entries/add
+    data: {board_id: 1, text: "запись льва"}
+    expect:
+      status: 303
+      rows:
+        - {table: board_entries, user: leva, min: 1, contains: "льва"}
+
+  - name: доступ понижают до просмотра
+    post: /memory/boards/1/share
+    data: {member_id: 2, right: "view"}
+    expect:
+      status: 303
+
+  - name: попытка править свою же запись честно отказана с пометкой
+    user: leva
+    post: /memory/entries/2/edit
+    data: {text: "попытка правки после понижения"}
+    expect:
+      status: 303
+      location_contains: "notice=no-access"
+
+  - name: на экране видно, почему правка не применилась
+    user: leva
+    open: /memory?notice=no-access
+    expect:
+      status: 200
+      text_contains: "прав"

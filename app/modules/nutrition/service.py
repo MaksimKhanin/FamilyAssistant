@@ -9,8 +9,9 @@ from app.core import media
 from app.core.clock import day_bounds_utc, local_date, local_today, utc_now
 from app.core.templating import counted
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, GOAL_KEEP, SLOTS, SOURCE_PHOTO, SOURCE_TEXT, STATUS_CONFIRMED,
-    STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, MealIdea, NutritionProfile,
+    ACTIVITY_KCAL, GOAL_KEEP, MEAL_FIELD_CEILING, SLOTS, SOURCE_PHOTO, SOURCE_TEXT,
+    STATUS_CONFIRMED, STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, MealIdea,
+    NutritionProfile,
 )
 from app.modules.nutrition.vision import MealEstimate
 
@@ -119,7 +120,7 @@ def confirm_meal(db: Session, user_id: int, meal_id: int, corrections: dict = No
         if value is None:
             continue
         try:
-            value = max(0, int(round(float(value))))
+            value = max(0, min(MEAL_FIELD_CEILING[field], int(round(float(value)))))
         except (TypeError, ValueError):
             continue
         if value != getattr(meal, field):

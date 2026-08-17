@@ -233,15 +233,23 @@ def _board_event_guess(text: str) -> dict:
     Без этой ветки заглушка отвечала общей заметкой без «events» вовсе —
     `extract_events` не отличает «заглушка не умеет разобрать» от «величин
     правда нет», и статистика любой доски в обычном офлайн-режиме молча
-    показывала бы ноль всегда. Первый тип из словаря и первое число из текста
-    записи — грубо, но с честной низкой уверенностью, как и остальные ветки
-    этой заглушки.
+    показывала бы ноль всегда. Первое число из текста записи и тип из словаря —
+    грубо, но с честной низкой уверенностью, как и остальные ветки этой
+    заглушки; тип берётся тот, чьё имя названо в самой записи («кофе 2 чашки» —
+    «кофе», а не первый по списку), и только если ни один не назван — первый
+    из словаря, как раньше (UX-находка: плашка уточнения предлагает угаданный
+    тип первым, и «первый по словарю» почти всегда был не тем).
     """
     dictionary, _, entry = text.partition("Запись:\n")
-    first_line = next((line for line in dictionary.splitlines() if line.strip().startswith("- ")), "")
-    kind = first_line.strip()[2:].split(" (", 1)[0].strip()
+    kinds = [line.strip()[2:].split(" (", 1)[0].strip()
+            for line in dictionary.splitlines() if line.strip().startswith("- ")]
+    kinds = [k for k in kinds if k]
+    if not kinds:
+        return {"events": []}
+    lowered = entry.lower()
+    kind = next((k for k in kinds if k.lower() in lowered), kinds[0])
     match = _EVENT_VALUE_RE.search(entry)
-    if not kind or not match:
+    if not match:
         return {"events": []}
     value = float(match.group().replace(",", "."))
     return {"events": [{"kind": kind, "value": value, "confidence": "low",

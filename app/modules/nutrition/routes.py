@@ -15,7 +15,8 @@ from app.core.models import User
 from app.core.templating import render
 from app.modules.nutrition import service
 from app.modules.nutrition.models import (
-    ACTIVITY_CEILING, ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, GOAL_LABELS, SOURCE_PHOTO, SOURCE_TEXT,
+    ACTIVITY_CEILING, ACTIVITY_KCAL, ACTIVITY_LABELS, ACTIVITY_UNITS, GOAL_LABELS, MEAL_FIELD_CEILING,
+    SOURCE_PHOTO, SOURCE_TEXT,
 )
 from app.modules.nutrition.service import PERIOD_LABELS, PERIOD_WINDOWS
 from app.modules.nutrition.vision import estimate_from_image, safe_estimate_from_text
@@ -55,6 +56,7 @@ def meal_screen(
         today_meals=service.meals_for_day(db, viewed.id),
         quick_phrases=QUICK_PHRASES,
         error=request.query_params.get("error"),
+        field_ceiling=MEAL_FIELD_CEILING,
     )
     return render(request, "nutrition/meal.html", context)
 

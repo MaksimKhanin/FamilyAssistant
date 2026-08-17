@@ -31,6 +31,7 @@
                 <button class="btn ghost small" type="button"
                         onclick="panel.step('{{ field }}', -{{ step }})">−</button>
                 <input class="field" style="text-align:center" type="number" min="0"
+                       max="{{ field_ceiling[field] }}"
                        id="{{ field }}" name="{{ field }}" value="{{ meal|attr(field) }}">
                 <button class="btn ghost small" type="button"
                         onclick="panel.step('{{ field }}', {{ step }})">+</button>

@@ -146,9 +146,11 @@ steps:
 `model:` внутри шага меняет очередь ответов модели на ходу.
 
 **Проверки** (`expect`): `reply_contains` / `reply_not_contains`, `tool`,
-`no_tools`, `status`, `text_contains` / `text_not_contains`, `pending`,
-`messages_contain`, `no_warnings`, и `rows` — строки в базе:
-`{table, min, max, contains, user}`. Упавший ход отмечается всегда, даже без
+`no_tools`, `status`, `location_contains` / `location_not_contains` (куда ведёт
+переход после `post` — адрес из `Location`, без перехода по нему),
+`text_contains` / `text_not_contains`, `pending`, `messages_contain`,
+`no_warnings`, и `rows` — строки в базе:
+`{table, min, max, contains, not_contains, user}`. Упавший ход отмечается всегда, даже без
 единой проверки.
 
 **Значения, которые рождаются по ходу** — код приглашения, номер записи:
