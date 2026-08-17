@@ -71,6 +71,24 @@
       Убрать{% if selected_camera %} у «{{ selected_camera.label }}»{% endif %}
     </button>
   </form>
+
+  {# Готовые периоды — не единственное, чем человек мыслит: в чате
+     clear_archive/older_than_days принимает любое число суток, а с этого
+     экрана можно было выбрать только сутки/двое/неделю/месяц. Своё число
+     идёт той же ручкой (`/security/archive/purge`), что и готовые кнопки —
+     разбор там уже принимает произвольный `older_than`. #}
+  <form class="row wrap" style="gap:8px;align-items:center"
+        method="post" action="/security/archive/purge"
+        hx-confirm="Убрать записи{% if selected_camera %} камеры «{{ selected_camera.label }}»{% endif %} старше своего числа дней? Файлы удалятся с диска насовсем — события в ленте останутся, но без кадров.">
+    <input type="hidden" name="camera" value="{{ selected_camera.slug if selected_camera else '' }}">
+    <input type="hidden" name="only" value="{{ active_filter }}">
+    <span class="tiny">или своё число дней</span>
+    <input class="field" type="number" name="older_than" min="1" step="1" required
+           style="width:90px" aria-label="Сколько дней оставить нетронутыми">
+    <button class="btn ghost small" type="submit">
+      Убрать{% if selected_camera %} у «{{ selected_camera.label }}»{% endif %}
+    </button>
+  </form>
 </div>
 
 {% endblock %}

@@ -1,0 +1,42 @@
+# «Что заметил ассистент» на экране статистики звучала одинаково нейтрально
+# что для обычного перебора нормы, что для записи, чья цифра уже на самом
+# краю MEAL_FIELD_CEILING (см. находку про абсурдные числа блюда): потолок не
+# даёт цифре стать бесконечной, но не отличает «много, но правдоподобно» от
+# «на пределе того, что вообще стоит записывать» — это должен делать текст.
+# См. service.period_stats (near_ceiling) и nutrition/stats.html.
+name: Комментарий статистики отличает цифру на пределе потолка
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  chat:
+    - when: "суп"
+      tool: log_meal
+      arguments: {text: "суп"}
+    - when: "да, всё верно"
+      tool: confirm_meal
+      arguments: {}
+  json:
+    - json: {title: "Суп", kcal: 17000, protein: 40, fat: 30, carbs: 60, confidence: "medium"}
+      keep: true
+
+steps:
+  - name: записал приём пищи с цифрой у самого потолка
+    say: "съел суп"
+    expect:
+      tool: log_meal
+
+  - name: подтвердил без цифр
+    say: "да, всё верно"
+    expect:
+      tool: confirm_meal
+      rows:
+        - {table: meals, contains: "17000"}
+
+  - name: статистика звучит осторожнее обычного «немного больше нормы»
+    open: /nutrition/stats
+    expect:
+      status: 200
+      text_contains: "перепроверить"
+      text_not_contains: "ничего страшного"

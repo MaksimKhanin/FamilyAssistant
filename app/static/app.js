@@ -683,6 +683,7 @@
     const kcal = Math.round(value * parseFloat(selected.dataset.rate));
     document.getElementById('activity-estimate').textContent = '≈ ' + kcal + ' ккал';
     field.placeholder = 'Сколько' + (selected.dataset.unit ? ' ' + selected.dataset.unit : '');
+    field.max = selected.dataset.ceiling || '';
   }
 
   window.panel = {

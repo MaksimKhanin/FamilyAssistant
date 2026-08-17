@@ -1,0 +1,47 @@
+# MEAL_FIELD_CEILING зажимал цифру только в confirm_meal при явной правке —
+# черновик создавался без потолка вообще (create_draft брал оценку модели как
+# есть). Модель, вернувшая абсурдную оценку («под миллиард ккал»), проходила
+# в таблицу нетронутой, и человек, подтвердивший её без единой цифры
+# («да, всё верно»), молча уносил её в дневной баланс. См. models.py
+# (MEAL_FIELD_CEILING) и service.create_draft.
+name: Абсурдный черновик зажимается потолком при пустом подтверждении
+user: marina
+reset:
+  autonomy: 3
+
+model:
+  chat:
+    - when: "суп"
+      tool: log_meal
+      arguments: {text: "суп"}
+    - when: "да, всё верно"
+      tool: confirm_meal
+      arguments: {}
+  json:
+    - json: {title: "Суп", kcal: 950000000, protein: 900000, fat: 900000, carbs: 900000,
+             confidence: "low", note: "Оценка выглядит завышенной"}
+      keep: true
+
+steps:
+  - name: модель вернула абсурдную оценку — черновик уже не должен принять её как есть
+    say: "съел суп"
+    expect:
+      tool: log_meal
+      rows:
+        - {table: meals, contains: "Суп"}
+        - {table: meals, contains: "20000"}
+        - {table: meals, not_contains: "950000000"}
+
+  - name: подтверждение без единой цифры не открывает лазейку — потолок уже стоит на черновике
+    say: "да, всё верно"
+    expect:
+      tool: confirm_meal
+      rows:
+        - {table: meals, contains: "confirmed"}
+        - {table: meals, not_contains: "950000000"}
+
+  - name: баланс дня не улетает в абсурд
+    open: /nutrition/stats
+    expect:
+      status: 200
+      text_not_contains: "950000000"

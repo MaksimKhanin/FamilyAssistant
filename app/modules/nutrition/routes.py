@@ -266,7 +266,11 @@ def activity_screen(
                              title="Активность", subtitle="Шаги и тренировки — вручную, без датчиков")
     context.update(
         today=service.activity_for_day(db, viewed.id),
-        kinds=[(k, ACTIVITY_LABELS[k], ACTIVITY_UNITS[k], ACTIVITY_KCAL[k]) for k in ACTIVITY_KCAL],
+        # Потолок едет в разметку по образцу field_ceiling на экране «Приём пищи»:
+        # сервер и так тихо режет запредельное число (см. add_activity ниже),
+        # а без max в поле человек об этом узнаёт только постфактум.
+        kinds=[(k, ACTIVITY_LABELS[k], ACTIVITY_UNITS[k], ACTIVITY_KCAL[k], ACTIVITY_CEILING[k])
+               for k in ACTIVITY_KCAL],
     )
     return render(request, "nutrition/activity.html", context)
 

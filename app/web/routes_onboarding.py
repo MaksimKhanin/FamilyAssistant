@@ -4,6 +4,8 @@ Deliberately not a wizard you must finish: every step is also reachable later fr
 Настройки. A family of five should be able to change its mind about who gets which
 module without going through setup again.
 """
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -28,6 +30,8 @@ STEPS = 3
 def onboarding(
     request: Request,
     step: int = 1,
+    notice: str = None,
+    error: str = None,
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
@@ -46,6 +50,8 @@ def onboarding(
         member_rows=[{"user": m, "avatar": avatar(m), "invite_url": invite_url(m, request)}
                      for m in members],
         can_toggle=True,
+        notice=notice,
+        error=error,
     )
     return render(request, "onboarding.html", context)
 
@@ -68,11 +74,17 @@ def add_member(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    """Завести человека. Пароль он придумает сам по ссылке-приглашению."""
+    """Завести человека. Пароль он придумает сам по ссылке-приглашению.
+
+    Пустое имя или семья на пределе (`accounts.MAX_MEMBERS`) раньше просто
+    молчали: редирект уходил на тот же шаг, а человек не понимал, почему
+    участник не появился. Тот же разбор, что на «Учётные записи»
+    (`routes_settings.add_member`) — ошибка едет в редирект и показывается.
+    """
     try:
         accounts.create_member(db, current, display_name, relation)
-    except accounts.AccountError:
-        pass          # подробный разбор ошибок — на экране «Учётные записи»
+    except accounts.AccountError as e:
+        return RedirectResponse(f"/onboarding?step=2&{urlencode({'error': str(e)})}", status_code=303)
     return RedirectResponse("/onboarding?step=2", status_code=303)
 
 

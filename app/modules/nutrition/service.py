@@ -9,8 +9,8 @@ from app.core import media
 from app.core.clock import day_bounds_utc, local_date, local_today, utc_now
 from app.core.templating import counted
 from app.modules.nutrition.models import (
-    ACTIVITY_KCAL, GOAL_KEEP, MEAL_FIELD_CEILING, SLOTS, SOURCE_PHOTO, SOURCE_TEXT,
-    STATUS_CONFIRMED, STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, MealIdea,
+    ACTIVITY_KCAL, GOAL_KEEP, MEAL_FIELD_CEILING, NEAR_CEILING_RATIO, SLOTS, SOURCE_PHOTO,
+    SOURCE_TEXT, STATUS_CONFIRMED, STATUS_CORRECTED, STATUS_DRAFT, ActivityLog, Meal, MealIdea,
     NutritionProfile,
 )
 from app.modules.nutrition.vision import MealEstimate
@@ -81,16 +81,23 @@ def save_image(image_bytes: bytes, user_id: int) -> str:
 
 def create_draft(db: Session, user_id: int, estimate: MealEstimate, source: str = SOURCE_TEXT,
                  raw_input: str = None, image_path: str = None, eaten_at: datetime = None) -> Meal:
+    """Черновик из оценки модели или офлайн-разбора.
+
+    Потолок зажимается уже здесь, а не только в `confirm_meal` при явной правке:
+    иначе абсурдная цифра из модели («под миллиард ккал») попадает в таблицу
+    нетронутой, и человек, подтвердивший черновик без единой цифры («да, всё
+    верно»), молча уносит её в дневной и недельный баланс (см. `MEAL_FIELD_CEILING`).
+    """
     meal = Meal(
         user_id=user_id,
         eaten_at=eaten_at or datetime.utcnow(),
         source=source if source in (SOURCE_PHOTO, SOURCE_TEXT) else SOURCE_TEXT,
         status=STATUS_DRAFT,
         title=estimate.title,
-        kcal=estimate.kcal,
-        protein=estimate.protein,
-        fat=estimate.fat,
-        carbs=estimate.carbs,
+        kcal=max(0, min(MEAL_FIELD_CEILING["kcal"], estimate.kcal)),
+        protein=max(0, min(MEAL_FIELD_CEILING["protein"], estimate.protein)),
+        fat=max(0, min(MEAL_FIELD_CEILING["fat"], estimate.fat)),
+        carbs=max(0, min(MEAL_FIELD_CEILING["carbs"], estimate.carbs)),
         portion=estimate.portion,
         confidence=estimate.confidence,
         raw_input=raw_input,
@@ -247,6 +254,10 @@ class PeriodStats:
     period: str
     days: List[DayTotals]
     norm: int
+    #: Хотя бы одна запись в периоде уже на краю MEAL_FIELD_CEILING — потолок не
+    #: даёт цифре стать бесконечной, но «на пределе того, что вообще стоит
+    #: записывать» и «немного больше нормы» звучать одинаково нейтрально не должны.
+    near_ceiling: bool = False
 
     @property
     def consumed(self) -> int:
@@ -286,6 +297,7 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
 
     buckets = {first_day + timedelta(days=i): DayTotals(day=first_day + timedelta(days=i)) for i in range(span)}
 
+    near_ceiling = False
     for meal in db.query(Meal).filter(Meal.user_id == user_id, Meal.eaten_at >= start).all():
         bucket = buckets.get(local_date(meal.eaten_at))
         if bucket is None:
@@ -294,6 +306,9 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
         bucket.protein += meal.protein
         bucket.fat += meal.fat
         bucket.carbs += meal.carbs
+        if any(getattr(meal, field) >= NEAR_CEILING_RATIO * ceiling
+               for field, ceiling in MEAL_FIELD_CEILING.items()):
+            near_ceiling = True
 
     for entry in db.query(ActivityLog).filter(ActivityLog.user_id == user_id,
                                               ActivityLog.happened_at >= start).all():
@@ -302,7 +317,8 @@ def period_stats(db: Session, user_id: int, period: str = "day", today: date = N
             bucket.burned += entry.kcal
 
     profile = get_profile(db, user_id)
-    return PeriodStats(period=period, days=[buckets[k] for k in sorted(buckets)], norm=profile.daily_kcal)
+    return PeriodStats(period=period, days=[buckets[k] for k in sorted(buckets)], norm=profile.daily_kcal,
+                       near_ceiling=near_ceiling)
 
 
 # --- журнал: что именно записано за эти дни -------------------------------

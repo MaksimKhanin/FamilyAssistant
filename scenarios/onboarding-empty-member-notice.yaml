@@ -1,0 +1,37 @@
+# /onboarding/member глотал AccountError («except AccountError: pass») и молча
+# редиректил на тот же шаг — пустое имя не заводило участника, а человек об
+# этом не узнавал вообще. Экран онбординга к тому же не умел показывать
+# error/notice (в отличие от «Учётные записи», settings/accounts.html). См.
+# app/web/routes_onboarding.py (add_member) и app/templates/onboarding.html.
+name: Онбординг не теряет участника молча при пустом имени
+user: admin
+reset:
+  autonomy: 2
+
+steps:
+  - name: пустое имя не заводит участника и не проходит молча
+    post: /onboarding/member
+    data: {display_name: "", relation: "друг"}
+    expect:
+      status: 303
+      location_contains: "error"
+
+  - name: экран онбординга показывает текст ошибки
+    open: /onboarding?step=2&error=Без имени не получится — как к человеку обращаться?
+    expect:
+      status: 200
+      text_contains: "Без имени"
+
+  - name: обычное добавление участника проходит без лишнего error/notice на экране
+    post: /onboarding/member
+    data: {display_name: "Соня", relation: "дочь"}
+    expect:
+      status: 303
+      location_not_contains: "error"
+
+  - name: успешный переход не тащит за собой чужую ошибку
+    open: /onboarding?step=2
+    expect:
+      status: 200
+      text_contains: "Соня"
+      text_not_contains: "Без имени не получится"

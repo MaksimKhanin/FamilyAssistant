@@ -6,9 +6,10 @@
   <form class="card stack" method="post" action="/nutrition/activity">
     <div class="card-title">Что сегодня было</div>
     <div class="row wrap" style="gap:6px">
-      {% for key, label, unit, rate in kinds %}
+      {% for key, label, unit, rate, ceiling in kinds %}
         <label class="chip">
           <input type="radio" name="kind" value="{{ key }}" data-rate="{{ rate }}" data-unit="{{ unit }}"
+                 data-ceiling="{{ ceiling }}"
                  {% if loop.first %}checked{% endif %} onchange="panel.recalc()" style="margin-right:4px">
           {{ label }}
         </label>
@@ -16,6 +17,7 @@
     </div>
 
     <input class="field" type="number" name="value" id="activity-value" min="0" step="1"
+           max="{{ kinds[0][4] if kinds else '' }}"
            placeholder="Сколько{{ ' ' + kinds[0][2] if kinds else '' }}" oninput="panel.recalc()">
     <p class="muted" id="activity-estimate">≈ 0 ккал</p>
     <p class="tiny">Оценка по простым коэффициентам — точность как у шагомера, не как у лаборатории.</p>
