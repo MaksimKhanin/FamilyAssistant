@@ -195,14 +195,17 @@ def _seed_knowledge(db, user_id: int, knowledge, reminders):
     section = knowledge.create_section(db, user_id, "Личное")
     board = knowledge.create_board(
         db, user_id, section.id, "Наблюдения",
-        instruction="Что ассистент запомнил из разговоров: предпочтения, ограничения, быт.")
+        instruction="Что ассистент запомнил из разговоров: предпочтения, ограничения, быт. "
+                    "Проверяй здесь перед советами о еде, планах и покупках.")
     # Разбор записей здесь не нужен: демо поднимается и без модели.
     for text in ("Соня не ест грибы", "У Лёвы аллергия на арахис", "Летом едем к бабушке"):
         db.add(BoardEntry(board_id=board.id, author_id=None, by_assistant=True, text=text))
 
     feeding = knowledge.create_board(
         db, user_id, section.id, "Кормления",
-        instruction="Записи вида «время объём»: 170 — это миллилитры.")
+        instruction="Записи вида «время объём»: 170 — это миллилитры. Смотри сюда перед "
+                    "советами о кормлении и при вопросах «когда последний раз ел(а)», "
+                    "«сколько сегодня съел».")
     knowledge.add_event_type(db, user_id, feeding.id, "кормление", "мл")
 
     reminders.add_reminder(db, user_id, "Купить корм коту",
