@@ -449,8 +449,10 @@ class Agent:
             else:
                 answer = "Похоже, я закопался в подсчётах. Давайте попробуем сформулировать проще?"
         except LLMUnavailable:
+            # Не сохраняем в chat_messages: иначе следующий вызов увидит этот текст как
+            # свою же прошлую реплику и при повторном сбое начнёт его зацикленно повторять
+            # (это ровно то, что случилось в run 180 — восемь одинаковых ответов подряд).
             reply = AgentReply(text=OFFLINE_REPLY)
-            save_message(db, actor, "assistant", reply.text, channel=channel, payload=reply.to_payload())
             tracing.finish(reply.text)
             return reply
 

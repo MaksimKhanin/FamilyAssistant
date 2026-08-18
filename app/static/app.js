@@ -249,7 +249,15 @@
     sending = input.value;
     input.value = '';
     const text = sending.trim();
-    if (text) {
+    // /clear стирает историю без права на отмену — обычного hx-confirm тут не
+    // повесить: он сидел бы на форме и спрашивал вообще про каждое сообщение.
+    if (text === '/clear' && !confirm('Стереть всю историю чата с ассистентом? Отменить нельзя.')) {
+      input.value = sending;
+      e.preventDefault();
+      return;
+    }
+    // Саму команду пузырём не рисуем — сервер пришлёт свою ленту взамен старой.
+    if (text && text !== '/clear') {
       const bubble = document.createElement('div');
       bubble.className = 'bubble user';
       bubble.textContent = text;
