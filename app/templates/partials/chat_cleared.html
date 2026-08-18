@@ -1,0 +1,10 @@
+{# Ответ на /clear: out-of-band swap — заменяет ленту целиком, а не дописывает в
+   конец (обычный своп формы — beforeend). id совпадает с существующим #chat-body:
+   htmx подменяет его innerHTML этим содержимым и сам wrapper-див в DOM не попадает.
+   #chat-thinking тоже живёт внутри #chat-body (chat.html/chat_panel.html) и без
+   переноса сюда пропал бы насовсем — app.js держит его по id и просто передвигает
+   между сообщениями, а не создаёт заново. #}
+<div id="chat-body" hx-swap-oob="innerHTML">
+  <div class="bubble assistant">История очищена — начинаем с чистого листа.</div>
+  {% include "partials/chat_thinking.html" %}
+</div>

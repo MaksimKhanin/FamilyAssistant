@@ -27,6 +27,10 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 HISTORY_ON_OPEN = 12
 
+#: Аварийный сброс переписки прямо из чата — без него единственный выход из
+#: зациклившейся истории (см. OFFLINE_REPLY в app/agent/runtime.py) — лезть в базу руками.
+CLEAR_COMMAND = "/clear"
+
 SUGGESTIONS = [
     "Съел суп и салат",
     "Что ты помнишь?",
@@ -141,6 +145,10 @@ async def send(
 ):
     image = await photo.read() if photo is not None and photo.filename else None
     text = message.strip()
+    if text == CLEAR_COMMAND:
+        db.query(ChatMessage).filter(ChatMessage.user_id == current.id).delete()
+        db.commit()
+        return render(request, "partials/chat_cleared.html", {"request": request})
     if not text and not image:
         return _render(request, [])
 
