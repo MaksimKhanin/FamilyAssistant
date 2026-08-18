@@ -79,6 +79,18 @@ def test_recall_treats_like_metacharacters_as_letters(db, member):
     assert [h["text"] for h in hits] == ["заряд 100%"]
 
 
+def test_recall_finds_entries_regardless_of_query_word_order(db, member):
+    """Слова запроса ищутся по отдельности, а не фразой целиком (баг из #68:
+    «имя ассистента» не находило «ассистента зовут... это имя»)."""
+    board = _board(db, member, board_name="Память ассистента")
+    knowledge.add_entry(db, member.id, board.id,
+                        "Ассистента зовут Алиса. Максим дал ей это имя.")
+
+    hits = recall(ctx(db, member), query="имя ассистента").data["hits"]
+
+    assert [h["text"] for h in hits] == ["Ассистента зовут Алиса. Максим дал ей это имя."]
+
+
 def test_recall_only_reaches_what_this_person_can_see(db, member, other):
     board = _board(db, other)
     knowledge.add_entry(db, other.id, board.id, "личная запись про грибы")

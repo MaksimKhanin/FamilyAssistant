@@ -673,24 +673,42 @@ def find_sections_by_name(db: Session, user_id: int, name: str) -> List[Section]
 
 
 def search_entries(db: Session, user_id: int, query: str, limit: int = 8):
-    """Поиск подстрокой по всем доступным доскам; выдача помнит, с какой доски
-    факт, — иначе он теряет контекст. Поиск не дотягивается до чужого:
-    границу держит board_grants. Пустой запрос — просто свежие записи:
-    «что ты помнишь» без ключевого слова тоже законный вопрос."""
+    """Поиск по всем доступным доскам; выдача помнит, с какой доски факт, —
+    иначе он теряет контекст. Поиск не дотягивается до чужого: границу держит
+    board_grants. Пустой запрос — просто свежие записи: «что ты помнишь» без
+    ключевого слова тоже законный вопрос.
+
+    Слова запроса ищутся по отдельности (все обязательны), а не фразой
+    целиком: «имя ассистента» находит «Ассистента зовут... это имя» вне
+    зависимости от порядка слов. Короткие слова (предлоги, союзы) в это не
+    считаются — иначе они одни решали бы, что нашлось.
+
+    Сравнение — в Python через str.lower(), а не SQL LIKE/ILIKE: у LOWER()
+    в SQLite регистронезависимость только для ASCII, кириллицу он не трогает
+    («Ассистента».lower() средствами SQL остаётся с большой буквы), и от
+    локали кластера Postgres зависит то же самое. Досок и записей на них у
+    одного человека немного — полный проход по ним дешевле, чем рисковать
+    находить наполовину.
+    """
     boards = {g.board.id: g.board for g in board_grants(db, user_id)}
     if not boards:
         return []
-    rows = db.query(BoardEntry).filter(BoardEntry.board_id.in_(boards))
-    needle = (query or "").strip()
-    if needle:
-        # % и _ в запросе — буквы, а не метасимволы LIKE: «100%» не должен
-        # находить «1000 шагов».
-        escaped = (needle.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_"))
-        rows = rows.filter(BoardEntry.text.ilike(f"%{escaped}%", escape="\\"))
-    rows = (rows.order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc())
-            .limit(limit)
-            .all())
-    return [(entry, boards[entry.board_id]) for entry in rows]
+    rows = (db.query(BoardEntry).filter(BoardEntry.board_id.in_(boards))
+            .order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc()))
+    needle = (query or "").strip().lower()
+    if not needle:
+        entries = rows.limit(limit).all()
+        return [(entry, boards[entry.board_id]) for entry in entries]
+
+    words = [w for w in needle.split() if len(w) >= 3] or [needle]
+    hits = []
+    for entry in rows:
+        text = entry.text.lower()
+        if all(word in text for word in words):
+            hits.append(entry)
+            if len(hits) >= limit:
+                break
+    return [(entry, boards[entry.board_id]) for entry in hits]
 
 
 def person_facts(db: Session, user_id: int, limit: int = 8) -> List[str]:
