@@ -192,7 +192,7 @@ def _resolve_action(telegram_id: int, action: str, target_id: int) -> str:
         if action == "approve":
             return approve_action(db, target_id, user, channel="telegram").summary
         if action == "reject":
-            return reject_action(db, target_id, user).summary
+            return reject_action(db, target_id, user, channel="telegram").summary
 
         from app.agent.runtime import run_tool_directly
         return run_tool_directly(db, user, "confirm_meal", {"meal_id": target_id},

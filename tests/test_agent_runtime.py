@@ -59,12 +59,47 @@ def test_approving_runs_the_action_and_marks_it_confirmed(db, member):
                    LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
 
     pending = db.query(PendingAction).one()
-    result = approve_action(db, pending.id, member)
+    result = approve_action(db, pending.id, member,
+                            llm=FakeLLM([LLMResponse(content="Готово, записала себе.")]))
 
     assert result.ok
     db.refresh(pending)
     assert pending.status == "approved"
     assert db.query(ActionLog).filter(ActionLog.mode == "confirmed").count() == 1
+
+
+def test_approving_speaks_with_the_models_own_words(db, member):
+    """Реплика после «да» — слова модели, характером ассистента, а не сырой
+    технический `summary` инструмента (#78)."""
+    policy.set_autonomy(db, member.family_id, 0)
+    Agent(FakeLLM([_call("remember", text="купить хлеб"),
+                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
+
+    pending = db.query(PendingAction).one()
+    result = approve_action(db, pending.id, member,
+                            llm=FakeLLM([LLMResponse(content="Записала, не забуду.")]))
+
+    assert result.summary == "Записала, не забуду."
+    last = db.query(ChatMessage).order_by(ChatMessage.id.desc()).first()
+    assert last.role == "assistant"
+    assert last.content == "Записала, не забуду."
+
+
+def test_approving_falls_back_to_the_raw_summary_when_the_model_is_offline(db, member):
+    policy.set_autonomy(db, member.family_id, 0)
+    Agent(FakeLLM([_call("remember", text="купить хлеб"),
+                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
+
+    pending = db.query(PendingAction).one()
+
+    class Broken(FakeLLM):
+        def chat(self, *args, **kwargs):
+            raise LLMUnavailable("недоступна")
+
+    result = approve_action(db, pending.id, member, llm=Broken([]))
+
+    assert result.ok
+    assert "Запомнил" in result.summary
 
 
 def test_rejecting_leaves_no_trace_of_the_action(db, member):
@@ -73,12 +108,16 @@ def test_rejecting_leaves_no_trace_of_the_action(db, member):
                    LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
 
     pending = db.query(PendingAction).one()
-    result = reject_action(db, pending.id, member)
+    result = reject_action(db, pending.id, member,
+                           llm=FakeLLM([LLMResponse(content="Хорошо, не буду.")]))
 
     assert result.ok
     db.refresh(pending)
     assert pending.status == "rejected"
     assert db.query(ActionLog).count() == 0
+    last = db.query(ChatMessage).order_by(ChatMessage.id.desc()).first()
+    assert last.role == "assistant"
+    assert last.content == "Хорошо, не буду."
 
 
 def test_another_member_cannot_confirm_your_action(db, member, other):

@@ -5,12 +5,20 @@
   {% if message.role == "user" %}
     <div class="bubble user">{{ message.text }}</div>
   {% else %}
+    {% if message.resolved_pending_id %}
+      {# Плашка подтверждения решена — прячем её карточку там, где она уже
+         показана в ленте (out-of-band swap по тому же id), а не только в
+         этом, новом сообщении. Без этого кнопки «да»/«не надо» оставались
+         видны и нажимаемы после ответа (#78). #}
+      <div id="confirm-{{ message.resolved_pending_id }}" hx-swap-oob="true"></div>
+    {% endif %}
     {% for trace in message.traces %}
       <div class="trace {{ trace.status }}">
         <span class="dot"></span>
         <code>{{ trace.signature }}</code>
         <span>· {% if trace.status == "awaiting" %}ждёт подтверждения
               {%- elif trace.status == "confirmed" %}подтверждено вами
+              {%- elif trace.status == "rejected" %}отклонено вами
               {%- elif trace.status == "failed" %}не получилось
               {%- else %}выполнено{% endif %}</span>
       </div>
@@ -178,7 +186,7 @@
           <a class="btn link" href="/reminders">Все напоминания →</a>
         </div>
       {% elif card.type == "confirm" %}
-        <div class="agent-card">
+        <div class="agent-card" id="confirm-{{ card.pending_id }}">
           <div class="name">{{ card.title }}</div>
           {# С чем именно: подтверждать вслепую «удалить запись о еде» человек не должен. #}
           <div class="mono">

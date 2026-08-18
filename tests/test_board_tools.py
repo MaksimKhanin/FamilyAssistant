@@ -181,7 +181,7 @@ def test_only_the_person_themselves_confirms_their_action(db, member, other):
     assert not refused.ok
     assert db.query(Section).filter(Section.name == "Личное").count() == 0
 
-    approve_action(db, pending.id, other)
+    approve_action(db, pending.id, other, llm=FakeLLM([LLMResponse(content="Запомнила.")]))
 
     section = db.query(Section).filter(Section.name == "Личное").one()
     assert section.user_id == other.id     # факт остался у того, кто просил
