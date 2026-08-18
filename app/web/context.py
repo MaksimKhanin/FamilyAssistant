@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core import family as family_service
 from app.core import roles
+from app.core import speech
 from app.core.access import enabled_modules
 from app.core.auth import can_act_as, can_see_figures
 from app.core.module import NavItem
@@ -184,6 +185,11 @@ def screen_context(request: Request, db: Session, current: User, viewed: User,
         # Оформление берётся у того, кто смотрит, а не у того, от чьего лица:
         # режим «от лица» меняет данные экрана, а не глаза человека перед ним.
         "theme": current.theme if current.theme in THEMES else THEME_WARM,
+        # Озвучка — из тех же соображений у того, кто смотрит: вслух читает
+        # телефон человека за экраном, и «от лица» здесь ничего не меняет.
+        # Каркас кладёт это в разметку, чтобы браузер знал, читать ли ответ и
+        # чьим голосом (app/static/app.js).
+        "speech": speech.choice(settings_row, current),
         "members": members,
         # Переключаться между людьми может только участник: у администратора
         # чужих экранов нет, и полоса аватаров ему ничего не открывает.

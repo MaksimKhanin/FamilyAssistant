@@ -106,6 +106,12 @@ class User(Base):
     #: Оформление панели — личное, а не семейное: акцент семьи (FamilySettings)
     #: остаётся общим, а фон и контраст каждый выбирает под своё время суток.
     theme = Column(String(8), nullable=False, default=THEME_WARM, server_default=THEME_WARM)
+    #: Читать ли ответы ассистента вслух этому человеку. Личное, как оформление:
+    #: одному в машине удобно слушать, другому за столом это мешает. Чем именно
+    #: читать — голосом устройства или моделью — решает администратор на всю
+    #: семью (`family_settings.speech_mode`, app/core/speech.py).
+    #: Выключено по умолчанию: заговорить без спроса панель не должна.
+    speech_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     family = relationship("Family", back_populates="members")
@@ -364,6 +370,15 @@ class FamilySettings(Base):
     vlm_mode = Column(String(16), nullable=False, default="core")       # core|separate
     yolo_model = Column(String(16), nullable=False, default="yolov8n")
     frames_stay_home = Column(Boolean, nullable=False, default=True)
+    #: Озвучка ответов — чем читать вслух и каким голосом (app/core/speech.py).
+    #: Настройка семейная, как и остальные модели: «голосом устройства или
+    #: моделью» — это про то, уходит ли текст ответа из дома и кто за него
+    #: платит, а не про вкус отдельного человека. Своё у человека здесь одно —
+    #: тумблер «читать мне вслух» (`users.speech_enabled`).
+    speech_mode = Column(String(16), nullable=False, default="device", server_default="device")
+    speech_voice = Column(String(32), nullable=False, default="alloy", server_default="alloy")
+    #: Скорость чтения в процентах от обычной.
+    speech_rate = Column(Integer, nullable=False, default=100, server_default="100")
     cloud_budget_eur = Column(Integer, nullable=False, default=20)
     cloud_spent_eur = Column(Float, nullable=False, default=0.0)
     rag_sources_json = Column(Text, nullable=False, default="{}")

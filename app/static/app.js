@@ -215,6 +215,14 @@
 
   document.body.addEventListener('htmx:afterSwap', scrollChat);
 
+  // Ответ читается вслух там же, где он появился в ленте: swap в #chat-body —
+  // это и есть «ассистент только что ответил». Загрузка переписки идёт в
+  // #chat-panel и сюда не попадает: открыть панель — не повод зачитать всю
+  // историю вслух.
+  document.body.addEventListener('htmx:afterSwap', e => {
+    if (e.detail.target && e.detail.target.id === 'chat-body') speakLatest();
+  });
+
   /** Ожидание ответа модели: три сигнала разом, все от одного класса.
    *
    *  Раньше «думает…» жило внутри подвала и показывалось по .htmx-request —
@@ -247,6 +255,8 @@
       bubble.textContent = text;
       document.getElementById('chat-body').appendChild(bubble);
     }
+    // Прежний ответ дочитывать незачем: человек уже спрашивает следующее.
+    stopSpeech();
     setThinking(true);
     scrollChat();
   });
@@ -278,6 +288,89 @@
     if (!input) return;
     input.value = text.trim();
     input.focus();
+  }
+
+  /* =============================== озвучка ============================== */
+
+  /* Читать вслух панель начинает только с двух согласий: администратор выбрал,
+   * чем читать («Модель и знания»), а человек включил озвучку себе (профиль).
+   * Второе видно прямо в разметке: пока озвучка выключена, узла #speech-settings
+   * в документе нет, и весь код ниже молчит (app/core/speech.py).
+   *
+   * Читается ровно текст ответа — то, что человек и так видит пузырём. Карточки
+   * и след инструментов вслух не идут: слушают разговор, а не интерфейс.
+   */
+  let speechAudio = null;
+
+  function speechSettings() {
+    const node = document.getElementById('speech-settings');
+    if (!node) return null;
+    return {
+      mode: node.dataset.mode || 'device',
+      rate: (parseInt(node.dataset.rate, 10) || 100) / 100,
+    };
+  }
+
+  function stopSpeech() {
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    if (speechAudio) {
+      speechAudio.pause();
+      speechAudio = null;
+    }
+  }
+
+  /** Голосом самого устройства: без сети, без денег и без единого байта наружу. */
+  function speakHere(text, rate) {
+    if (!window.speechSynthesis) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ru-RU';
+    utterance.rate = rate;
+    speechSynthesis.speak(utterance);
+  }
+
+  /** Голосом модели. Не вышло — дочитываем устройством: человек просил вслух, и
+   *  тишина вместо ответа читается как поломка панели, а не как отказ модели. */
+  async function speakFromModel(text, rate) {
+    try {
+      const response = await fetch('/chat/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ text }),
+      });
+      if (!response.ok) throw new Error('speech ' + response.status);
+      const audio = new Audio(URL.createObjectURL(await response.blob()));
+      speechAudio = audio;
+      await audio.play();
+    } catch (_) {
+      speakHere(text, rate);
+    }
+  }
+
+  /** Прочитать то, что только что появилось в ленте, — и ровно один раз.
+   *
+   *  Метка на пузыре, а не счётчик сообщений: лента и подгружается, и
+   *  дорисовывается браузером, и после перехода собирается заново, а пузырь
+   *  своё «меня уже читали» переживает всё это, пока он на экране. */
+  function speakLatest() {
+    const body = document.getElementById('chat-body');
+    if (!body) return;
+    const fresh = [...body.querySelectorAll('.bubble.assistant:not([data-voiced])')];
+    markVoiced();
+    const state = speechSettings();
+    if (!state || !fresh.length) return;
+    const text = fresh[fresh.length - 1].textContent.trim();
+    if (!text) return;
+    stopSpeech();
+    if (state.mode === 'model') speakFromModel(text, state.rate);
+    else speakHere(text, state.rate);
+  }
+
+  /** Пометить всё, что уже на экране, прочитанным — молча и не читая.
+   *
+   *  Иначе озвучка, включённая посреди разговора, начала бы с истории. */
+  function markVoiced() {
+    document.querySelectorAll('#chat-body .bubble.assistant')
+            .forEach(bubble => { bubble.dataset.voiced = '1'; });
   }
 
   /* ============================== переходы ============================== */
@@ -378,6 +471,10 @@
     // Разговор открывается на последнем сообщении, а не на начале истории:
     // без этого и лента, и индикатор ожидания оказываются ниже сгиба.
     scrollChat();
+
+    // Переписка, которую браузер только что нарисовал, — уже прочитанная:
+    // вслух идёт то, что ассистент отвечает при человеке, а не вся история.
+    markVoiced();
 
     // Лента доски ведёт себя как мессенджер: открывается на свежем.
     const feed = document.querySelector('[data-feed]');
