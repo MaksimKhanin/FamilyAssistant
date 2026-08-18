@@ -762,6 +762,37 @@ def rules_board(db: Session, user_id: int, create: bool = False) -> Optional[Boa
                          create=create)
 
 
+#: Доски модуля «Подход» (app/modules/relationship) — тот же приём лениво
+#: заводимой системной доски, что и «Память ассистента»/«Поведение помощника»,
+#: только владеет ими не memory, а relationship: своих таблиц у него нет,
+#: и заводить их — значит завести доску, только хуже (ADR-0011).
+APPROACH_NOTES_BOARD_NAME = "Заметки о подходе"
+APPROACH_NOTES_BOARD_INSTRUCTION = (
+    "Личное. Сюда ассистент складывает короткие выводы о том, что работает в "
+    "общении с этим человеком. Записи ведёт автоматический разбор раз в "
+    "несколько сообщений — дубли объединяет сам, то, против чего человек явно "
+    "возразил, убирает сам. Не для показа другим членам семьи."
+)
+APPROACH_SUMMARIES_BOARD_NAME = "Итоги разговоров"
+APPROACH_SUMMARIES_BOARD_INSTRUCTION = (
+    "Личное. Одна запись — одно предложение о том, чем был очередной разобранный "
+    "кусок разговора. Дата — время самой записи. Ведёт автоматический разбор, "
+    "вручную не пополняется. Не для показа другим членам семьи."
+)
+
+
+def approach_notes_board(db: Session, user_id: int, create: bool = True) -> Optional[Board]:
+    """Доска «Заметки о подходе» модуля «Подход» — заводится лениво."""
+    return _system_board(db, user_id, APPROACH_NOTES_BOARD_NAME,
+                         APPROACH_NOTES_BOARD_INSTRUCTION, create=create)
+
+
+def approach_summaries_board(db: Session, user_id: int, create: bool = True) -> Optional[Board]:
+    """Доска «Итоги разговоров» модуля «Подход» — заводится лениво."""
+    return _system_board(db, user_id, APPROACH_SUMMARIES_BOARD_NAME,
+                         APPROACH_SUMMARIES_BOARD_INSTRUCTION, create=create)
+
+
 def add_assistant_entry(db: Session, user_id: int, board_id: int, text: str,
                         llm=None) -> Optional[BoardEntry]:
     """Запись авторства ассистента (author_id NULL, by_assistant) — только на
