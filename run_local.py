@@ -327,7 +327,8 @@ def main():
 
     import uvicorn
     uvicorn.run("app.main:app", host=args.host, port=args.port,
-                reload=not args.no_reload, log_level="info")
+                reload=not args.no_reload, reload_dirs=[str(Path(__file__).parent / "app")],
+                log_level="info")
 
 
 if __name__ == "__main__":
