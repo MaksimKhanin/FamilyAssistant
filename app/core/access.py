@@ -26,6 +26,23 @@ def enabled_modules(db: Session, user_id: int, known: List[str]) -> List[str]:
     return [name for name in known if rows.get(name, True)]
 
 
+def enabled_user_ids(db: Session, module: str, default: bool = False) -> List[int]:
+    """ID всех, кому включён этот модуль — обратная сторона `enabled_modules`.
+
+    Для планировщика: перебирать всех `User` и звать `is_module_enabled` на
+    каждого дороже, чем один запрос по `module_access`. `default` тот же, что
+    у `is_module_enabled`: False — включён только тот, у кого есть явная
+    строка `enabled=True` (для модулей, которые не должны включаться молча —
+    см. модуль «Подход»); True — плюс те, у кого записи ещё нет вовсе.
+    """
+    rows = {r.user_id: r.enabled for r in db.query(ModuleAccess)
+            .filter(ModuleAccess.module == module)}
+    if not default:
+        return [user_id for user_id, enabled in rows.items() if enabled]
+    all_ids = [row[0] for row in db.query(User.id).all()]
+    return [user_id for user_id in all_ids if rows.get(user_id, True)]
+
+
 def set_module_enabled(db: Session, user_id: int, module: str, enabled: bool):
     row = (
         db.query(ModuleAccess)

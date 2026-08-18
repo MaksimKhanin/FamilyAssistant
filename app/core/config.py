@@ -283,6 +283,6 @@ settings = load_settings()
 #: listing it here — the core knows nothing about any module specifically.
 ENABLED_MODULES: List[str] = [
     name.strip()
-    for name in os.environ.get("ENABLED_MODULES", "nutrition,security,memory").split(",")
+    for name in os.environ.get("ENABLED_MODULES", "nutrition,security,memory,relationship").split(",")
     if name.strip()
 ]

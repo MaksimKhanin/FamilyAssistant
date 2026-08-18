@@ -28,6 +28,9 @@ logger = get_logger("scheduler")
 TICK_SEC = 60
 RETENTION_HOUR = 4          # ротацию делаем ночью, когда дома всё равно тихо
 
+#: Не больше стольких разборов «Подхода» за один тик — см. run_relationship_reviews.
+REVIEW_BATCH_PER_TICK = 3
+
 
 def _due(job: ScheduledJob, now: datetime) -> bool:
     if not job.enabled:
@@ -135,6 +138,41 @@ def run_reminders(db: Session, now: datetime):
     db.commit()
 
 
+def run_relationship_reviews(db: Session):
+    """Фоновый разбор модуля «Подход»: раз в REVIEW_EVERY сообщений человека
+    (см. app/modules/relationship/service.py) перечитывает разговор и
+    обновляет заметки.
+
+    Не больше REVIEW_BATCH_PER_TICK человек за тик: разбор — это ещё один
+    LLM-вызов, потенциально небыстрый, а `tick()` общий и последовательный с
+    `run_jobs`/`run_reminders`, у которых есть точные-по-минуте задачи
+    (`_due` требует попадания в минуту без права навёрстывания). Тот, кто не
+    попал в этот тик, останется «готов к разбору» и попадёт в следующий —
+    порог messages не сгорает.
+
+    `default=False` у `enabled_user_ids` намеренно: этот модуль не должен
+    молча включаться тем, кто никогда его не просил (см. миграцию 0015).
+    """
+    from app.core.access import enabled_user_ids
+    from app.modules.relationship import service
+
+    processed = 0
+    for user_id in enabled_user_ids(db, "relationship", default=False):
+        if processed >= REVIEW_BATCH_PER_TICK:
+            break
+        if not service.due(db, user_id):
+            continue
+        user = db.get(User, user_id)
+        if user is None:
+            continue
+        try:
+            service.run_review(db, user)
+        except Exception:
+            logger.exception(f"Разбор подхода для {user.display_name} упал — пропускаю")
+            db.rollback()
+        processed += 1
+
+
 def run_retention(db: Session):
     from app.modules.memory import reminders as reminders_service
     from app.modules.security.retention import rotate
@@ -148,6 +186,9 @@ def tick(now: datetime = None):
     with session_scope() as db:
         run_jobs(db, local)
         run_reminders(db, utc_now())
+        # После точных-по-минуте задач: разбор «Подхода» медленнее и не должен
+        # мешать им попасть в свою минуту.
+        run_relationship_reviews(db)
         if local.hour == RETENTION_HOUR and local.minute == 0:
             run_retention(db)
 
