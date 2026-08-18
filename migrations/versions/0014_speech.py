@@ -11,9 +11,15 @@
     оформление, и выключенное по умолчанию: заговорить без спроса панель не
     должна.
 
-Revision ID: 0013
-Revises: 0012
-Create Date: 2026-08-17
+Номер здесь 0014, а не 0013: тот занят личной самостоятельностью (ADR-0012).
+Две ветки, вышедшие из 0012, взяли один и тот же следующий номер, и Alembic на
+этом останавливается целиком — «Multiple head revisions», ни одна миграция не
+проезжает. Ставим свою в хвост цепочки: миграции независимы, порядок между ними
+любой, важна только единственность головы.
+
+Revision ID: 0014
+Revises: 0013
+Create Date: 2026-08-18
 
 """
 from typing import Sequence, Union
@@ -23,8 +29,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0013'
-down_revision: Union[str, None] = '0012'
+revision: str = '0014'
+down_revision: Union[str, None] = '0013'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

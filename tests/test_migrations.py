@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -245,3 +246,31 @@ def test_upgrade_creates_the_stats_screens_that_die_with_their_series(tmp_path):
     assert fks["task_id"]["options"].get("ondelete", "").upper() == "CASCADE"
     assert fks["user_id"]["referred_table"] == "users"
     assert fks["user_id"]["options"].get("ondelete", "").upper() == "CASCADE"
+
+
+def test_the_chain_has_exactly_one_head():
+    """Голова у цепочки одна — иначе `alembic upgrade head` не проезжает вовсе.
+
+    Две ветки, вышедшие из одной ревизии, легко берут один и тот же следующий
+    номер: он проставляется руками, и в своей ветке каждая права. После слияния
+    Alembic видит две головы (а при совпадении номеров — ещё и дубликат
+    ревизии) и отказывается обновлять базу целиком — падает не новая миграция,
+    а вся команда. Снаружи это выглядит как «залил и всё сломалось»: код уже
+    ждёт новых колонок, а база осталась прежней.
+
+    Тест держится за головы, а не за имена файлов: слить ветки можно и с разными
+    именами, и с одинаковыми — важно, чтобы `head` остался один.
+    """
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    scripts = ScriptDirectory.from_config(cfg)
+
+    heads = scripts.get_heads()
+    assert len(heads) == 1, (
+        f"голов в цепочке миграций {len(heads)}: {heads}. Слились две ветки, "
+        f"каждая со своей миграцией от одного родителя. Перенумеруйте младшую: "
+        f"revision — следующий свободный номер, down_revision — вторая голова."
+    )
+
+    numbers = [script.revision for script in scripts.walk_revisions()]
+    assert len(numbers) == len(set(numbers)), f"номера ревизий повторяются: {numbers}"
