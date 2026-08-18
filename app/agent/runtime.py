@@ -15,7 +15,7 @@ card shows. Nothing here is module-specific.
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +25,7 @@ from app.agent import policy, registry, tracing
 from app.agent.llm import (
     ROUTINE, LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part,
 )
-from app.agent.prompts import system_prompt
+from app.agent.prompts import TONE, WHO, character_block, system_prompt
 from app.agent.registry import ToolContext, ToolResult, ToolSpec
 from app.core import instructions, media
 from app.core.events import ACTION_PENDING, bus
@@ -558,7 +558,47 @@ def _log_action(db: Session, user: User, spec: ToolSpec, arguments: dict,
 
 # --- confirmations --------------------------------------------------------
 
-def approve_action(db: Session, pending_id: int, actor: User, channel: str = "web") -> ToolResult:
+#: `approve_action`/`reject_action` живут вне обычного хода `_respond`, и там
+#: некому пересказать факт голосом ассистента — это делает следующий ход
+#: модели внутри цикла (см. `_handle_call`: summary инструмента едет ей
+#: сообщением `role: tool`). Здесь тот же смысл, но отдельным, коротким
+#: вызовом без инструментов и истории: без него человеку доставался сырой
+#: `ToolResult.summary` — техническая строка без характера, и заведённая
+#: девушке-ассистенту личность на этом шаге пропадала (#78).
+_APPROVE_HINT = (
+    "Человек только что нажал «да, сделай» на подготовленное действие. Скажи "
+    "ему одной-двумя фразами в своей манере, что сделано, — строго по этому "
+    "факту, ничего не добавляя и не выдумывая:\n{fact}"
+)
+_REJECT_HINT = (
+    "Человек отказался от подготовленного действия — нажал «не надо». "
+    "Подтверди отказ одной короткой фразой в своей манере: ты ничего не делаешь."
+)
+
+
+def _phrase(subject: User, instruction: str, llm: LLMClient) -> str:
+    """Пересказать уже случившийся факт голосом ассистента этого человека.
+
+    Не `system_prompt()`: та функция собирает промпт для полноценного хода —
+    с инструментами, историей, памятками. Здесь решать нечего, кроме как
+    сказать одну фразу характером, — лишний контекст только рискует утащить
+    модель в сторону. Модель недоступна — вызывающий сам падает на сырой
+    `summary`, как было до этого шага.
+    """
+    system = "\n".join(part for part in (WHO, character_block(instructions.character(subject)), TONE)
+                       if part)
+    try:
+        response = llm.chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": instruction}],
+            task=ROUTINE,
+        )
+    except LLMUnavailable:
+        return ""
+    return response.content.strip()
+
+
+def approve_action(db: Session, pending_id: int, actor: User, channel: str = "web",
+                   llm: LLMClient = None) -> ToolResult:
     """Run a prepared action after the human said yes."""
     pending = db.get(PendingAction, pending_id)
     if pending is None or pending.status != "pending":
@@ -587,31 +627,49 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
 
     pending.status = "approved"
     pending.resolved_at = datetime.utcnow()
+    # В базе остаётся то, что вернул инструмент, — сырым: это техническая
+    # запись для лога и панели, не реплика в разговоре.
     pending.result_summary = result.summary[:500]
     db.commit()
 
     _log_action(db, subject, spec, arguments, result, mode="confirmed")
-    save_message(db, actor, "assistant", result.summary, channel=channel,
-                 payload=AgentReply(text=result.summary,
+    spoken = _phrase(subject, _APPROVE_HINT.format(fact=result.summary),
+                     llm or default_client) or result.summary
+    reply = replace(result, summary=spoken)
+    save_message(db, actor, "assistant", spoken, channel=channel,
+                 payload=AgentReply(text=spoken,
                                     traces=[Trace(tool=spec.name, title=spec.title, arguments=arguments,
-                                                  status="confirmed", summary=result.summary,
+                                                  status="confirmed", summary=spoken,
                                                   data=result.data or {})],
                                     cards=[result.card] if result.card else []).to_payload())
-    return result
+    return reply
 
 
-def reject_action(db: Session, pending_id: int, actor: User) -> ToolResult:
+def reject_action(db: Session, pending_id: int, actor: User, channel: str = "web",
+                  llm: LLMClient = None) -> ToolResult:
     pending = db.get(PendingAction, pending_id)
     if pending is None or pending.status != "pending":
         return ToolResult(summary="Это действие уже неактуально.", ok=False)
     if actor.id != pending.user_id:
         return ToolResult(summary="Отменить это действие может только сам человек.", ok=False)
 
+    spec = registry.get(pending.tool)
     media.read_and_discard(pending.attachment_path)   # вложение больше не нужно
     pending.status = "rejected"
     pending.resolved_at = datetime.utcnow()
     db.commit()
-    return ToolResult(summary="Хорошо, не делаю.")
+
+    spoken = _phrase(actor, _REJECT_HINT, llm or default_client) or "Хорошо, не делаю."
+    # Сохраняем репликой в разговоре — иначе после перезагрузки экрана отказ
+    # пропадает бесследно, а модель на следующем ходу не знает, что просьбу
+    # сняли, и продолжает читать её как «ждёт подтверждения».
+    save_message(db, actor, "assistant", spoken, channel=channel,
+                 payload=AgentReply(text=spoken,
+                                    traces=[Trace(tool=pending.tool,
+                                                  title=spec.title if spec else pending.tool,
+                                                  arguments=json.loads(pending.arguments_json or "{}"),
+                                                  status="rejected", summary=spoken)]).to_payload())
+    return ToolResult(summary=spoken)
 
 
 def run_tool_directly(db: Session, subject: User, tool_name: str, arguments: dict,

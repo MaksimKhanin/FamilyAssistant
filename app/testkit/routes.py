@@ -289,7 +289,7 @@ def confirm(payload: Dict[str, Any] = Body(default={}), db: Session = Depends(ge
         if decision in ("approve", "yes", "да"):
             result = approve_action(db, pending_id, user, channel=payload.get("channel") or "web")
         else:
-            result = reject_action(db, pending_id, user)
+            result = reject_action(db, pending_id, user, channel=payload.get("channel") or "web")
 
     return {"user": user.username, "pending_id": pending_id, "decision": decision,
             "ok": result.ok, "summary": result.summary, "card": result.card,

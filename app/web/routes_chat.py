@@ -19,7 +19,7 @@ from app.core import speech
 from app.core.auth import get_current_user, get_viewed_user
 from app.core.clock import local_now, to_local
 from app.core.db import get_db
-from app.core.models import ChatMessage, User
+from app.core.models import ChatMessage, PendingAction, User
 from app.core.templating import render, ru_date
 from app.web.context import screen_context
 
@@ -45,7 +45,34 @@ def _history(db: Session, user: User):
     )
     messages = [{"role": m.role, "text": m.content, "at": m.created_at, **message_payload(m)}
                 for m in reversed(rows)]
+    _drop_resolved_confirm_cards(db, messages)
     return _with_day_separators(messages)
+
+
+def _drop_resolved_confirm_cards(db: Session, messages: list) -> None:
+    """Плашки решённых действий не всплывают заново после перезагрузки экрана.
+
+    Карточка `confirm` живёт в payload того сообщения, где действие было ещё
+    `pending`; approve/reject меняют статус в `pending_actions`, но старую
+    запись в истории не трогают. Без фильтра кнопки «да»/«не надо» появлялись
+    бы на экране заново при каждом открытии разговора — уже нерабочие
+    (`approve_action` на решённое действие отвечает «неактуально»), но видимые.
+    """
+    ids = {card["pending_id"] for message in messages for card in (message.get("cards") or [])
+          if card.get("type") == "confirm" and card.get("pending_id") is not None}
+    if not ids:
+        return
+    still_pending = {
+        row.id for row in db.query(PendingAction.id)
+        .filter(PendingAction.id.in_(ids), PendingAction.status == "pending")
+        .all()
+    }
+    for message in messages:
+        cards = message.get("cards")
+        if not cards:
+            continue
+        message["cards"] = [card for card in cards
+                            if card.get("type") != "confirm" or card.get("pending_id") in still_pending]
 
 
 def _with_day_separators(messages: list) -> list:
@@ -172,6 +199,7 @@ def approve(
         "text": result.summary,
         "traces": [],
         "cards": [result.card] if result.card else [],
+        "resolved_pending_id": pending_id,
     }])
 
 
@@ -182,5 +210,11 @@ def reject(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
-    result = reject_action(db, pending_id, current)
-    return _render(request, [{"role": "assistant", "text": result.summary, "traces": [], "cards": []}])
+    result = reject_action(db, pending_id, current, channel="web")
+    return _render(request, [{
+        "role": "assistant",
+        "text": result.summary,
+        "traces": [],
+        "cards": [],
+        "resolved_pending_id": pending_id,
+    }])
