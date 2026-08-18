@@ -28,7 +28,9 @@ from app.core import push
 from app.core.access import access_matrix, set_module_enabled
 from app.core.auth import can_act_as, get_current_user, get_viewed_user
 from app.core.db import get_db
-from app.core.models import AUTONOMY_LEVELS, THEMES, ActionLog, ScheduledJob, User
+from app.core.models import (
+    AUTONOMY_LEVELS, MODE_ASK, MODE_AUTO, MODE_OFF, THEMES, ActionLog, ScheduledJob, User,
+)
 from app.core.templating import render
 from app.modules import names as module_names, togglable
 from app.web.context import avatar, screen_context
@@ -96,16 +98,16 @@ def agent_screen(
     current: User = Depends(get_current_user),
     viewed: User = Depends(get_viewed_user),
 ):
-    """Самостоятельность ассистента и режимы инструментов — одни на всю семью.
+    """Самостоятельность ассистента и режимы инструментов — умолчание всего дома.
 
-    Раньше этот экран был личным и жил внутри «Профиля»; теперь он админский и
-    задаёт правила сразу для всех (ADR-0008). «Насколько ассистенту можно
-    действовать без спроса» — это про доверие в доме, а не про настроение
-    отдельного человека, и разными у домашних эти дырки быть не должны.
+    Раньше этот экран был личным и жил внутри «Профиля»; ADR-0008 сделал его
+    админским и общим, а ADR-0012 вернул человеку право поправить общее себе.
+    Здесь остаётся дом: с чего начинает тот, кто ничего не выбирал, — и «Выкл»,
+    единственное, что личной настройкой не перебивается.
     """
     context = screen_context(request, db, current, viewed,
                              title="Агент и инструменты",
-                             subtitle="Насколько ассистент самостоятелен — одинаково для всех")
+                             subtitle="С чего начинают все в доме — и что выключено совсем")
     context.update(
         autonomy=family_service.get_settings(db, current.family_id).autonomy or 0,
         autonomy_levels=AUTONOMY_LEVELS,
@@ -432,10 +434,13 @@ def profile_screen(
         # Оформление меняет себе тот, кто смотрит: режим «от лица» переключает
         # данные экрана, а не глаза человека перед телефоном.
         current_theme=current.theme,
-        # Самостоятельность на экране только показана: задаёт её администратор
-        # сразу для всей семьи (ADR-0008).
-        autonomy=family_service.get_settings(db, viewed.family_id).autonomy or 0,
+        # Самостоятельность здесь своя и её крутят: общую задаёт администратор,
+        # а эта её перебивает (ADR-0012). Показываем обе — без общей непонятно,
+        # от чего человек отказался, нажав «как у всех».
+        dials=policy.dials(db, viewed),
         autonomy_levels=AUTONOMY_LEVELS,
+        own_tools=policy.own_overview(db, viewed),
+        tool_modes=[(MODE_AUTO, "Сам"), (MODE_ASK, "Спросит"), (MODE_OFF, "Выкл")],
         jobs=_jobs(db, viewed),
         job_labels=JOB_LABELS,
         recent_actions=(
@@ -490,6 +495,55 @@ def update_character(
     """Характер ассистента — свой у каждого, как и оформление."""
     if can_act_as(current, viewed):
         instructions.set_character(db, viewed, character)
+    return RedirectResponse("/settings/profile", status_code=303)
+
+
+def _level(value: str):
+    """Уровень самостоятельности из формы — или None, если это не он."""
+    try:
+        level = int(value)
+    except (TypeError, ValueError):
+        return None
+    return level if level in AUTONOMY_LEVELS else None
+
+
+@router.post("/profile/autonomy")
+def update_own_autonomy(
+    autonomy: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Своя самостоятельность — та же ручка, что у администратора, но себе.
+
+    Значение «family» здесь не четвёртый уровень, а отказ от своего: строка
+    стирается, и человек снова идёт за домом — в том числе когда администратор
+    передумает (ADR-0012).
+    """
+    if can_act_as(current, viewed) and viewed.is_member:
+        level = None if autonomy == "family" else _level(autonomy)
+        if level is not None or autonomy == "family":
+            policy.set_own_autonomy(db, viewed, level)
+    return RedirectResponse("/settings/profile", status_code=303)
+
+
+@router.post("/profile/tools/{tool_name}")
+def update_own_tool_mode(
+    tool_name: str,
+    mode: str = Form(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+    viewed: User = Depends(get_viewed_user),
+):
+    """Личное исключение по одному инструменту. «family» — снять его."""
+    if can_act_as(current, viewed) and viewed.is_member:
+        try:
+            policy.set_own_mode(db, viewed, tool_name,
+                                None if mode == "family" else mode)
+        except (ValueError, policy.LockedByFamily):
+            # Выключенного администратором в списке на экране нет вовсе, а
+            # неизвестное имя приходит только из подделанной формы.
+            pass
     return RedirectResponse("/settings/profile", status_code=303)
 
 

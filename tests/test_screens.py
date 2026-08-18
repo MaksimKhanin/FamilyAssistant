@@ -332,14 +332,50 @@ def test_an_answer_arriving_now_carries_no_day_separator():
     assert "chat-daysep" not in markup
 
 
-def test_the_profile_shows_the_family_dials_without_the_handles(as_member):
-    """Самостоятельность видно, но крутит её администратор — на всю семью."""
+def test_the_profile_turns_the_dials_for_this_person(as_member):
+    """Свои ручки крутит человек сам — админские с его экрана по-прежнему не видны."""
     markup = as_member.get("/settings/profile").text
 
     assert "Самостоятельность" in markup
     assert "Что агент делал сегодня" in markup
+    assert 'action="/settings/profile/autonomy"' in markup
+    assert "/settings/profile/tools/log_meal" in markup
     assert "/settings/agent/tools/log_meal" not in markup
     assert 'action="/settings/agent/autonomy"' not in markup
+
+
+def test_the_profile_handles_turn_the_personal_dials(as_member, db, member):
+    """Экран и разговор крутят одно и то же — и «как у всех» возвращает общее."""
+    from app.agent import policy, registry
+
+    policy.set_autonomy(db, member.family_id, 1)
+
+    as_member.post("/settings/profile/autonomy", data={"autonomy": "3"},
+                   follow_redirects=False)
+    as_member.post("/settings/profile/tools/remember", data={"mode": "ask"},
+                   follow_redirects=False)
+
+    assert policy.dials(db, member).autonomy == 3
+    assert policy.resolve_mode(db, member, registry.get("remember")) == "ask"
+
+    as_member.post("/settings/profile/autonomy", data={"autonomy": "family"},
+                   follow_redirects=False)
+    as_member.post("/settings/profile/tools/remember", data={"mode": "family"},
+                   follow_redirects=False)
+
+    assert policy.dials(db, member).follows_family
+    assert policy.own_exceptions(db, member) == []
+
+
+def test_the_profile_hides_what_the_administrator_switched_off(as_member, db, member):
+    """Выключенное на весь дом человек себе не включает — и ручки для этого нет."""
+    from app.agent import policy
+
+    policy.set_mode(db, member.family_id, "log_meal", "off")
+    markup = as_member.get("/settings/profile").text
+
+    assert "/settings/profile/tools/log_meal" not in markup
+    assert "/settings/profile/tools/remember" in markup
 
 
 def test_the_admin_profile_is_only_the_password_and_the_theme(as_admin):
@@ -351,9 +387,12 @@ def test_the_admin_profile_is_only_the_password_and_the_theme(as_admin):
     assert "Что агент делал сегодня" not in markup
 
 
-def test_the_agent_screen_sets_the_dials_for_everyone(as_admin):
+def test_the_agent_screen_sets_the_house_default(as_admin):
     markup = as_admin.get("/settings/agent").text
 
     assert "Самостоятельность" in markup
     assert "/settings/agent/tools/log_meal" in markup
-    assert "одинаково для всех" in markup
+    # Экран объясняет обе половины своей роли: умолчание дома — и «Выкл», которое
+    # участник себе не перекрутит.
+    assert "Отсюда начинают все в доме" in markup
+    assert "себе не" in markup

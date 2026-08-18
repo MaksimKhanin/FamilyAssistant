@@ -1233,6 +1233,13 @@ input[type="range"] { accent-color: var(--acc); width: 100%; }
 .tool-row { display: flex; flex-direction: column; gap: 4px; }
 .tool-row .mono { color: var(--text-3); font-size: 12px; }
 
+/* Инструменты по одному в профиле: карточка сама себе раскрывашка. Свёрнутая
+   строка читается как остальные карточки экрана, поэтому треугольник браузера
+   убран — открывается нажатием по всей строке. */
+.tool-picker > summary { list-style: none; cursor: pointer; user-select: none; }
+.tool-picker > summary::-webkit-details-marker { display: none; }
+.tool-picker[open] > summary { margin-bottom: 4px; }
+
 /* ---------- меньше движения ---------- */
 
 @media (prefers-reduced-motion: reduce) {

@@ -16,8 +16,9 @@ from app.core.db import get_db
 from app.main import app
 from app.modules.memory import knowledge
 from app.modules.memory.models import Board, BoardEntry, Section
-from app.modules.memory.tools import (add_memo, drop_rule, remember,
-                                      set_board_instruction, set_character, set_rule)
+from app.modules.memory.tools import (add_memo, drop_rule, remember, set_autonomy,
+                                      set_board_instruction, set_character, set_rule,
+                                      set_tool_mode)
 from tests.conftest import FakeLLM
 
 
@@ -171,7 +172,10 @@ def test_a_rule_said_once_reaches_the_next_conversation(db, member):
                    LLMResponse(content="Договорились.")])
           ).respond(db, member, "с этого момента фиксируй моё состояние")
 
-    llm = FakeLLM([LLMResponse(content="Записал.")])
+    # Ответ нарочно без «записал»: отчёт о работе без единого вызова инструмента
+    # рантайм не пропускает и просит модель сделать по-настоящему, а здесь
+    # проверяется не он, а промпт следующего хода.
+    llm = FakeLLM([LLMResponse(content="Хорошо, услышал.")])
     Agent(llm).respond(db, member, "проснулся, чувствую себя усталым")
 
     system = llm.calls[-1]["messages"][0]["content"]
@@ -197,6 +201,94 @@ def test_set_character_refuses_to_empty_the_field(db, member):
 
     assert not set_character(ctx(db, member), text="   ").ok
     assert instructions.own_character(member) == "сухо и по делу"
+
+
+# --- спрашивать или делать (ADR-0012) ----------------------------------------------
+
+def test_asking_to_be_asked_changes_the_dial_not_just_the_words(db, member):
+    """«Спрашивай, прежде чем писать на доски» — это ручка, а не уговор.
+
+    Правилом такое не делается: правило ассистент читает и старается соблюдать,
+    а подтверждение ставит система, и без её ручки человек повторял бы просьбу
+    каждый раз.
+    """
+    from app.agent import policy, registry
+
+    policy.set_autonomy(db, member.family_id, 3)
+
+    result = set_tool_mode(ctx(db, member), tool="write_entry", mode="ask")
+
+    assert result.ok
+    assert policy.resolve_mode(db, member, registry.get("write_entry")) == "ask"
+
+
+def test_the_assistant_cannot_hand_itself_what_the_administrator_switched_off(db, member):
+    from app.agent import policy
+
+    policy.set_mode(db, member.family_id, "notify_family", "off")
+
+    result = set_tool_mode(ctx(db, member), tool="notify_family", mode="auto")
+
+    assert not result.ok
+    # Отказ пересказывают человеку, поэтому в нём должно быть сказано и кто
+    # выключил, и где это меняется.
+    assert "администратор" in result.summary
+    assert "Агент и инструменты" in result.summary
+
+
+def test_an_unknown_tool_comes_back_with_the_list(db, member):
+    result = set_tool_mode(ctx(db, member), tool="сделай_хорошо", mode="ask")
+
+    assert not result.ok
+    assert "write_entry" in result.summary
+
+
+def test_the_autonomy_tool_touches_only_this_person(db, member, other):
+    from app.agent import policy
+
+    policy.set_autonomy(db, member.family_id, 1)
+
+    assert set_autonomy(ctx(db, member), level=3).ok
+
+    assert policy.dials(db, member).autonomy == 3
+    assert policy.dials(db, other).autonomy == 1
+
+
+def test_the_autonomy_tool_can_give_the_dial_back_to_the_house(db, member):
+    from app.agent import policy
+
+    policy.set_autonomy(db, member.family_id, 2)
+    policy.set_own_autonomy(db, member, 0)
+
+    result = set_autonomy(ctx(db, member), follow_family=True)
+
+    assert result.ok
+    assert policy.dials(db, member).follows_family
+    assert policy.dials(db, member).autonomy == 2
+
+
+def test_the_autonomy_tool_asks_again_instead_of_guessing_a_level(db, member):
+    result = set_autonomy(ctx(db, member))
+
+    assert not result.ok
+    assert member.autonomy is None
+
+
+def test_the_dials_reach_the_model_in_the_next_prompt(db, member):
+    """Ассистент должен видеть, что у него уже стоит: иначе он крутит вслепую."""
+    from app.agent import policy
+
+    policy.set_autonomy(db, member.family_id, 1)
+    policy.set_own_autonomy(db, member, 3)
+    policy.set_own_mode(db, member, "write_entry", "ask")
+
+    llm = FakeLLM([LLMResponse(content="Хорошо.")])
+    Agent(llm).respond(db, member, "как дела")
+
+    system = llm.calls[-1]["messages"][0]["content"]
+    assert "Максимально самостоятельно" in system
+    assert "он выбрал себе сам" in system
+    assert "write_entry" in system and "спрашиваешь разрешения" in system
 
 
 # --- памятка -----------------------------------------------------------------------

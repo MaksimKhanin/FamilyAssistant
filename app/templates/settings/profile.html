@@ -107,17 +107,93 @@
       </form>
     {% endfor %}
 
-    {# Самостоятельность здесь только показана: её задаёт администратор сразу
-       для всех (ADR-0008). Показана всё равно — человеку важно знать, в каких
-       случаях ассистент спросит, а в каких сделает сам. #}
+    {# Самостоятельность своя: общую задаёт администратор, эта её перебивает
+       (ADR-0012). Полоски те же, что на админском экране, плюс «как у всех» —
+       отказ от своей настройки, а не пятый уровень. #}
     <div class="card tight stack">
       <div class="row">
         <span class="card-title">Самостоятельность ассистента</span>
-        <span class="spacer" style="color:var(--acc);font-weight:600">{{ autonomy_levels[autonomy] }}</span>
+        <span class="spacer" style="color:var(--acc);font-weight:600">
+          {{ autonomy_levels[dials.autonomy] }}</span>
       </div>
-      <p class="tiny">Одна на всю семью — её выбирает администратор. «Спросит» значит,
-        что ассистент подготовит действие и дождётся вашего «да».</p>
+      <div class="steps">
+        {% for level in autonomy_levels %}
+          <form method="post" action="/settings/profile/autonomy">
+            <input type="hidden" name="autonomy" value="{{ level }}">
+            <button class="{% if level <= dials.autonomy %}on{% endif %}" type="submit"
+                    aria-label="{{ autonomy_levels[level] }}"
+                    {% if not can_edit %}disabled{% endif %}></button>
+          </form>
+        {% endfor %}
+      </div>
+      <p class="tiny">0 — всё спрашивает · 3 — максимально самостоятельно.
+        «Спросит» значит, что ассистент подготовит действие и дождётся вашего «да».</p>
+      <div class="row">
+        <span class="tiny spacer">
+          {%- if dials.follows_family %}
+            Сейчас как у всех в доме — так выбрал администратор.
+          {%- else %}
+            Ваша настройка; в доме выбрано «{{ autonomy_levels[dials.family_autonomy] }}».
+          {%- endif %}
+        </span>
+        {% if can_edit and not dials.follows_family %}
+          <form method="post" action="/settings/profile/autonomy">
+            <input type="hidden" name="autonomy" value="family">
+            <button class="btn ghost small" type="submit">Как у всех</button>
+          </form>
+        {% endif %}
+      </div>
     </div>
+
+    {# Инструменты по одному — за раскрывашкой: настройка редкая, а список
+       длинный, и развёрнутым он оттеснял бы вниз всё остальное на экране.
+       Личные исключения видны и в свёрнутом виде: настройка, о которой человек
+       забыл, объясняет потом «почему он опять спрашивает». #}
+    <details class="card tight stack tool-picker">
+      <summary class="row">
+        <span class="card-title">Что ассистент делает сам</span>
+        <span class="spacer tiny">
+          {%- set own_rows = own_tools|selectattr("own")|list -%}
+          {% if own_rows %}
+            {{ own_rows|length|counted("исключение", "исключения", "исключений") }} из общего
+          {% else %}по инструментам{% endif %}
+        </span>
+      </summary>
+      <p class="muted">Здесь то же, что у самостоятельности, но про один инструмент:
+        «Сам» — сделает и расскажет, «Спросит» — дождётся вашего «да», «Выкл» —
+        не станет им пользоваться вовсе. Ваш выбор сильнее общего.</p>
+      {% for row in own_tools %}
+        <div class="divider" style="margin:2px 0"></div>
+        <div class="tool-row">
+          <div style="font-weight:500">{{ row.spec.title }}</div>
+          <div class="mono">{{ row.spec.name }}</div>
+          <div class="segment wide small" style="margin-top:6px">
+            {% for value, label in tool_modes %}
+              <form method="post" action="/settings/profile/tools/{{ row.spec.name }}">
+                <input type="hidden" name="mode" value="{{ value }}">
+                <button class="{% if row.mode == value %}on{% endif %}" type="submit"
+                        {% if not can_edit %}disabled{% endif %}>{{ label }}</button>
+              </form>
+            {% endfor %}
+          </div>
+          <div class="row">
+            <span class="tiny spacer">
+              {%- if row.own %}ваша настройка
+              {%- elif row.source == "family" %}задано на весь дом
+              {%- else %}как решает самостоятельность{% endif %}
+            </span>
+            {% if can_edit and row.own %}
+              <form method="post" action="/settings/profile/tools/{{ row.spec.name }}">
+                <input type="hidden" name="mode" value="family">
+                <button class="btn ghost small" type="submit">Как у всех</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+      <p class="tiny">Выключенного администратором на весь дом здесь нет: такой
+        инструмент не включается себе.</p>
+    </details>
 
     {# Уведомления идут сразу за инструментами: это последнее «что ассистенту
        можно» — можно ли ему будить телефон. #}
