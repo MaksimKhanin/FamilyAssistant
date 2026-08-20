@@ -84,3 +84,57 @@ def test_an_explicit_opt_out_still_holds(db, member, monkeypatch):
     scheduler.run_relationship_reviews(db)
 
     assert member.id not in reviewed
+
+
+# --- память о прошлых разговорах (тикет #77) --------------------------------
+
+def test_past_summaries_ride_into_the_system_prompt(db, member):
+    from app.agent.llm import LLMResponse
+    from app.agent.runtime import Agent
+    from app.modules.memory import knowledge
+
+    board = knowledge.approach_summaries_board(db, member.id, create=True)
+    knowledge.add_assistant_entry(db, member.id, board.id, "Обсуждали отпуск в горах.")
+
+    llm = FakeLLM([LLMResponse(content="Привет!")])
+    Agent(llm).respond(db, member, "привет")
+
+    system = llm.calls[0]["messages"][0]["content"]
+    assert "О чём вы говорили раньше" in system
+    assert "Обсуждали отпуск в горах." in system
+
+
+def test_without_summaries_the_prompt_stays_clean(db, member):
+    from app.agent.llm import LLMResponse
+    from app.agent.runtime import Agent
+
+    llm = FakeLLM([LLMResponse(content="Привет!")])
+    Agent(llm).respond(db, member, "привет")
+
+    assert "О чём вы говорили раньше" not in llm.calls[0]["messages"][0]["content"]
+
+
+def test_the_morning_digest_offers_a_followup_topic(db, member, monkeypatch):
+    from app import scheduler
+    from app.agent import voice
+    from app.core.models import ScheduledJob
+    from app.modules.memory import knowledge
+    from datetime import datetime
+
+    board = knowledge.approach_summaries_board(db, member.id, create=True)
+    knowledge.add_assistant_entry(db, member.id, board.id, "Обсуждали отпуск в горах.")
+
+    heard = {}
+
+    def fake_speak(subject, hint, fallback="", llm=None):
+        heard["hint"] = hint
+        return fallback
+
+    monkeypatch.setattr(voice, "speak", fake_speak)
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+
+    assert "Обсуждали отпуск в горах." in heard.get("hint", "")
+    assert "вернись к этой теме" in heard["hint"]

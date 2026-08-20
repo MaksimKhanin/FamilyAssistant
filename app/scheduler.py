@@ -59,6 +59,27 @@ _REMINDER_HINT = (
     "«{text}». Ничего не добавляй и не выдумывай."
 )
 
+#: Дописка к утренней просьбе, когда у человека включён «Подход» и есть свежий
+#: итог разговоров: одна фраза-возвращение ко вчерашней теме, не пересказ.
+_FOLLOWUP_HINT = (
+    "\n\nВчера вы разговаривали, и итог был такой: «{summary}». Если уместно, "
+    "одной фразой вернись к этой теме — живым интересом, не пересказом. "
+    "Неуместно — просто пропусти, ничего об этом не говоря."
+)
+
+
+def _followup(db: Session, user: User, kind: str) -> str:
+    """Тема для возвращения — только в утренней сводке и только с «Подходом»."""
+    if kind != "morning_digest":
+        return ""
+    from app.core.access import is_module_enabled
+    from app.modules.relationship.service import recent_summaries
+
+    if not is_module_enabled(db, user.id, "relationship"):
+        return ""
+    summaries = recent_summaries(db, user.id, limit=1)
+    return summaries[0] if summaries else ""
+
 
 #: Сколько после своего времени задача ещё имеет право сработать. Раньше
 #: `_due` требовал точного попадания в минуту: проспал тик — перезапуск,
@@ -162,11 +183,15 @@ def run_jobs(db: Session, now: datetime):
         # Факты собраны; произносит их голос персоны, а при недоступной модели —
         # прежняя каноническая сводка. Числа модель не считает — только слова.
         fallback = f"{OPENINGS.get(job.kind, '')}\n\n" + "\n\n".join(parts)
-        text = voice.speak(user, _DIGEST_HINT.format(
+        hint = _DIGEST_HINT.format(
             moment=_MOMENTS.get(job.kind, "день"),
             date=f"{now:%d.%m.%Y}",
             facts="\n".join(f"- {part}" for part in parts),
-        ), fallback=fallback)
+        )
+        followup = _followup(db, user, job.kind)
+        if followup:
+            hint += _FOLLOWUP_HINT.format(summary=followup)
+        text = voice.speak(user, hint, fallback=fallback)
 
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
                                     "text": text, "severity": "info"})

@@ -436,6 +436,15 @@ class Agent:
             boards = boards_prompt(db, actor.id)
             if boards:
                 system += f"\n{boards}"
+        if "relationship" in modules:
+            # Память за пределами окна истории: последние итоги разговоров,
+            # которые пишет разбор «Подхода». Ноль новых LLM-вызовов — итоги
+            # уже лежат на доске (тикет #77).
+            from app.agent.prompts import summaries_block
+            from app.modules.relationship.service import recent_summaries
+            summaries = summaries_block(recent_summaries(db, actor.id))
+            if summaries:
+                system += f"\n{summaries}"
         messages: List[dict] = [{"role": "system", "content": system}]
         messages.extend(history)
         messages.append({"role": "user", "content": user_content})

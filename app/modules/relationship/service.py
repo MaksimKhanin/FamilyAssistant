@@ -170,6 +170,20 @@ def _apply(db: Session, user: User, raw: dict, known_ids: set) -> None:
         instructions.set_memo(db, user.id, instructions.auto_key(MODULE), digest)
 
 
+def recent_summaries(db: Session, user_id: int, limit: int = 3) -> List[str]:
+    """Последние итоги разговоров — свежие снизу, как в ленте доски.
+
+    Это память ассистента о том, «про что мы вообще говорили», за пределами
+    окна истории: сами итоги пишет `run_review`, а сюда за ними приходят
+    системный промпт (тикет #77) и утренняя сводка за темой для follow-up.
+    """
+    board = knowledge.approach_summaries_board(db, user_id, create=False)
+    if board is None:
+        return []
+    entries = knowledge.list_entries(db, user_id, board.id)
+    return [e.text for e in entries[-limit:]]
+
+
 def run_review(db: Session, user: User, llm=None) -> bool:
     """Один проход разбора для одного человека. True — разбор состоялся.
 
