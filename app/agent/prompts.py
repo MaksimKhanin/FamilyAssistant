@@ -242,6 +242,17 @@ def autonomy_block(level: int, own: bool, exceptions: Sequence[Tuple[str, str, s
     return block
 
 
+def daypart(hour: int) -> str:
+    """Слово о времени суток — факт контекста, не манера (ADR-0006)."""
+    if 5 <= hour < 12:
+        return "утро"
+    if 12 <= hour < 17:
+        return "день"
+    if 17 <= hour < 23:
+        return "вечер"
+    return "ночь"
+
+
 def system_prompt(user: User, modules: List[str], now: datetime = None,
                   character: str = "", memos: Sequence[Tuple[str, str]] = (),
                   autonomy: int = 1, rules: Sequence[Tuple[int, str]] = (),
@@ -272,7 +283,11 @@ def system_prompt(user: User, modules: List[str], now: datetime = None,
         MEAL_RULES if "nutrition" in modules else "",
         memos_block(memos),
         (
-            f"Сейчас: {now:%d.%m.%Y %H:%M}.\n"
+            # Время суток — одной строкой-ориентиром: здороваться по нему и
+            # держать его в уме, а не пересказывать. Как именно звучит «доброе
+            # утро», решает характер, не эта строка.
+            f"Сейчас: {now:%d.%m.%Y %H:%M}, {daypart(now.hour)}. Учитывай время "
+            f"суток сам: приветствие и уместность предложений зависят от него.\n"
             f"Ты разговариваешь с: {who}. Семья: «{user.family.name if user.family else 'Семья'}».\n"
             f"Включённые модули этого человека: {modules_line}.\n"
             + autonomy_block(autonomy, own_autonomy, tool_exceptions)

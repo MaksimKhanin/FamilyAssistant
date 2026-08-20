@@ -31,12 +31,94 @@ HISTORY_ON_OPEN = 12
 #: зациклившейся истории (см. OFFLINE_REPLY в app/agent/runtime.py) — лезть в базу руками.
 CLEAR_COMMAND = "/clear"
 
+#: Прежний статичный набор — остался запасным: подсказки без единого сигнала
+#: о человеке выглядят ровно так, как выглядели всегда.
 SUGGESTIONS = [
     "Съел суп и салат",
     "Что ты помнишь?",
     "Что было ночью дома?",
     "Предложи ужин",
 ]
+
+#: Чем подсказать частый инструмент человека — фразой, с которой этот
+#: инструмент обычно и зовут. Инструменты без внятной короткой фразы
+#: (подтверждения, настройки) в подсказки не просятся.
+TOOL_SUGGESTIONS = {
+    "log_meal": "Съел суп и салат",
+    "log_activity": "Прошёл 8000 шагов",
+    "get_nutrition_stats": "Сколько сегодня калорий?",
+    "suggest_dish": "Предложи ужин",
+    "dish_recipe": "Распиши рецепт ужина",
+    "get_security_log": "Что было ночью дома?",
+    "recall": "Что ты помнишь?",
+    "set_reminder": "Напомни завтра в 9 позвонить врачу",
+    "read_board": "Что нового на досках?",
+}
+
+SUGGESTIONS_LIMIT = 4
+
+
+def _suggestions(db: Session, user: User) -> list:
+    """Подсказки по состоянию дня и привычкам человека — без единого LLM-вызова.
+
+    Три источника, по убыванию веса: незакрытое сегодня (еда не записана к
+    обеду, вечером пора думать об ужине), самые частые инструменты человека за
+    месяц (`action_log`), прежний статичный набор — добить до четырёх. Всё
+    фильтруется включёнными модулями: подсказывать «что дома?» тому, у кого
+    нет камер, значит подсказывать в никуда.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    from app.core.access import is_module_enabled
+    from app.core.clock import utc_now
+    from app.core.models import ActionLog
+
+    nutrition = is_module_enabled(db, user.id, "nutrition")
+    security = is_module_enabled(db, user.id, "security")
+
+    def allowed(text: str) -> bool:
+        if not nutrition and text in ("Съел суп и салат", "Предложи ужин",
+                                      "Сколько сегодня калорий?", "Распиши рецепт ужина",
+                                      "Прошёл 8000 шагов"):
+            return False
+        if not security and text == "Что было ночью дома?":
+            return False
+        return True
+
+    picked: list = []
+
+    def add(text: str):
+        if text and allowed(text) and text not in picked and len(picked) < SUGGESTIONS_LIMIT:
+            picked.append(text)
+
+    now = local_now()
+    if nutrition:
+        from app.modules.nutrition.models import Meal
+        day_start = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        ate_today = (db.query(Meal.id)
+                     .filter(Meal.user_id == user.id, Meal.eaten_at >= day_start)
+                     .first() is not None)
+        if not ate_today and now.hour >= 11:
+            add("Съел суп и салат")
+        if now.hour >= 16:
+            add("Предложи ужин")
+    if security and now.hour < 12:
+        add("Что было ночью дома?")
+
+    month_ago = utc_now() - timedelta(days=30)
+    frequent = (db.query(ActionLog.tool, func.count(ActionLog.id).label("n"))
+                .filter(ActionLog.user_id == user.id, ActionLog.created_at >= month_ago)
+                .group_by(ActionLog.tool)
+                .order_by(func.count(ActionLog.id).desc())
+                .limit(6))
+    for tool, _count in frequent:
+        add(TOOL_SUGGESTIONS.get(tool))
+
+    for text in SUGGESTIONS:
+        add(text)
+    return picked
 
 
 def _history(db: Session, user: User):
@@ -111,7 +193,7 @@ def screen(
                              title="Разговор", subtitle="Скажите словами — остальное подберёт ассистент")
     context.update(
         messages=_history(db, current),
-        suggestions=SUGGESTIONS,
+        suggestions=_suggestions(db, current),
     )
     return render(request, "chat.html", context)
 
@@ -125,7 +207,7 @@ def panel(
     return render(request, "partials/chat_panel.html", {
         "request": request,
         "messages": _history(db, current),
-        "suggestions": SUGGESTIONS,
+        "suggestions": _suggestions(db, current),
     })
 
 
