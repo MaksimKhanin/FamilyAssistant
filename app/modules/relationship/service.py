@@ -163,8 +163,11 @@ def _apply(db: Session, user: User, raw: dict, known_ids: set) -> None:
 
     digest = str(raw.get("digest") or "").strip()
     if digest:
+        # Своя строка, не памятка человека: digest раньше писался прямо в
+        # memo «relationship» и затирал написанное руками. Теперь авто-выжимка
+        # живёт под отдельным ключом, `instructions.for_prompt` возит обе.
         from app.core import instructions
-        instructions.set_memo(db, user.id, MODULE, digest)
+        instructions.set_memo(db, user.id, instructions.auto_key(MODULE), digest)
 
 
 def run_review(db: Session, user: User, llm=None) -> bool:

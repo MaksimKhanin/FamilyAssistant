@@ -104,6 +104,11 @@
                   placeholder="Ассистент прочтёт это, когда речь зайдёт об этой области."
                   {% if not can_edit %}disabled{% endif %}>{{ memo.text }}</textarea>
         {% if can_edit %}<button class="btn ghost" type="submit">Сохранить</button>{% endif %}
+        {# Авто-заметка модуля показывается, но не правится: её ведёт сам
+           модуль, и следующий разбор всё равно переписал бы правку. #}
+        {% if memo.auto %}
+          <p class="muted">Заметки ассистента (обновляет сам): {{ memo.auto }}</p>
+        {% endif %}
       </form>
     {% endfor %}
 
