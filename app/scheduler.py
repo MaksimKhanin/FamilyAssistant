@@ -200,14 +200,15 @@ def run_relationship_reviews(db: Session):
     попал в этот тик, останется «готов к разбору» и попадёт в следующий —
     порог messages не сгорает.
 
-    `default=False` у `enabled_user_ids` намеренно: этот модуль не должен
-    молча включаться тем, кто никогда его не просил (см. миграцию 0015).
+    `default=True` — по ADR-0015: новый участник получает «Подход» включённым,
+    а всем, кто существовал до раскатки, явный opt-out закреплён строками
+    миграций 0015/0016 — их отсутствующая настройка так и читается «выключено».
     """
     from app.core.access import enabled_user_ids
     from app.modules.relationship import service
 
     processed = 0
-    for user_id in enabled_user_ids(db, "relationship", default=False):
+    for user_id in enabled_user_ids(db, "relationship", default=True):
         if processed >= REVIEW_BATCH_PER_TICK:
             break
         if not service.due(db, user_id):

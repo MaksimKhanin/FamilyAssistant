@@ -705,7 +705,7 @@ def suggest_dish(ctx: ToolContext, wish: str = None, products: str = None,
         "required": ["name"],
     },
     # Читающим этот инструмент больше не назовёшь: рецепт блюда, которое уже в книге,
-    # он туда и дописывает (ADR-0012). Спрашивать за это разрешения незачем — человек
+    # он туда и дописывает (ADR-0014). Спрашивать за это разрешения незачем — человек
     # сам попросил рецепт, а дописывается он к тому, что человек уже запомнил.
     auto_from=0,
 )
@@ -723,7 +723,7 @@ def dish_recipe(ctx: ToolContext, name: str, wish: str = None) -> ToolResult:
     known = _book_entry(ctx, recipe["title"], name)
     if known is not None:
         # Рецепт отмеченного блюда никуда не надо запоминать отдельно: блюдо уже
-        # в книге, и рецепт — его недостающая половина (ADR-0012).
+        # в книге, и рецепт — его недостающая половина (ADR-0014).
         service.set_recipe(ctx.db, ctx.subject.id, known.id, text)
 
     details = [text]

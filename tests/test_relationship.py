@@ -54,3 +54,33 @@ def test_notes_and_summary_land_on_their_boards(db, member):
     summaries = knowledge.approach_summaries_board(db, member.id, create=False)
     assert [e.text for e in knowledge.list_entries(db, member.id, summaries.id)] == [
         "Короткий разговор."]
+
+
+# --- «Подход» по умолчанию у новых участников (ADR-0015, тикет #76) ---------
+
+def test_a_fresh_member_gets_reviews_by_default(db, member, monkeypatch):
+    """Нового человека (без строки module_access) планировщик разбирает сам."""
+    from app import scheduler
+
+    reviewed = []
+    monkeypatch.setattr(service, "due", lambda _db, user_id: True)
+    monkeypatch.setattr(service, "run_review", lambda _db, user, llm=None: reviewed.append(user.id))
+
+    scheduler.run_relationship_reviews(db)
+
+    assert member.id in reviewed
+
+
+def test_an_explicit_opt_out_still_holds(db, member, monkeypatch):
+    """Явное «выключено» (строки миграций 0015/0016) default не перебивает."""
+    from app import scheduler
+    from app.core.access import set_module_enabled
+
+    set_module_enabled(db, member.id, "relationship", False)
+    reviewed = []
+    monkeypatch.setattr(service, "due", lambda _db, user_id: True)
+    monkeypatch.setattr(service, "run_review", lambda _db, user, llm=None: reviewed.append(user.id))
+
+    scheduler.run_relationship_reviews(db)
+
+    assert member.id not in reviewed
