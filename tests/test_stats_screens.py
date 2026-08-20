@@ -1,20 +1,23 @@
-"""Табло — экран одного показателя по ряду задачи статистики (тикет #32, спека #19).
+"""Табло — экран одного показателя по задаче статистики (тикет #32, спека #19).
 
-Табло ничего не считает: числа посчитала задача статистики (#31), а табло только
-показывает накопленный ею ряд. Поэтому здесь проверяется не арифметика, а границы:
-кому табло видно, сколько их влезает человеку, что оно говорит на коротком ряде
-и переживает ли оно задачу, по которой заведено.
+Числа табло считает код при каждом показе — по событиям доски и по календарным
+дням семьи (ADR-0013), не дожидаясь прогонов сводок. Поэтому здесь проверяются
+и границы (кому табло видно, сколько их влезает, переживает ли оно задачу), и
+точность: чей день у события, доезжают ли поздние записи и уточнения, как
+складываются литры с миллилитрами.
 """
-from datetime import date, timedelta
+from datetime import time, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.auth import hash_password
+from app.core.clock import local_today
 from app.core.db import get_db
 from app.main import app
 from app.modules.memory import knowledge, screens, stats
 from app.modules.memory.models import BoardStatsScreen, RIGHT_VIEW
+from tests.conftest import FakeLLM
 
 
 @pytest.fixture
@@ -31,12 +34,22 @@ def task(db, member, board):
                              kind="кормление")
 
 
-def _series(db, task, *values, unit="мл", last_day=None):
-    """Готовый ряд: по точке на день, последняя — сегодня."""
-    last_day = last_day or date.today()
+def _event_on(db, member, board, day, value, unit="мл", kind="кормление",
+              confidence="high", when=time(12, 0)):
+    """Запись доски с событием на данный календарный день семьи — тем же путём,
+    каким события появляются по-настоящему: через разбор записи."""
+    at = f"{day:%Y-%m-%d} {when:%H:%M}"
+    parsed = {"events": [{"kind": kind, "at": at, "value": value, "unit": unit,
+                          "confidence": confidence, "raw": str(value)}]}
+    return knowledge.add_entry(db, member.id, board.id, f"{at} {value}",
+                               llm=FakeLLM([parsed]))
+
+
+def _series(db, member, board, *values, unit="мл", last_day=None):
+    """Готовый ряд: по событию на день, последняя величина — сегодня."""
+    last_day = last_day or local_today()
     for offset, value in enumerate(reversed(values)):
-        stats.record_point(db, task, last_day - timedelta(days=offset), value, unit)
-    return task
+        _event_on(db, member, board, last_day - timedelta(days=offset), value, unit=unit)
 
 
 # --- заведение табло ------------------------------------------------------------
@@ -208,8 +221,8 @@ def test_a_screen_is_taken_off_by_hand(db, member, task):
 
 # --- что показывает табло ----------------------------------------------------------
 
-def test_the_screen_shows_the_last_value_and_its_delta(db, member, task):
-    _series(db, task, 500.0, 620.0)
+def test_the_screen_shows_the_last_value_and_its_delta(db, member, board, task):
+    _series(db, member, board, 500.0, 620.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     view = screens.screen_view(db, member.id, screen)
@@ -217,18 +230,18 @@ def test_the_screen_shows_the_last_value_and_its_delta(db, member, task):
     assert (view["last"], view["delta"], view["unit"]) == (620.0, 120.0, "мл")
 
 
-def test_a_single_day_has_nothing_to_compare_with(db, member, task):
-    _series(db, task, 500.0)
+def test_a_single_day_has_nothing_to_compare_with(db, member, board, task):
+    _series(db, member, board, 500.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     assert screens.screen_view(db, member.id, screen)["delta"] is None
 
 
-def test_the_delta_names_the_day_it_was_measured_against(db, member, task):
+def test_the_delta_names_the_day_it_was_measured_against(db, member, board, task):
     """В ряду бывают дыры: «ко вчерашнему» на разнице с позавчерашним — неправда."""
-    today = date.today()
-    stats.record_point(db, task, today - timedelta(days=4), 500.0, "мл")
-    stats.record_point(db, task, today, 620.0, "мл")
+    today = local_today()
+    _event_on(db, member, board, today - timedelta(days=4), 500.0)
+    _event_on(db, member, board, today, 620.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     view = screens.screen_view(db, member.id, screen)
@@ -236,17 +249,17 @@ def test_the_delta_names_the_day_it_was_measured_against(db, member, task):
     assert view["delta_from"] == today - timedelta(days=4)
 
 
-def test_a_single_point_still_draws_a_line(db, member, task):
+def test_a_single_point_still_draws_a_line(db, member, board, task):
     """Ломаная из одной точки не рисуется вовсе — экран выглядел бы пустым."""
-    _series(db, task, 500.0)
+    _series(db, member, board, 500.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко", form="line")
 
     assert len(screens.screen_view(db, member.id, screen)["line"].split()) == 2
 
 
-def test_a_short_series_says_how_many_days_it_has(db, member, task):
+def test_a_short_series_says_how_many_days_it_has(db, member, board, task):
     """Неполное не выдаётся за полное: «данных за N дней из M» (ADR-0002)."""
-    _series(db, task, 500.0, 620.0, 480.0)
+    _series(db, member, board, 500.0, 620.0, 480.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     view = screens.screen_view(db, member.id, screen)
@@ -255,15 +268,15 @@ def test_a_short_series_says_how_many_days_it_has(db, member, task):
     assert view["short"]
 
 
-def test_a_full_window_does_not_apologise_for_itself(db, member, task):
-    _series(db, task, *[500.0] * screens.WINDOW_DAYS)
+def test_a_full_window_does_not_apologise_for_itself(db, member, board, task):
+    _series(db, member, board, *[500.0] * screens.WINDOW_DAYS)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     assert not screens.screen_view(db, member.id, screen)["short"]
 
 
-def test_what_fell_out_of_the_window_is_not_shown(db, member, task):
-    _series(db, task, *[500.0] * (screens.WINDOW_DAYS + 5))
+def test_what_fell_out_of_the_window_is_not_shown(db, member, board, task):
+    _series(db, member, board, *[500.0] * (screens.WINDOW_DAYS + 5))
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     view = screens.screen_view(db, member.id, screen)
@@ -279,6 +292,111 @@ def test_an_empty_series_is_an_honest_emptiness_and_not_a_zero(db, member, task)
 
     assert view["points"] == []
     assert view["last"] is None
+
+
+# --- точность: табло считает по событиям, а не по прогонам сводок (ADR-0013) --------
+
+def test_two_events_of_one_day_are_one_bar(db, member, board, task):
+    """Столбик — календарный день семьи: два кормления одних суток складываются."""
+    today = local_today()
+    _event_on(db, member, board, today, 170.0, when=time(2, 50))
+    _event_on(db, member, board, today, 200.0, when=time(6, 10))
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    view = screens.screen_view(db, member.id, screen)
+
+    assert [point["value"] for point in view["points"]] == [370.0]
+
+
+def test_an_event_lands_on_its_own_day_and_not_on_the_day_of_writing(db, member, board, task):
+    """Дописанное задним числом ложится в свой день: вчерашний ужин — вчера."""
+    yesterday = local_today() - timedelta(days=1)
+    _event_on(db, member, board, yesterday, 170.0, when=time(23, 0))
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    view = screens.screen_view(db, member.id, screen)
+
+    assert [point["day"] for point in view["points"]] == [yesterday]
+
+
+def test_the_screen_does_not_wait_for_a_digest_run(db, member, board, task):
+    """Раньше ряд копился только прогонами сводок — у выключенной сводки табло
+    оставалось пустым навсегда. Теперь цифра есть, как только есть события."""
+    _event_on(db, member, board, local_today(), 170.0)
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    view = screens.screen_view(db, member.id, screen)
+
+    assert view["last"] == 170.0
+    assert stats.series(db, task.id) == []      # снимков сводки при этом нет
+
+
+def test_what_was_written_after_the_digest_reaches_the_screen(db, member, board, task):
+    """Сводка — снимок своего момента, табло — данные: поздняя запись меняет
+    столбик, но не переписывает уже разосланную цифру (ADR-0013)."""
+    _event_on(db, member, board, local_today(), 170.0, when=time(2, 50))
+    stats.run_task(db, task, llm=FakeLLM([{"text": "170 мл."}]))
+
+    _event_on(db, member, board, local_today(), 200.0, when=time(6, 10))
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    assert screens.screen_view(db, member.id, screen)["last"] == 370.0
+    assert stats.series(db, task.id)[-1].value == 170.0
+
+
+def test_a_clarified_value_reaches_the_screen(db, member, board, task):
+    """Ответ на плашку уточнения доводит величину до ряда — в её собственный день."""
+    entry = _event_on(db, member, board, local_today(), 40.0, kind="что-то",
+                      confidence="low")
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+    assert screens.screen_view(db, member.id, screen)["last"] is None
+
+    event = knowledge.entry_events(db, entry.id)[0]
+    knowledge.clarify_event(db, member.id, event.id, "кормление")
+
+    assert screens.screen_view(db, member.id, screen)["last"] == 40.0
+
+
+def test_litres_and_millilitres_lie_on_one_axis(db, member, board, task):
+    """«0.2 л» и «170 мл» — одна величина, записанная по-разному: пересчёт точный,
+    и на оси ряда они складываются в 370 мл."""
+    today = local_today()
+    _event_on(db, member, board, today, 170.0, when=time(2, 50))
+    _event_on(db, member, board, today, 0.2, unit="л", when=time(6, 10))
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    view = screens.screen_view(db, member.id, screen)
+
+    assert (view["last"], view["unit"]) == (370.0, "мл")
+
+
+def test_a_foreign_unit_is_named_but_not_drawn(db, member, board, task):
+    """«2 шт» в миллилитры не пересчитать ничем: в ось они не ложатся, но табло
+    их называет, а не теряет молча (ADR-0002)."""
+    today = local_today()
+    _event_on(db, member, board, today, 170.0)
+    _event_on(db, member, board, today, 2.0, unit="шт", when=time(15, 0))
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    view = screens.screen_view(db, member.id, screen)
+
+    assert view["last"] == 170.0
+    assert view["stray"] == [{"unit": "шт", "total": 2.0, "count": 1}]
+
+
+def test_the_running_day_is_marked_as_still_going(db, member, board, task):
+    """Сегодняшнее число ещё растёт — выдавать его за итог дня нельзя (ADR-0002)."""
+    _event_on(db, member, board, local_today(), 170.0)
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    assert screens.screen_view(db, member.id, screen)["today"]
+
+
+def test_a_finished_day_is_not_marked_as_running(db, member, board, task):
+    _event_on(db, member, board, local_today() - timedelta(days=1), 170.0)
+    screen = screens.create_screen(db, member.id, task.id, "Молоко")
+
+    assert not screens.screen_view(db, member.id, screen)["today"]
 
 
 # --- пункт навигации у каждого табло ------------------------------------------------
@@ -328,8 +446,8 @@ def as_other(client, db, other):
     return client
 
 
-def test_the_screen_opens_by_its_own_address(db, member, task, as_member):
-    _series(db, task, 500.0, 620.0)
+def test_the_screen_opens_by_its_own_address(db, member, board, task, as_member):
+    _series(db, member, board, 500.0, 620.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко за сутки")
 
     page = as_member.get(f"/stats/{screen.id}")
@@ -339,8 +457,8 @@ def test_the_screen_opens_by_its_own_address(db, member, task, as_member):
     assert "620" in page.text
 
 
-def test_the_short_series_is_named_on_the_screen(db, member, task, as_member):
-    _series(db, task, 500.0, 620.0)
+def test_the_short_series_is_named_on_the_screen(db, member, board, task, as_member):
+    _series(db, member, board, 500.0, 620.0)
     screen = screens.create_screen(db, member.id, task.id, "Молоко")
 
     page = as_member.get(f"/stats/{screen.id}")

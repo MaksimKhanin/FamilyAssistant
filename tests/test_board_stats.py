@@ -170,8 +170,9 @@ def test_another_type_of_the_same_board_is_not_added_to_the_figure(db, member, b
     assert stats.series(db, task.id)[-1].value == 170.0
 
 
-def test_the_series_keeps_one_unit_and_the_phrase_names_the_rest(db, member, board):
-    """Ряд — один показатель в одной единице: миллилитры и литры не лягут на одну ось."""
+def test_litres_are_added_to_millilitres_exactly(db, member, board):
+    """«0.2 л» и «170 мл» — одна величина, записанная по-разному: точный пересчёт
+    в единицу словаря — та же арифметика кода, что и сумма (ADR-0013)."""
     _log(db, member, board, "02:50 170", value=170)
     _log(db, member, board, "днём 0.2 л", value=0.2, unit="л")
     task = _task(db, member, board)
@@ -180,8 +181,23 @@ def test_the_series_keeps_one_unit_and_the_phrase_names_the_rest(db, member, boa
     stats.run_task(db, task, llm=llm)
 
     point = stats.series(db, task.id)[-1]
-    assert (point.value, point.unit) == (170.0, "мл")     # единица словаря доски
-    assert "0.2 л" in llm.calls[0]["user"]                # но литры модель увидела
+    assert (point.value, point.unit) == (370.0, "мл")     # единица словаря доски
+    assert "370" in llm.calls[0]["user"]                  # модель получила сумму
+
+
+def test_a_unit_beyond_exact_conversion_stays_its_own_row(db, member, board):
+    """«2 шт» в миллилитры не пересчитать ничем: сумма, неизвестно в чём, хуже
+    двух известных. В ряд идёт строка единицы словаря, а штуки называет фраза."""
+    _log(db, member, board, "02:50 170", value=170)
+    _log(db, member, board, "и 2 шт", value=2, unit="шт")
+    task = _task(db, member, board)
+    llm = FakeLLM([_said()])
+
+    stats.run_task(db, task, llm=llm)
+
+    point = stats.series(db, task.id)[-1]
+    assert (point.value, point.unit) == (170.0, "мл")
+    assert "2 шт" in llm.calls[0]["user"]                 # но штуки модель увидела
 
 
 def test_what_happened_before_the_window_is_not_counted(db, member, board):

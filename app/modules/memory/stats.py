@@ -8,9 +8,12 @@
 Своего расписания у задачи нет: результат приезжает в уже существующую сводку
 (`_digest_text` в app/scheduler.py). Второй поток уведомлений семье не нужен.
 
-Тот же прогон дописывает точку в ряд по дням — из него потом растёт табло.
+Тот же прогон дописывает точку в ряд по дням — снимок того, что сводка сказала
+в этот день. Табло на снимок не смотрит: свой ряд оно считает по самим событиям
+(`day_series`), поэтому поздняя запись и ответ на плашку уточнения доезжают до
+экрана, а до уже разосланной сводки — нет (ADR-0013).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
@@ -18,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.llm import ROUTINE, LLMClient, LLMUnavailable, client as default_client
 from app.agent.prompts import BOARD_STATS_SYSTEM
-from app.core.clock import local_date, local_today, utc_now
+from app.core.clock import days_ago_start_utc, local_date, local_today, utc_now
 from app.core.logging import get_logger
 from app.core.models import ScheduledJob, User
 from app.core.templating import counted
@@ -181,6 +184,38 @@ def tasks_for(db: Session, user: User, digest_kind: str) -> List[BoardStatsTask]
 
 # --- числа: их считает код ------------------------------------------------------
 
+#: Точные пересчёты единиц — через общую базовую. «0.2 л» и «170 мл» — одна
+#: величина, записанная по-разному, и складывать их — арифметика, а не догадка.
+#: Всего, чего в таблице нет, пересчёт не касается: приблизительный курс хуже
+#: двух честных строк.
+_UNIT_BASES = {
+    "мл": ("мл", 1.0), "л": ("мл", 1000.0),
+    "ml": ("мл", 1.0), "l": ("мл", 1000.0),
+    "мг": ("г", 0.001), "г": ("г", 1.0), "кг": ("г", 1000.0),
+    "mg": ("г", 0.001), "g": ("г", 1.0), "kg": ("г", 1000.0),
+    "с": ("с", 1.0), "сек": ("с", 1.0), "мин": ("с", 60.0),
+    "ч": ("с", 3600.0), "час": ("с", 3600.0),
+    "см": ("м", 0.01), "м": ("м", 1.0), "км": ("м", 1000.0),
+    "km": ("м", 1000.0), "m": ("м", 1.0),
+}
+
+
+def convert_unit(value: float, unit: Optional[str], target: Optional[str]) -> Optional[float]:
+    """Точный пересчёт величины в другую единицу — или None, когда пересчёта нет.
+
+    Совпадающие единицы (с точностью до регистра) проходят как есть; дальше —
+    только пары из таблицы с общей базовой. «шт» в «мл» не пересчитывается
+    ничем, и None здесь — честный ответ, а не ошибка.
+    """
+    given, wanted = (unit or "").strip().lower(), (target or "").strip().lower()
+    if given == wanted:
+        return value
+    base_given, base_wanted = _UNIT_BASES.get(given), _UNIT_BASES.get(wanted)
+    if base_given is None or base_wanted is None or base_given[0] != base_wanted[0]:
+        return None
+    return value * base_given[1] / base_wanted[1]
+
+
 @dataclass
 class Figures:
     """Посчитанное по задаче: суммы по единицам, основная строка первой.
@@ -215,24 +250,36 @@ def window(task: BoardStatsTask, now: datetime):
     return now - timedelta(days=days), now, days
 
 
+def _canonical_unit(db: Session, task: BoardStatsTask) -> Optional[str]:
+    """Единица словаря доски для типа задачи — ось, к которой приводятся суммы."""
+    known = next((t for t in knowledge.list_event_types(db, task.board_id)
+                  if t.name.lower() == task.kind.lower()), None)
+    return known.unit if known is not None else None
+
+
 def figures(db: Session, task: BoardStatsTask, since: datetime, until: datetime,
             days: int = 1) -> Figures:
     """Суммы по задаче за период — по событиям, а не по тексту записей.
 
     Неуверенно разобранное в цифру не идёт, пока человек не уточнил: цифра,
     которой нельзя верить, хуже отсутствующей.
+
+    Литры складываются с миллилитрами: точный пересчёт в единицу словаря — та же
+    арифметика кода, что и сумма. Отдельной строкой остаётся только то, чего
+    точно не пересчитать.
     """
+    canonical = _canonical_unit(db, task)
     rows: dict = {}
     for event in knowledge.board_events(db, task.board_id, since, until):
         if event.kind.lower() != task.kind.lower() or event.confidence == extraction.LOW:
             continue
-        row = rows.setdefault(event.unit, {"unit": event.unit, "total": 0.0, "count": 0})
-        row["total"] += event.value
+        converted = convert_unit(event.value, event.unit, canonical)
+        value, unit = ((converted, canonical) if converted is not None
+                       else (event.value, event.unit))
+        row = rows.setdefault(unit, {"unit": unit, "total": 0.0, "count": 0})
+        row["total"] += value
         row["count"] += 1
 
-    known = next((t for t in knowledge.list_event_types(db, task.board_id)
-                  if t.name.lower() == task.kind.lower()), None)
-    canonical = known.unit if known is not None else None
     ordered = sorted(rows.values(),
                      key=lambda row: (row["unit"] != canonical, -row["count"], row["unit"] or ""))
     return Figures(kind=task.kind, days=days, rows=ordered)
@@ -371,11 +418,58 @@ def run_task(db: Session, task: BoardStatsTask, now: datetime = None,
 
 
 def series(db: Session, task_id: int, days: int = None) -> List[BoardStatsPoint]:
-    """Ряд задачи по дням — то, из чего растёт табло."""
+    """Снимки прогонов по дням — что задача сказала в сводке в какой день."""
     rows = db.query(BoardStatsPoint).filter(BoardStatsPoint.task_id == task_id)
     if days:
         rows = rows.filter(BoardStatsPoint.day > local_today() - timedelta(days=days))
     return rows.order_by(BoardStatsPoint.day).all()
+
+
+# --- ряд табло: по календарным дням из самих событий ------------------------------
+
+@dataclass
+class DaySeries:
+    """Ряд по календарным дням семьи, посчитанный по событиям доски при показе.
+
+    `points` — по строке на день, в котором было что считать; пустые дни не
+    выдумываются нулями. `stray` — события задачи, чью единицу точно не
+    пересчитать в единицу ряда: в ось они не легли, но названы, а не потеряны.
+    """
+    unit: Optional[str]
+    points: List[dict] = field(default_factory=list)   # {day, value, count}
+    stray: List[dict] = field(default_factory=list)    # {unit, total, count}
+
+
+def day_series(db: Session, task: BoardStatsTask, days: int) -> DaySeries:
+    """Ряд табло за последние `days` календарных дней — прямо из событий.
+
+    Считается кодом при каждом показе, а не копится прогонами сводок: поздняя
+    запись, правка и ответ на плашку уточнения меняют вчерашний столбик, потому
+    что изменились сами данные. Пересчитывать тут нечего наугад — разбор записи
+    на события по-прежнему один, при записи (ADR-0013).
+
+    День у события свой (`at`), а не день прогона: цифра «за 16-е» — это события
+    16-го числа календаря семьи, что бы и когда бы по ним ни говорила сводка.
+    """
+    canonical = _canonical_unit(db, task)
+    per_day: Dict[date, dict] = {}
+    stray: Dict[Optional[str], dict] = {}
+    for event in knowledge.board_events(db, task.board_id, days_ago_start_utc(days - 1)):
+        if event.kind.lower() != task.kind.lower() or event.confidence == extraction.LOW:
+            continue
+        value = convert_unit(event.value, event.unit, canonical)
+        if value is None:
+            row = stray.setdefault(event.unit, {"unit": event.unit, "total": 0.0, "count": 0})
+            row["total"] += event.value
+            row["count"] += 1
+            continue
+        day = local_date(event.at)
+        bucket = per_day.setdefault(day, {"day": day, "value": 0.0, "count": 0})
+        bucket["value"] += value
+        bucket["count"] += 1
+    return DaySeries(unit=canonical,
+                     points=[per_day[day] for day in sorted(per_day)],
+                     stray=[stray[unit] for unit in sorted(stray, key=lambda u: u or "")])
 
 
 # --- то, что видно в сводке --------------------------------------------------------
