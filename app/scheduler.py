@@ -60,6 +60,14 @@ _REMINDER_HINT = (
 )
 
 
+#: Сколько после своего времени задача ещё имеет право сработать. Раньше
+#: `_due` требовал точного попадания в минуту: проспал тик — перезапуск,
+#: долгий разбор «Подхода», просто нагрузка — и сводки не было до завтра.
+#: Теперь проспанная минута навёрстывается в это окно, а совсем старое
+#: время честно ждёт следующего раза.
+CATCH_UP_WINDOW = timedelta(hours=2)
+
+
 def _due(job: ScheduledJob, now: datetime) -> bool:
     if not job.enabled:
         return False
@@ -68,12 +76,15 @@ def _due(job: ScheduledJob, now: datetime) -> bool:
     except ValueError:
         logger.warning(f"Не разобрал время задачи {job.kind}: {job.at_time}")
         return False
-    if (now.hour, now.minute) != (hour, minute):
-        return False
     if job.weekday is not None and now.weekday() != job.weekday:
         return False
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now < scheduled or now - scheduled > CATCH_UP_WINDOW:
+        return False
     # last_run_at, как и всё в базе, лежит в UTC — сравниваем в одной системе.
-    if job.last_run_at and (now - to_local(job.last_run_at)) < timedelta(minutes=2):
+    # Отработала после сегодняшнего (для этого дня) времени срабатывания —
+    # значит, этот раз уже был, навёрстывать нечего.
+    if job.last_run_at and to_local(job.last_run_at) >= scheduled:
         return False
     return True
 

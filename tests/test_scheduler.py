@@ -201,3 +201,46 @@ def test_a_reminder_without_the_model_keeps_the_canonical_form(db, member, catch
     scheduler.run_reminders(db, datetime.utcnow())
 
     assert catcher[-1]["text"] == "Напоминаю: полить цветы"
+
+# --- навёрстывание проспанной минуты (тикет #73) ----------------------------
+
+def test_a_missed_job_catches_up_within_the_window(db, member, catcher):
+    """Планировщик проспал минуту (перезапуск, долгий тик) — сводка не пропадает."""
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+
+    assert catcher, "проспанная сводка так и не ушла"
+    assert "Вечерний итог" in catcher[-1]["text"]
+
+
+def test_a_caught_up_job_does_not_fire_again(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 41))
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 22, 30))
+
+    assert len(catcher) == 1
+
+
+def test_a_job_missed_beyond_the_window_waits_for_tomorrow(db, member, catcher):
+    """Через три часа сводка уже не «утренняя» — честнее дождаться следующего раза."""
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:30", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 11, 31))
+
+    assert catcher == []
+
+
+def test_the_next_day_fires_normally_after_a_catch_up(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+    scheduler.run_jobs(db, datetime(2026, 8, 10, 21, 0))
+
+    assert len(catcher) == 2
