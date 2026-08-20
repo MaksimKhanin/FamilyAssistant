@@ -153,8 +153,9 @@ def test_offline_model_says_so_instead_of_crashing(db, member):
     reply = Agent(Broken([])).respond(db, member, "привет")
 
     assert reply.text == OFFLINE_REPLY
-    saved = db.query(ChatMessage).filter(ChatMessage.role == "assistant").one()
-    assert saved.content == OFFLINE_REPLY
+    # Офлайн-ответ нарочно не оседает в истории: сохранённый, он на следующем
+    # сбое читался бы моделью как её прошлая реплика и зацикливался (run 180).
+    assert db.query(ChatMessage).filter(ChatMessage.role == "assistant").count() == 0
 
 
 def test_conversation_is_persisted_for_both_channels(db, member):
@@ -396,3 +397,73 @@ def test_a_reply_backed_by_a_call_is_not_marked_in_history(db, member):
     from app.agent.runtime import NOTHING_HAPPENED
     assert not any(m["content"] == NOTHING_HAPPENED
                    for m in llm.calls[0]["messages"] if m["role"] == "system")
+
+
+# --- голос персоны на служебных путях (тикет #71) ---------------------------
+
+def test_the_unbacked_reply_can_speak_in_character(db, member):
+    """Правда о несделанном может звучать характером — но остаётся правдой."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([
+        LLMResponse(content=CLAIMED),
+        LLMResponse(content=CLAIMED),
+        # третий вызов — голос персоны (app/agent/voice.py)
+        LLMResponse(content="Ох, не вышло — попробуем ещё разок?"),
+    ])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == "Ох, не вышло — попробуем ещё разок?"
+
+
+def test_a_voiced_unbacked_reply_that_lies_again_is_silenced(db, member):
+    """Голос персоны тоже проверяется: «готово» без работы глушится."""
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM([
+        LLMResponse(content=CLAIMED),
+        LLMResponse(content=CLAIMED),
+        LLMResponse(content="Готово, записала!"),
+    ])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == UNBACKED_REPLY
+
+
+def test_overflow_with_done_tools_tells_what_was_done(db, member):
+    """Упор в лимит шагов после сделанной работы — пересказ фактов, а не «закопался»."""
+    from app.agent.runtime import MAX_STEPS
+
+    policy.set_autonomy(db, member.family_id, 3)
+    llm = FakeLLM(
+        [_call("remember", text=f"факт {i}") for i in range(MAX_STEPS)]
+        + [LLMResponse(content="Успела записать факты, продолжим?")]
+    )
+    reply = Agent(llm).respond(db, member, "запиши всё подряд")
+
+    assert reply.text == "Успела записать факты, продолжим?"
+    assert "закопался" not in reply.text
+
+
+def test_overflow_without_voice_falls_back_to_the_canonical_line(db, member):
+    """Модель кончилась вместе с лимитом — человек слышит прежнюю строку."""
+    from app.agent.runtime import BURIED_REPLY, MAX_STEPS
+
+    llm = FakeLLM([LLMResponse(content="", tool_calls=[
+        ToolCall(id=f"c{i}", name="get_nutrition_stats", arguments={"period": "day"})])
+        for i in range(MAX_STEPS)])
+    reply = Agent(llm).respond(db, member, "считай, считай")
+
+    # инструменты отработали — fallback голоса это последний summary, не «закопался»
+    assert reply.text != BURIED_REPLY
+    assert reply.text
+
+
+def test_confirmation_falls_back_to_the_raw_summary_without_voice(db, member):
+    policy.set_autonomy(db, member.family_id, 0)
+    Agent(FakeLLM([_call("remember", text="купить хлеб"),
+                   LLMResponse(content="Подготовил.")])).respond(db, member, "запомни")
+    pending = db.query(PendingAction).one()
+
+    result = approve_action(db, pending.id, member, llm=FakeLLM([]))
+
+    assert result.ok
+    assert "хлеб" in result.summary or result.summary  # сырой summary инструмента

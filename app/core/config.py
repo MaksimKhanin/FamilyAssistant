@@ -198,6 +198,9 @@ class Settings:
     #: журнала запросов, ни подмены модели. Ручки ходят мимо входа и мимо ролей,
     #: поэтому включаются только тем, что хозяин дома сам положил сюда ключ.
     testkit_token: str = ""
+    #: Сколько раз подряд агент может брать инструмент за один ответ. Ручка для
+    #: установок, где модель любит длинные цепочки; умолчание — прежние четыре.
+    agent_max_steps: int = 4
     #: Задан ли `PUBLIC_BASE_URL` в окружении на самом деле. Умолчание у него
     #: правдоподобное («localhost») и потому опасное: ссылка-приглашение с ним
     #: собирается без единой ошибки и не открывается ни с одного другого
@@ -229,6 +232,7 @@ def load_settings() -> Settings:
         control_base_url=os.environ.get("CONTROL_BASE_URL", "").strip(),
         control_api_token=os.environ.get("CONTROL_API_TOKEN", "").strip(),
         testkit_token=os.environ.get("TESTKIT_TOKEN", "").strip(),
+        agent_max_steps=_int("AGENT_MAX_STEPS", 4),
         admin=AdminSettings(
             username=os.environ.get("ADMIN_USERNAME", "admin").strip(),
             password=os.environ.get("ADMIN_PASSWORD", ""),

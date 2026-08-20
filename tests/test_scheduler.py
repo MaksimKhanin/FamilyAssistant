@@ -100,9 +100,13 @@ def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, member
     monkeypatch.setattr(stats, "default_client",
                         FakeLLM([{"text": "За сутки малыш съел 170 мл."}]))
 
-    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
+    # Момент прогона — «сейчас», а не зашитая дата: запись и её событие только
+    # что созданы, и окно суточной статистики должно их накрывать в любой день.
+    now = datetime.utcnow()
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest",
+                        at_time=now.strftime("%H:%M"), enabled=True))
     db.commit()
-    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+    scheduler.run_jobs(db, now)
 
     assert catcher, "утренняя сводка не ушла"
     assert "За сутки малыш съел 170 мл." in catcher[-1]["text"]
