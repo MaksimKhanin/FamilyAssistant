@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.agent import voice
 from app.core.clock import local_now, to_local, to_utc, utc_now
 from app.core.db import create_all, session_scope
 from app.core.events import AGENT_MESSAGE, bus
@@ -30,6 +31,33 @@ RETENTION_HOUR = 4          # ротацию делаем ночью, когда
 
 #: Не больше стольких разборов «Подхода» за один тик — см. run_relationship_reviews.
 REVIEW_BATCH_PER_TICK = 3
+
+#: Чем открывается сводка, когда голос персоны недоступен, — прежние строки.
+OPENINGS = {
+    "morning_digest": "Доброе утро.",
+    "evening_summary": "Вечерний итог.",
+    "weekly_review": "Как прошла неделя.",
+}
+
+#: Какой момент дня у сводки — для просьбы к голосу персоны.
+_MOMENTS = {
+    "morning_digest": "утро",
+    "evening_summary": "вечер",
+    "weekly_review": "конец недели",
+}
+
+#: Просьбы к голосу персоны (`app/agent/voice.py`). Факты собраны кодом и
+#: инструментами — работа модели здесь только слова, как у BOARD_STATS_SYSTEM.
+_DIGEST_HINT = (
+    "Сейчас {moment}, {date}. Перескажи человеку его сводку в своей манере — "
+    "коротко, строго по фактам ниже: ничего не добавляй, числа не пересчитывай "
+    "и не опускай. Это сообщение придёт ему уведомлением.\n\nФакты:\n{facts}"
+)
+_REMINDER_HINT = (
+    "Пришло время напоминания, которое человек сам себе поставил. Напомни ему "
+    "одной фразой в своей манере, обязательно назвав само дело его словами: "
+    "«{text}». Ничего не добавляй и не выдумывай."
+)
 
 
 def _due(job: ScheduledJob, now: datetime) -> bool:
@@ -50,8 +78,8 @@ def _due(job: ScheduledJob, now: datetime) -> bool:
     return True
 
 
-def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
-    """Compose a job's message from the tools the person actually has switched on.
+def _digest_parts(db: Session, user: User, kind: str, now: datetime) -> list:
+    """Compose a job's facts from the tools the person actually has switched on.
 
     `now` — тот же момент, для которого `run_jobs` уже решил, что задаче пора
     сработать. Статистика досок считает по нему свои сутки/неделю (`window` в
@@ -82,10 +110,9 @@ def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
     #
     # Своя защита от падения, потому что этот кусок — единственный в сводке, что
     # идёт не через `registry.execute` с его перехватом: сводка одного человека,
-    # рухнув, унесла бы сводки всех, чья задача в этой минуте ещё не разослана,
-    # — а `_due` требует точного попадания в минуту, и до завтра они не вернутся.
-    # Здесь же и единственный поход к модели за формулировкой: он платный по
-    # времени, поэтому задач у доски не больше пяти.
+    # рухнув, унесла бы сводки всех, чья задача в этой минуте ещё не разослана.
+    # Здесь же и поход к модели за формулировкой цифры: он платный по времени,
+    # поэтому задач у доски не больше пяти.
     try:
         parts.extend(stats.digest_parts(db, user, kind, now=now))
     except Exception:
@@ -93,15 +120,16 @@ def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
                          f"остальная сводка уходит без неё")
         db.rollback()
 
+    return parts
+
+
+def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
+    """Сводка целиком, прежним каноническим форматом. Оставлена как запасной
+    текст для голоса персоны и как контракт для тестов и стенда."""
+    parts = _digest_parts(db, user, kind, now)
     if not parts:
         return ""
-
-    opening = {
-        "morning_digest": "Доброе утро.",
-        "evening_summary": "Вечерний итог.",
-        "weekly_review": "Как прошла неделя.",
-    }.get(kind, "")
-    return f"{opening}\n\n" + "\n\n".join(parts)
+    return f"{OPENINGS.get(kind, '')}\n\n" + "\n\n".join(parts)
 
 
 def run_jobs(db: Session, now: datetime):
@@ -112,13 +140,22 @@ def run_jobs(db: Session, now: datetime):
         if user is None:
             continue
 
-        text = _digest_text(db, user, job.kind, to_utc(now))
+        parts = _digest_parts(db, user, job.kind, to_utc(now))
         job.last_run_at = to_utc(now)
         db.commit()
 
-        if not text:
+        if not parts:
             logger.info(f"Задача {job.kind} для {user.display_name}: рассказывать нечего")
             continue
+
+        # Факты собраны; произносит их голос персоны, а при недоступной модели —
+        # прежняя каноническая сводка. Числа модель не считает — только слова.
+        fallback = f"{OPENINGS.get(job.kind, '')}\n\n" + "\n\n".join(parts)
+        text = voice.speak(user, _DIGEST_HINT.format(
+            moment=_MOMENTS.get(job.kind, "день"),
+            date=f"{now:%d.%m.%Y}",
+            facts="\n".join(f"- {part}" for part in parts),
+        ), fallback=fallback)
 
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
                                     "text": text, "severity": "info"})
@@ -132,8 +169,10 @@ def run_reminders(db: Session, now: datetime):
         user = db.get(User, reminder.user_id)
         if user is None:
             continue
+        text = voice.speak(user, _REMINDER_HINT.format(text=reminder.text),
+                           fallback=f"Напоминаю: {reminder.text}")
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
-                                    "text": f"Напоминаю: {reminder.text}", "severity": "attention"})
+                                    "text": text, "severity": "attention"})
         reminder.reminded_at = now
     db.commit()
 

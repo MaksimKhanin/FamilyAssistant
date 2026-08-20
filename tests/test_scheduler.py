@@ -140,3 +140,64 @@ def test_a_future_reminder_waits(db, member, catcher):
     assert [m for m in catcher if "Напоминаю" in m["text"]] == []
 
 
+
+# --- голос персоны в сводках и напоминаниях (тикет #72) ---------------------
+
+def test_a_digest_can_speak_in_character(db, member, catcher, monkeypatch):
+    """Сводка уходит голосом персоны; факты при этом собраны кодом."""
+    from app.agent import voice
+
+    heard = {}
+
+    def fake_speak(subject, hint, fallback="", llm=None):
+        heard["hint"] = hint
+        heard["fallback"] = fallback
+        return "Доброе утро, солнышко! Дома всё спокойно."
+
+    monkeypatch.setattr(voice, "speak", fake_speak)
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+
+    assert catcher[-1]["text"] == "Доброе утро, солнышко! Дома всё спокойно."
+    # запасной текст — прежняя каноническая сводка
+    assert heard["fallback"].startswith("Доброе утро.")
+    # факты доехали в просьбу дословно
+    assert "Факты:" in heard["hint"]
+
+
+def test_a_digest_without_the_model_keeps_the_canonical_form(db, member, catcher):
+    """Модель недоступна (в тестах LLM_BASE_URL ведёт в никуда) — прежний формат."""
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 0))
+
+    assert catcher[-1]["text"].startswith("Вечерний итог.")
+
+
+def test_a_reminder_can_speak_in_character(db, member, catcher, monkeypatch):
+    from datetime import timedelta as _td
+    from app.agent import voice
+
+    monkeypatch.setattr(voice, "speak",
+                        lambda subject, hint, fallback="", llm=None:
+                        "Милая, пора выпить лекарство — ты просила напомнить.")
+    reminders_service.add_reminder(db, member.id, "выпить лекарство",
+                                   remind_at=datetime.utcnow() - _td(minutes=1))
+
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    assert catcher[-1]["text"] == "Милая, пора выпить лекарство — ты просила напомнить."
+
+
+def test_a_reminder_without_the_model_keeps_the_canonical_form(db, member, catcher):
+    from datetime import timedelta as _td
+
+    reminders_service.add_reminder(db, member.id, "полить цветы",
+                                   remind_at=datetime.utcnow() - _td(minutes=1))
+
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    assert catcher[-1]["text"] == "Напоминаю: полить цветы"
