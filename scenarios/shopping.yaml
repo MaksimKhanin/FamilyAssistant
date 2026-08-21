@@ -1,0 +1,49 @@
+# Покупки: список один на семью — положить словами, вычеркнуть, посмотреть
+# экраном (тикет #84).
+name: Список покупок
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: сказанное словами ложится в общий список
+    model:
+      chat:
+        - tool: add_to_shopping_list
+          arguments: {items: ["молоко", "хлеб"]}
+        - content: "Положила в покупки молоко и хлеб."
+          keep: true
+    say: "добавь молоко и хлеб в покупки"
+    expect:
+      tool: add_to_shopping_list
+      rows:
+        - {table: shopping_items, min: 2}
+
+  - name: купленное вычёркивается по имени
+    model:
+      chat:
+        - tool: check_off_item
+          arguments: {name: "молоко"}
+        - content: "Вычеркнула молоко."
+          keep: true
+    say: "купил молоко"
+    expect:
+      tool: check_off_item
+      reply_not_contains: ["не нашёл"]
+
+  - name: список читается вслух
+    model:
+      chat:
+        - tool: show_shopping_list
+        - content: "Осталось купить хлеб, молоко уже вычеркнуто."
+          keep: true
+    say: "что купить?"
+    expect:
+      tool: show_shopping_list
+      reply_contains: "хлеб"
+
+  - name: экран покупок открывается и показывает список
+    open: /shopping
+    expect:
+      status: 200
+      text_contains: "хлеб"

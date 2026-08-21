@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "partials/icons.html" as ic %}
+{% block content %}
+
+<div class="two-col">
+  <div class="stack">
+    <form class="card tight stack" method="post" action="/shopping/add" style="gap:8px">
+      <div class="card-title">Положить в список</div>
+      <div class="row" style="gap:8px">
+        <input class="field" style="flex:1" name="text" maxlength="{{ item_limit }}"
+               placeholder="молоко, хлеб — можно несколько через запятую" required>
+        <button class="btn" type="submit">Добавить</button>
+      </div>
+    </form>
+
+    {% for item in items %}
+      <div class="card tight" style="{% if item.checked %}opacity:.55{% endif %}">
+        <div class="row" style="gap:8px;align-items:center">
+          <form method="post" action="/shopping/{{ item.id }}/toggle">
+            <button class="btn ghost small" type="submit"
+                    title="{{ 'Вернуть в список' if item.checked else 'Вычеркнуть' }}">
+              {{ ic.icon("check", 13) }}
+            </button>
+          </form>
+          <div style="flex:1;{% if item.checked %}text-decoration:line-through{% endif %}">
+            {{ item.text }}
+          </div>
+          <form method="post" action="/shopping/{{ item.id }}/delete"
+                hx-confirm="Убрать «{{ item.text }}» из списка?">
+            <button class="btn ghost small" type="submit" title="Убрать совсем">
+              {{ ic.icon("close", 13) }}
+            </button>
+          </form>
+        </div>
+      </div>
+    {% else %}
+      <div class="card stack">
+        <div class="card-title">Список пуст</div>
+        <p class="muted">Скажите ассистенту «добавь молоко в покупки» — или впишите сюда.</p>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="stack">
+    <div class="card dark stack">
+      <div class="card-title" style="color:var(--dark-text)">Как это работает</div>
+      <p>Список один на всю семью: что положил один, видят и вычёркивают все.</p>
+      <p class="tiny" style="color:var(--dark-text-2)">
+        Вычеркнутое остаётся видимым пару дней и убирается само — так в магазине
+        видно, что уже в корзине.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

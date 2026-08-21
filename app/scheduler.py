@@ -318,8 +318,10 @@ def run_embedding_backfill(db: Session):
 def run_retention(db: Session):
     from app.modules.memory import reminders as reminders_service
     from app.modules.security.retention import rotate
+    from app.modules.shopping import service as shopping_service
     rotate(db)
     reminders_service.purge_fired(db)
+    shopping_service.purge_checked(db)
 
 
 def tick(now: datetime = None):
