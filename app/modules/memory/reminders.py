@@ -56,8 +56,52 @@ def validate_remind_at(remind_at: datetime, now: datetime = None) -> Optional[st
     return None
 
 
-def add_reminder(db: Session, user_id: int, text: str, remind_at: datetime) -> Reminder:
-    reminder = Reminder(user_id=user_id, text=text.strip(), remind_at=remind_at)
+#: Какие повторения бывают. Слова человеческие, потому что уезжают на экран.
+RECURRENCE_WORDS = {"daily": "каждый день", "weekly": "каждую неделю", "monthly": "каждый месяц"}
+
+
+def parse_recurrence(raw: str) -> Optional[str]:
+    """'daily' | 'weekly' | 'monthly' — или None для разового (и для мусора)."""
+    value = (raw or "").strip().lower()
+    return value if value in RECURRENCE_WORDS else None
+
+
+def next_occurrence(remind_at: datetime, recurrence: str, now: datetime = None) -> datetime:
+    """Следующий момент повторяющегося напоминания — строго в будущем.
+
+    Шаг идёт от собственного `remind_at`, а не от момента срабатывания: так
+    «каждый вторник в 9» остаётся вторником в 9, даже если планировщик догнал
+    напоминание с опозданием. Месячный шаг держит число, поджимая его к длине
+    месяца (31-е → 28-е февраля), — так «каждое 31-е» не пропадает в коротких
+    месяцах.
+    """
+    now = now or utc_now()
+    value = remind_at
+    while value <= now:
+        if recurrence == "daily":
+            value = value + timedelta(days=1)
+        elif recurrence == "weekly":
+            value = value + timedelta(days=7)
+        else:  # monthly
+            year, month = value.year, value.month
+            if month == 12:
+                year, month = year + 1, 1
+            else:
+                month += 1
+            day = min(remind_at.day, _month_days(year, month))
+            value = value.replace(year=year, month=month, day=day)
+    return value
+
+
+def _month_days(year: int, month: int) -> int:
+    import calendar
+    return calendar.monthrange(year, month)[1]
+
+
+def add_reminder(db: Session, user_id: int, text: str, remind_at: datetime,
+                 recurrence: str = None) -> Reminder:
+    reminder = Reminder(user_id=user_id, text=text.strip(), remind_at=remind_at,
+                        recurrence=parse_recurrence(recurrence))
     db.add(reminder)
     db.commit()
     db.refresh(reminder)

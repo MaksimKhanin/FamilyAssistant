@@ -221,6 +221,10 @@ class Reminder(Base):
     text = Column(Text, nullable=False)
     remind_at = Column(DateTime, nullable=False, index=True)
     reminded_at = Column(DateTime, nullable=True)
+    #: Повторение: NULL — разовое (как жило всегда), 'daily' | 'weekly' |
+    #: 'monthly' — сработав, напоминание не помечается, а переезжает на
+    #: следующий раз от своего же remind_at (день недели и число сохраняются).
+    recurrence = Column(String(16), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 

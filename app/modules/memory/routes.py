@@ -41,6 +41,7 @@ def reminders_screen(
         active=reminders.list_active(db, viewed.id),
         fired=reminders.list_fired(db, viewed.id),
         fired_retention_days=reminders.FIRED_RETENTION_DAYS,
+        recurrence_words=reminders.RECURRENCE_WORDS,
     )
     return render(request, "memory/reminders.html", context)
 

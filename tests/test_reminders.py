@@ -154,3 +154,66 @@ def test_reminders_is_its_own_nav_item(db, member, as_member):
     page = as_member.get("/")
 
     assert 'href="/reminders"' in page.text
+
+
+# --- повторяющиеся напоминания (тикет #79, backlog #8) ----------------------
+
+def test_a_recurring_reminder_moves_on_instead_of_firing_out(db, member):
+    from datetime import datetime, timedelta
+    from app import scheduler
+    from app.core.events import AGENT_MESSAGE, bus
+    from app.modules.memory import reminders as service
+    from app.modules.memory.models import Reminder
+
+    received = []
+    bus.subscribe(AGENT_MESSAGE, received.append)
+    service.add_reminder(db, member.id, "вынести мусор",
+                         remind_at=datetime.utcnow() - timedelta(minutes=1),
+                         recurrence="daily")
+
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    assert any("вынести мусор" in m["text"] for m in received)
+    row = db.query(Reminder).one()
+    assert row.reminded_at is None, "повторяющееся не помечается сработавшим"
+    assert row.remind_at > datetime.utcnow(), "переехало на следующий раз"
+
+
+def test_weekly_keeps_the_weekday_and_monthly_clamps_the_day(db):
+    from datetime import datetime
+    from app.modules.memory import reminders as service
+
+    weekly = service.next_occurrence(datetime(2026, 8, 4, 9, 0), "weekly",
+                                     now=datetime(2026, 8, 10, 12, 0))
+    assert weekly == datetime(2026, 8, 11, 9, 0)          # тот же вторник, 9:00
+
+    monthly = service.next_occurrence(datetime(2026, 1, 31, 10, 0), "monthly",
+                                      now=datetime(2026, 2, 1, 0, 0))
+    assert monthly == datetime(2026, 2, 28, 10, 0)        # 31-е поджалось к февралю
+
+
+def test_the_tool_accepts_repeat_and_cancel_still_works(db, member):
+    from app.agent.runtime import run_tool_directly
+    from app.modules.memory.models import Reminder
+
+    result = run_tool_directly(db, member, "set_reminder",
+                               {"text": "зарядка", "at": "2026-12-01 08:00",
+                                "repeat": "daily"})
+
+    assert result.ok
+    assert "каждый день" in result.summary
+    row = db.query(Reminder).one()
+    assert row.recurrence == "daily"
+
+    result = run_tool_directly(db, member, "cancel_reminder", {"reminder_id": row.id})
+    assert result.ok
+    assert db.query(Reminder).count() == 0
+
+
+def test_garbage_repeat_degrades_to_a_one_off(db, member):
+    from app.modules.memory import reminders as service
+    from datetime import datetime
+
+    row = service.add_reminder(db, member.id, "разово", remind_at=datetime(2026, 12, 1, 8, 0),
+                               recurrence="fortnightly")
+    assert row.recurrence is None

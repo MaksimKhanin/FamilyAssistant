@@ -209,7 +209,14 @@ def run_reminders(db: Session, now: datetime):
                            fallback=f"Напоминаю: {reminder.text}")
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
                                     "text": text, "severity": "attention"})
-        reminder.reminded_at = now
+        if reminder.recurrence:
+            # Повторяющееся не «срабатывает», а переезжает на следующий раз:
+            # reminded_at остаётся пустым, чтобы ретеншен его не убрал, а
+            # cancel_reminder продолжал его снимать.
+            reminder.remind_at = reminders_service.next_occurrence(
+                reminder.remind_at, reminder.recurrence, now=now)
+        else:
+            reminder.reminded_at = now
     db.commit()
 
 
