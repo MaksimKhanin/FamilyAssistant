@@ -874,6 +874,19 @@ APPROACH_NOTES_BOARD_INSTRUCTION = (
     "несколько сообщений — дубли объединяет сам, то, против чего человек явно "
     "возразил, убирает сам. Не для показа другим членам семьи."
 )
+IDEAS_BOARD_NAME = "Идеи ассистента"
+IDEAS_BOARD_INSTRUCTION = (
+    "Предложения ассистента этому человеку: что можно упростить или завести — "
+    "табло, правило, напоминание. Ассистент только предлагает и никогда не "
+    "делает сам; человек решает и отвечает словами в разговоре."
+)
+
+
+def ideas_board(db: Session, user_id: int, create: bool = True) -> Optional[Board]:
+    """Доска «Идеи ассистента» — заводится лениво движком идей (тикет #83)."""
+    return _system_board(db, user_id, IDEAS_BOARD_NAME, IDEAS_BOARD_INSTRUCTION, create=create)
+
+
 APPROACH_SUMMARIES_BOARD_NAME = "Итоги разговоров"
 APPROACH_SUMMARIES_BOARD_INSTRUCTION = (
     "Личное. Одна запись — одно предложение о том, чем был очередной разобранный "

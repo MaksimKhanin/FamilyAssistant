@@ -152,7 +152,21 @@ def _digest_parts(db: Session, user: User, kind: str, now: datetime) -> list:
                          f"остальная сводка уходит без неё")
         db.rollback()
 
+    # Свежие предложения движка идей — одной строкой в разборе недели (тикет #83).
+    if kind == "weekly_review" and is_module_enabled(db, user.id, "relationship"):
+        from app.modules.relationship import ideas
+        fresh = ideas.fresh_ideas(db, user.id)
+        if fresh:
+            listed = "; ".join(f"«{text}»" for text in fresh[:ideas.IDEAS_PER_WEEK])
+            parts.append(f"Есть предложения: {listed} — они лежат на доске "
+                         f"«{ideas_board_name()}», решаете вы.")
+
     return parts
+
+
+def ideas_board_name() -> str:
+    from app.modules.memory.knowledge import IDEAS_BOARD_NAME
+    return IDEAS_BOARD_NAME
 
 
 def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
@@ -256,6 +270,35 @@ def run_relationship_reviews(db: Session):
         processed += 1
 
 
+#: Не больше стольких недельных прогонов идей за один тик — та же забота, что
+#: у REVIEW_BATCH_PER_TICK: прогон — это LLM-вызов.
+IDEAS_BATCH_PER_TICK = 2
+
+
+def run_idea_engine(db: Session):
+    """Движок идей (тикет #83): раз в EVERY_DAYS дней на человека, только с
+    включённым «Подходом» — это часть той же подстройки, что и разбор
+    разговоров, и выключается тем же тумблером."""
+    from app.core.access import enabled_user_ids
+    from app.modules.relationship import ideas
+
+    processed = 0
+    for user_id in enabled_user_ids(db, "relationship", default=True):
+        if processed >= IDEAS_BATCH_PER_TICK:
+            break
+        if not ideas.due(db, user_id):
+            continue
+        user = db.get(User, user_id)
+        if user is None:
+            continue
+        try:
+            ideas.run_ideas(db, user)
+        except Exception:
+            logger.exception(f"Движок идей для {user.display_name} упал — пропускаю")
+            db.rollback()
+        processed += 1
+
+
 def run_embedding_backfill(db: Session):
     """Догоняющая индексация записей для поиска по смыслу (тикет #82).
 
@@ -288,6 +331,7 @@ def tick(now: datetime = None):
         # После точных-по-минуте задач: разбор «Подхода» медленнее и не должен
         # мешать им попасть в свою минуту.
         run_relationship_reviews(db)
+        run_idea_engine(db)
         run_embedding_backfill(db)
         if local.hour == RETENTION_HOUR and local.minute == 0:
             run_retention(db)
