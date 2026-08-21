@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.agent.llm import LLMClient, LLMResponse, LLMUnavailable, ToolCall
+from app.core.websearch import SearchResult, SearchUnavailable, WebSearchClient
 
 #: Сколько обращений к модели помнит кольцо.
 KEEP_CALLS = 200
@@ -39,24 +40,30 @@ VALUE_LIMIT = 2000
 
 _chat_script: List[dict] = []
 _json_script: List[dict] = []
+_search_script: List[dict] = []
 _calls: deque = deque(maxlen=KEEP_CALLS)
 _call_no = 0
 
 _original_chat = None
 _original_json = None
+_original_search = None
+_original_configured = None
 
 
 # --- сценарий -------------------------------------------------------------
 
-def set_script(chat: List[dict] = None, json_replies: List[dict] = None):
+def set_script(chat: List[dict] = None, json_replies: List[dict] = None,
+               search: List[dict] = None):
     """Положить очередь ответов. Пустые списки очищают очередь."""
-    global _chat_script, _json_script
+    global _chat_script, _json_script, _search_script
     _chat_script = [dict(entry) for entry in (chat or [])]
     _json_script = [dict(entry) for entry in (json_replies or [])]
+    _search_script = [dict(entry) for entry in (search or [])]
 
 
 def script() -> Dict[str, List[dict]]:
-    return {"chat": list(_chat_script), "json": list(_json_script)}
+    return {"chat": list(_chat_script), "json": list(_json_script),
+            "search": list(_search_script)}
 
 
 def calls(since: int = 0, limit: int = 50) -> List[dict]:
@@ -199,22 +206,56 @@ def _json_completion(self: LLMClient, system, user_content, **kwargs) -> dict:
     return answer or {}
 
 
+def _search(self: WebSearchClient, query: str, count: int = None):
+    """Подмена поиска — тот же принцип, что у `_chat`: очередь кончилась —
+    отвечает настоящий поисковик (или его честное «не настроен»)."""
+    entry = _take(_search_script, query)
+    if entry is None:
+        return _original_search(self, query, count=count)
+    record = [{"role": "user", "content": query}]
+    if entry.get("error"):
+        _remember("search", record, None, True, {"error": entry["error"]})
+        raise SearchUnavailable(str(entry["error"]))
+    results = [SearchResult(title=str(item.get("title") or ""),
+                            url=str(item.get("url") or ""),
+                            snippet=str(item.get("snippet") or ""))
+               for item in entry.get("results") or []]
+    _remember("search", record, None, True,
+              [{"title": r.title, "url": r.url, "snippet": r.snippet} for r in results])
+    return results
+
+
+def _configured(self: WebSearchClient) -> bool:
+    # Со скриптованной выдачей поиск «настроен», даже если окружение стенда
+    # не знает ни одного провайдера: иначе search_web не попал бы в схему
+    # модели и сценарию нечего было бы проверять.
+    if _search_script:
+        return True
+    return _original_configured.fget(self)
+
+
 def install():
     """Встать между ассистентом и моделью. Идемпотентно."""
-    global _original_chat, _original_json
+    global _original_chat, _original_json, _original_search, _original_configured
     if _original_chat is not None:
         return
     _original_chat, _original_json = LLMClient.chat, LLMClient.json_completion
     LLMClient.chat = _chat
     LLMClient.json_completion = _json_completion
+    _original_search = WebSearchClient.search
+    _original_configured = WebSearchClient.configured
+    WebSearchClient.search = _search
+    WebSearchClient.configured = property(_configured)
 
 
 def uninstall():
     """Вернуть всё как было — для тестов самого стенда."""
-    global _original_chat, _original_json
+    global _original_chat, _original_json, _original_search, _original_configured
     if _original_chat is None:
         return
     LLMClient.chat, LLMClient.json_completion = _original_chat, _original_json
-    _original_chat = _original_json = None
+    WebSearchClient.search = _original_search
+    WebSearchClient.configured = _original_configured
+    _original_chat = _original_json = _original_search = _original_configured = None
     set_script()
     forget_calls()

@@ -73,6 +73,10 @@ class ToolSpec:
     read_only: bool = False
     #: Инструмент нельзя вызвать из чата напрямую — только по событию/расписанию.
     internal: bool = False
+    #: Живёт ли инструмент в этой установке вообще: () -> bool, дёшево. Инструмент,
+    #: которому нужен внешний сервис (поиск в интернете), без настроенного сервиса
+    #: в схему модели не попадает — как будто его нет (см. available_tools).
+    available: Optional[Callable[[], bool]] = None
 
 
 REGISTRY: Dict[str, ToolSpec] = {}
@@ -87,6 +91,7 @@ def tool(
     auto_from: int = 2,
     read_only: bool = False,
     internal: bool = False,
+    available: Optional[Callable[[], bool]] = None,
 ):
     """Register a function as an agent tool.
 
@@ -105,6 +110,7 @@ def tool(
             auto_from=0 if read_only else auto_from,
             read_only=read_only,
             internal=internal,
+            available=available,
         )
         return fn
 

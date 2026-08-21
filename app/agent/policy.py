@@ -197,6 +197,8 @@ def available_tools(db: Session, user: User, include_internal: bool = False) -> 
     resolved = dials(db, user)
     result = []
     for spec in registry.all_specs(include_internal=include_internal):
+        if spec.available is not None and not spec.available():
+            continue
         if not is_module_enabled(db, user.id, spec.module):
             continue
         if resolved.mode(spec) == MODE_OFF:

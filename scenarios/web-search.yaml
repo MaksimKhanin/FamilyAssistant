@@ -1,0 +1,68 @@
+# Поиск в интернете: вопрос про внешний мир идёт через search_web и отвечает
+# по выдержкам с названными источниками (тикет #80).
+#
+# Поисковик здесь скриптован так же, как модель: очередь выдержек кладётся в
+# режиссёра (model.search), и search_web в схеме модели появляется даже на
+# стенде без настоящего провайдера.
+name: Поиск в интернете
+user: marina
+reset:
+  autonomy: 3
+
+steps:
+  - name: свежий факт ищется и источник называется по домену
+    model:
+      search:
+        - results:
+            - title: "Погода в Москве сегодня"
+              url: "https://pogoda.example.ru/moscow"
+              snippet: "Сегодня в Москве около +21, без осадков, ветер слабый."
+      chat:
+        - tool: search_web
+          arguments: {query: "погода в Москве сегодня"}
+        - content: "По данным pogoda.example.ru, сегодня в Москве около +21 и без осадков."
+          keep: true
+    say: "какая сегодня погода в Москве?"
+    expect:
+      tool: search_web
+      reply_contains: "pogoda.example.ru"
+
+  - name: поиск не отвечает — честный ответ без выдуманных ссылок
+    model:
+      search:
+        - error: "Поисковик недоступен"
+      chat:
+        - tool: search_web
+          arguments: {query: "курс евро сегодня"}
+        - content: "Поиск сейчас не отвечает, точного курса не назову — лучше проверить позже."
+          keep: true
+    say: "какой сейчас курс евро?"
+    expect:
+      reply_not_contains: ["по данным", "http"]
+
+  - name: сложный вопрос — два запроса и связный ответ
+    model:
+      search:
+        - when: "детьми"
+          results:
+            - title: "Выставка динозавров"
+              url: "https://afisha.example.ru/dino"
+              snippet: "С 20 августа выставка динозавров, билеты от 500 ₽."
+        - when: "погода"
+          results:
+            - title: "Погода на выходные"
+              url: "https://pogoda.example.ru/weekend"
+              snippet: "В субботу дождь, в воскресенье солнечно, +19."
+      chat:
+        - tool: search_web
+          arguments: {query: "куда сходить с детьми в выходные"}
+        - tool: search_web
+          arguments: {query: "погода на выходные"}
+        - content: |
+            По данным afisha.example.ru идёт выставка динозавров, а погода по
+            данным pogoda.example.ru лучше в воскресенье — солнечно и +19.
+          keep: true
+    say: "куда сходить с детьми в выходные и когда лучше?"
+    expect:
+      tool: search_web
+      reply_contains: ["afisha.example.ru", "pogoda.example.ru"]
