@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.agent import voice
 from app.core.clock import local_now, to_local, to_utc, utc_now
 from app.core.db import create_all, session_scope
 from app.core.events import AGENT_MESSAGE, bus
@@ -31,6 +32,62 @@ RETENTION_HOUR = 4          # ротацию делаем ночью, когда
 #: Не больше стольких разборов «Подхода» за один тик — см. run_relationship_reviews.
 REVIEW_BATCH_PER_TICK = 3
 
+#: Чем открывается сводка, когда голос персоны недоступен, — прежние строки.
+OPENINGS = {
+    "morning_digest": "Доброе утро.",
+    "evening_summary": "Вечерний итог.",
+    "weekly_review": "Как прошла неделя.",
+}
+
+#: Какой момент дня у сводки — для просьбы к голосу персоны.
+_MOMENTS = {
+    "morning_digest": "утро",
+    "evening_summary": "вечер",
+    "weekly_review": "конец недели",
+}
+
+#: Просьбы к голосу персоны (`app/agent/voice.py`). Факты собраны кодом и
+#: инструментами — работа модели здесь только слова, как у BOARD_STATS_SYSTEM.
+_DIGEST_HINT = (
+    "Сейчас {moment}, {date}. Перескажи человеку его сводку в своей манере — "
+    "коротко, строго по фактам ниже: ничего не добавляй, числа не пересчитывай "
+    "и не опускай. Это сообщение придёт ему уведомлением.\n\nФакты:\n{facts}"
+)
+_REMINDER_HINT = (
+    "Пришло время напоминания, которое человек сам себе поставил. Напомни ему "
+    "одной фразой в своей манере, обязательно назвав само дело его словами: "
+    "«{text}». Ничего не добавляй и не выдумывай."
+)
+
+#: Дописка к утренней просьбе, когда у человека включён «Подход» и есть свежий
+#: итог разговоров: одна фраза-возвращение ко вчерашней теме, не пересказ.
+_FOLLOWUP_HINT = (
+    "\n\nВчера вы разговаривали, и итог был такой: «{summary}». Если уместно, "
+    "одной фразой вернись к этой теме — живым интересом, не пересказом. "
+    "Неуместно — просто пропусти, ничего об этом не говоря."
+)
+
+
+def _followup(db: Session, user: User, kind: str) -> str:
+    """Тема для возвращения — только в утренней сводке и только с «Подходом»."""
+    if kind != "morning_digest":
+        return ""
+    from app.core.access import is_module_enabled
+    from app.modules.relationship.service import recent_summaries
+
+    if not is_module_enabled(db, user.id, "relationship"):
+        return ""
+    summaries = recent_summaries(db, user.id, limit=1)
+    return summaries[0] if summaries else ""
+
+
+#: Сколько после своего времени задача ещё имеет право сработать. Раньше
+#: `_due` требовал точного попадания в минуту: проспал тик — перезапуск,
+#: долгий разбор «Подхода», просто нагрузка — и сводки не было до завтра.
+#: Теперь проспанная минута навёрстывается в это окно, а совсем старое
+#: время честно ждёт следующего раза.
+CATCH_UP_WINDOW = timedelta(hours=2)
+
 
 def _due(job: ScheduledJob, now: datetime) -> bool:
     if not job.enabled:
@@ -40,18 +97,21 @@ def _due(job: ScheduledJob, now: datetime) -> bool:
     except ValueError:
         logger.warning(f"Не разобрал время задачи {job.kind}: {job.at_time}")
         return False
-    if (now.hour, now.minute) != (hour, minute):
-        return False
     if job.weekday is not None and now.weekday() != job.weekday:
         return False
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now < scheduled or now - scheduled > CATCH_UP_WINDOW:
+        return False
     # last_run_at, как и всё в базе, лежит в UTC — сравниваем в одной системе.
-    if job.last_run_at and (now - to_local(job.last_run_at)) < timedelta(minutes=2):
+    # Отработала после сегодняшнего (для этого дня) времени срабатывания —
+    # значит, этот раз уже был, навёрстывать нечего.
+    if job.last_run_at and to_local(job.last_run_at) >= scheduled:
         return False
     return True
 
 
-def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
-    """Compose a job's message from the tools the person actually has switched on.
+def _digest_parts(db: Session, user: User, kind: str, now: datetime) -> list:
+    """Compose a job's facts from the tools the person actually has switched on.
 
     `now` — тот же момент, для которого `run_jobs` уже решил, что задаче пора
     сработать. Статистика досок считает по нему свои сутки/неделю (`window` в
@@ -82,10 +142,9 @@ def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
     #
     # Своя защита от падения, потому что этот кусок — единственный в сводке, что
     # идёт не через `registry.execute` с его перехватом: сводка одного человека,
-    # рухнув, унесла бы сводки всех, чья задача в этой минуте ещё не разослана,
-    # — а `_due` требует точного попадания в минуту, и до завтра они не вернутся.
-    # Здесь же и единственный поход к модели за формулировкой: он платный по
-    # времени, поэтому задач у доски не больше пяти.
+    # рухнув, унесла бы сводки всех, чья задача в этой минуте ещё не разослана.
+    # Здесь же и поход к модели за формулировкой цифры: он платный по времени,
+    # поэтому задач у доски не больше пяти.
     try:
         parts.extend(stats.digest_parts(db, user, kind, now=now))
     except Exception:
@@ -93,15 +152,30 @@ def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
                          f"остальная сводка уходит без неё")
         db.rollback()
 
+    # Свежие предложения движка идей — одной строкой в разборе недели (тикет #83).
+    if kind == "weekly_review" and is_module_enabled(db, user.id, "relationship"):
+        from app.modules.relationship import ideas
+        fresh = ideas.fresh_ideas(db, user.id)
+        if fresh:
+            listed = "; ".join(f"«{text}»" for text in fresh[:ideas.IDEAS_PER_WEEK])
+            parts.append(f"Есть предложения: {listed} — они лежат на доске "
+                         f"«{ideas_board_name()}», решаете вы.")
+
+    return parts
+
+
+def ideas_board_name() -> str:
+    from app.modules.memory.knowledge import IDEAS_BOARD_NAME
+    return IDEAS_BOARD_NAME
+
+
+def _digest_text(db: Session, user: User, kind: str, now: datetime) -> str:
+    """Сводка целиком, прежним каноническим форматом. Оставлена как запасной
+    текст для голоса персоны и как контракт для тестов и стенда."""
+    parts = _digest_parts(db, user, kind, now)
     if not parts:
         return ""
-
-    opening = {
-        "morning_digest": "Доброе утро.",
-        "evening_summary": "Вечерний итог.",
-        "weekly_review": "Как прошла неделя.",
-    }.get(kind, "")
-    return f"{opening}\n\n" + "\n\n".join(parts)
+    return f"{OPENINGS.get(kind, '')}\n\n" + "\n\n".join(parts)
 
 
 def run_jobs(db: Session, now: datetime):
@@ -112,13 +186,26 @@ def run_jobs(db: Session, now: datetime):
         if user is None:
             continue
 
-        text = _digest_text(db, user, job.kind, to_utc(now))
+        parts = _digest_parts(db, user, job.kind, to_utc(now))
         job.last_run_at = to_utc(now)
         db.commit()
 
-        if not text:
+        if not parts:
             logger.info(f"Задача {job.kind} для {user.display_name}: рассказывать нечего")
             continue
+
+        # Факты собраны; произносит их голос персоны, а при недоступной модели —
+        # прежняя каноническая сводка. Числа модель не считает — только слова.
+        fallback = f"{OPENINGS.get(job.kind, '')}\n\n" + "\n\n".join(parts)
+        hint = _DIGEST_HINT.format(
+            moment=_MOMENTS.get(job.kind, "день"),
+            date=f"{now:%d.%m.%Y}",
+            facts="\n".join(f"- {part}" for part in parts),
+        )
+        followup = _followup(db, user, job.kind)
+        if followup:
+            hint += _FOLLOWUP_HINT.format(summary=followup)
+        text = voice.speak(user, hint, fallback=fallback)
 
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
                                     "text": text, "severity": "info"})
@@ -132,9 +219,18 @@ def run_reminders(db: Session, now: datetime):
         user = db.get(User, reminder.user_id)
         if user is None:
             continue
+        text = voice.speak(user, _REMINDER_HINT.format(text=reminder.text),
+                           fallback=f"Напоминаю: {reminder.text}")
         bus.publish(AGENT_MESSAGE, {"family_id": user.family_id, "user_ids": [user.id],
-                                    "text": f"Напоминаю: {reminder.text}", "severity": "attention"})
-        reminder.reminded_at = now
+                                    "text": text, "severity": "attention"})
+        if reminder.recurrence:
+            # Повторяющееся не «срабатывает», а переезжает на следующий раз:
+            # reminded_at остаётся пустым, чтобы ретеншен его не убрал, а
+            # cancel_reminder продолжал его снимать.
+            reminder.remind_at = reminders_service.next_occurrence(
+                reminder.remind_at, reminder.recurrence, now=now)
+        else:
+            reminder.reminded_at = now
     db.commit()
 
 
@@ -150,14 +246,15 @@ def run_relationship_reviews(db: Session):
     попал в этот тик, останется «готов к разбору» и попадёт в следующий —
     порог messages не сгорает.
 
-    `default=False` у `enabled_user_ids` намеренно: этот модуль не должен
-    молча включаться тем, кто никогда его не просил (см. миграцию 0015).
+    `default=True` — по ADR-0015: новый участник получает «Подход» включённым,
+    а всем, кто существовал до раскатки, явный opt-out закреплён строками
+    миграций 0015/0016 — их отсутствующая настройка так и читается «выключено».
     """
     from app.core.access import enabled_user_ids
     from app.modules.relationship import service
 
     processed = 0
-    for user_id in enabled_user_ids(db, "relationship", default=False):
+    for user_id in enabled_user_ids(db, "relationship", default=True):
         if processed >= REVIEW_BATCH_PER_TICK:
             break
         if not service.due(db, user_id):
@@ -173,11 +270,58 @@ def run_relationship_reviews(db: Session):
         processed += 1
 
 
+#: Не больше стольких недельных прогонов идей за один тик — та же забота, что
+#: у REVIEW_BATCH_PER_TICK: прогон — это LLM-вызов.
+IDEAS_BATCH_PER_TICK = 2
+
+
+def run_idea_engine(db: Session):
+    """Движок идей (тикет #83): раз в EVERY_DAYS дней на человека, только с
+    включённым «Подходом» — это часть той же подстройки, что и разбор
+    разговоров, и выключается тем же тумблером."""
+    from app.core.access import enabled_user_ids
+    from app.modules.relationship import ideas
+
+    processed = 0
+    for user_id in enabled_user_ids(db, "relationship", default=True):
+        if processed >= IDEAS_BATCH_PER_TICK:
+            break
+        if not ideas.due(db, user_id):
+            continue
+        user = db.get(User, user_id)
+        if user is None:
+            continue
+        try:
+            ideas.run_ideas(db, user)
+        except Exception:
+            logger.exception(f"Движок идей для {user.display_name} упал — пропускаю")
+            db.rollback()
+        processed += 1
+
+
+def run_embedding_backfill(db: Session):
+    """Догоняющая индексация записей для поиска по смыслу (тикет #82).
+
+    Пачка маленькая и молчаливая: без настроенной модели эмбеддингов выходит
+    сразу, с настроенной — довозит векторы записям, заведённым до включения
+    или при недоступном провайдере.
+    """
+    from app.modules.memory import knowledge
+
+    try:
+        knowledge.backfill_embeddings(db)
+    except Exception:
+        logger.exception("Индексация эмбеддингов упала — продолжаю без неё")
+        db.rollback()
+
+
 def run_retention(db: Session):
     from app.modules.memory import reminders as reminders_service
     from app.modules.security.retention import rotate
+    from app.modules.shopping import service as shopping_service
     rotate(db)
     reminders_service.purge_fired(db)
+    shopping_service.purge_checked(db)
 
 
 def tick(now: datetime = None):
@@ -189,6 +333,8 @@ def tick(now: datetime = None):
         # После точных-по-минуте задач: разбор «Подхода» медленнее и не должен
         # мешать им попасть в свою минуту.
         run_relationship_reviews(db)
+        run_idea_engine(db)
+        run_embedding_backfill(db)
         if local.hour == RETENTION_HOUR and local.minute == 0:
             run_retention(db)
 

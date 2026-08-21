@@ -93,9 +93,11 @@ class Stand:
     def tick(self, at: str = None):
         return self.call("POST", "/api/testkit/tick", json={"at": at} if at else {})
 
-    def script(self, chat: List[dict] = None, json_replies: List[dict] = None):
+    def script(self, chat: List[dict] = None, json_replies: List[dict] = None,
+               search: List[dict] = None):
         return self.call("POST", "/api/testkit/model/script",
-                         json={"chat": chat or [], "json": json_replies or []})
+                         json={"chat": chat or [], "json": json_replies or [],
+                               "search": search or []})
 
     def state(self, user: str = None, tables: str = "", limit: int = 20, counts: bool = False):
         params = {"limit": limit, "counts": str(counts).lower()}
@@ -352,7 +354,8 @@ def run_scenario(stand: Stand, path: Path) -> dict:
                     seed=bool(options.get("seed", True)))
     model = scenario.get("model") or {}
     if model:
-        stand.script(chat=model.get("chat"), json_replies=model.get("json"))
+        stand.script(chat=model.get("chat"), json_replies=model.get("json"),
+                     search=model.get("search"))
 
     journal = {"name": name, "file": str(path), "at": datetime.now().isoformat(), "steps": []}
     failures = 0
@@ -369,7 +372,8 @@ def run_scenario(stand: Stand, path: Path) -> dict:
 
         if "model" in step:
             stand.script(chat=(step["model"] or {}).get("chat"),
-                         json_replies=(step["model"] or {}).get("json"))
+                         json_replies=(step["model"] or {}).get("json"),
+                         search=(step["model"] or {}).get("search"))
         result = _do(stand, step, user)
         capture(stand, captures, user, variables)
 

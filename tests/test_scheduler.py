@@ -100,9 +100,13 @@ def test_the_regular_figure_of_a_board_arrives_in_the_existing_digest(db, member
     monkeypatch.setattr(stats, "default_client",
                         FakeLLM([{"text": "За сутки малыш съел 170 мл."}]))
 
-    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
+    # Момент прогона — «сейчас», а не зашитая дата: запись и её событие только
+    # что созданы, и окно суточной статистики должно их накрывать в любой день.
+    now = datetime.utcnow()
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest",
+                        at_time=now.strftime("%H:%M"), enabled=True))
     db.commit()
-    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+    scheduler.run_jobs(db, now)
 
     assert catcher, "утренняя сводка не ушла"
     assert "За сутки малыш съел 170 мл." in catcher[-1]["text"]
@@ -136,3 +140,107 @@ def test_a_future_reminder_waits(db, member, catcher):
     assert [m for m in catcher if "Напоминаю" in m["text"]] == []
 
 
+
+# --- голос персоны в сводках и напоминаниях (тикет #72) ---------------------
+
+def test_a_digest_can_speak_in_character(db, member, catcher, monkeypatch):
+    """Сводка уходит голосом персоны; факты при этом собраны кодом."""
+    from app.agent import voice
+
+    heard = {}
+
+    def fake_speak(subject, hint, fallback="", llm=None):
+        heard["hint"] = hint
+        heard["fallback"] = fallback
+        return "Доброе утро, солнышко! Дома всё спокойно."
+
+    monkeypatch.setattr(voice, "speak", fake_speak)
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 8, 0))
+
+    assert catcher[-1]["text"] == "Доброе утро, солнышко! Дома всё спокойно."
+    # запасной текст — прежняя каноническая сводка
+    assert heard["fallback"].startswith("Доброе утро.")
+    # факты доехали в просьбу дословно
+    assert "Факты:" in heard["hint"]
+
+
+def test_a_digest_without_the_model_keeps_the_canonical_form(db, member, catcher):
+    """Модель недоступна (в тестах LLM_BASE_URL ведёт в никуда) — прежний формат."""
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 0))
+
+    assert catcher[-1]["text"].startswith("Вечерний итог.")
+
+
+def test_a_reminder_can_speak_in_character(db, member, catcher, monkeypatch):
+    from datetime import timedelta as _td
+    from app.agent import voice
+
+    monkeypatch.setattr(voice, "speak",
+                        lambda subject, hint, fallback="", llm=None:
+                        "Милая, пора выпить лекарство — ты просила напомнить.")
+    reminders_service.add_reminder(db, member.id, "выпить лекарство",
+                                   remind_at=datetime.utcnow() - _td(minutes=1))
+
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    assert catcher[-1]["text"] == "Милая, пора выпить лекарство — ты просила напомнить."
+
+
+def test_a_reminder_without_the_model_keeps_the_canonical_form(db, member, catcher):
+    from datetime import timedelta as _td
+
+    reminders_service.add_reminder(db, member.id, "полить цветы",
+                                   remind_at=datetime.utcnow() - _td(minutes=1))
+
+    scheduler.run_reminders(db, datetime.utcnow())
+
+    assert catcher[-1]["text"] == "Напоминаю: полить цветы"
+
+# --- навёрстывание проспанной минуты (тикет #73) ----------------------------
+
+def test_a_missed_job_catches_up_within_the_window(db, member, catcher):
+    """Планировщик проспал минуту (перезапуск, долгий тик) — сводка не пропадает."""
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+
+    assert catcher, "проспанная сводка так и не ушла"
+    assert "Вечерний итог" in catcher[-1]["text"]
+
+
+def test_a_caught_up_job_does_not_fire_again(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 41))
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 22, 30))
+
+    assert len(catcher) == 1
+
+
+def test_a_job_missed_beyond_the_window_waits_for_tomorrow(db, member, catcher):
+    """Через три часа сводка уже не «утренняя» — честнее дождаться следующего раза."""
+    db.add(ScheduledJob(user_id=member.id, kind="morning_digest", at_time="08:30", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 11, 31))
+
+    assert catcher == []
+
+
+def test_the_next_day_fires_normally_after_a_catch_up(db, member, catcher):
+    db.add(ScheduledJob(user_id=member.id, kind="evening_summary", at_time="21:00", enabled=True))
+    db.commit()
+
+    scheduler.run_jobs(db, datetime(2026, 8, 9, 21, 40))
+    scheduler.run_jobs(db, datetime(2026, 8, 10, 21, 0))
+
+    assert len(catcher) == 2

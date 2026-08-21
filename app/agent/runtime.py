@@ -13,7 +13,6 @@ Every invocation lands in `action_log`, which is what the «Что агент д
 card shows. Nothing here is module-specific.
 """
 import json
-import re
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
@@ -21,13 +20,14 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.agent import policy, registry, tracing
+from app.agent import honesty, policy, registry, tracing, voice
 from app.agent.llm import (
     ROUTINE, LLMClient, LLMUnavailable, ToolCall, client as default_client, image_part, text_part,
 )
-from app.agent.prompts import TONE, WHO, character_block, system_prompt
+from app.agent.prompts import system_prompt
 from app.agent.registry import ToolContext, ToolResult, ToolSpec
 from app.core import instructions, media
+from app.core.config import settings
 from app.core.events import ACTION_PENDING, bus
 from app.core.logging import get_logger
 from app.core.models import (
@@ -36,9 +36,14 @@ from app.core.models import (
 
 logger = get_logger("agent")
 
-MAX_STEPS = 4            # сколько раз подряд агент может брать инструмент за один ответ
+#: Сколько раз подряд агент может брать инструмент за один ответ. Ручка
+#: `AGENT_MAX_STEPS`; умолчание живёт в `app/core/config.py`.
+MAX_STEPS = settings.agent_max_steps
 HISTORY_LIMIT = 16       # сообщений истории, которые видит модель
-TRAIL_SUMMARY_LIMIT = 120  # сколько знаков сводки инструмента доезжает до следующего хода
+#: Сколько знаков сводки инструмента доезжает до следующего хода. Было 120 —
+#: длинные сводки (recall с источниками, отказ поиска с причиной) резались на
+#: полуслове, и модель на следующем ходу их переспрашивала.
+TRAIL_SUMMARY_LIMIT = 200
 
 OFFLINE_REPLY = (
     "Сейчас не могу подумать — не отвечает модель. "
@@ -50,26 +55,8 @@ OFFLINE_REPLY = (
 #: подделку в её ответе (`_looks_fabricated`).
 TRAIL_HEADER = "Что вернули инструменты (служебная запись системы, не твои слова):"
 
-#: Как выглядит выдуманный отчёт о вызовах. Модель, которой каждый ход показывали
-#: перечень её же инструментов внутри её же реплики, рано или поздно дописывает
-#: такой перечень сама — вместо того чтобы позвать инструмент. Снаружи это не
-#: отличить от работы: человеку сказано «переименовала и запомнила», а не сделано
-#: ни того, ни другого.
-#:
-#: Первым вариантом идёт ровно та приписка, которой перечень возили раньше: её
-#: формат сменился, а строки в базе остались, и читать их как правду тоже нельзя.
-#: Служебная запись — в скобках или с начала строки: перечень вызовов посреди
-#: фразы моделью не пишется, а «вот что я сделала:» в живой речи встречается.
-_FABRICATED_TRAIL = re.compile(
-    r"\n*(?:\[\s*(?:что\s+я\s+(?:тогда\s+)?сделал[аио]?\b"
-    r"|что\s+я\s+вызвал[аи]?\b"
-    r"|что\s+вернули\s+инструменты\b)"
-    r"|^[ \t]*что\s+вернули\s+инструменты\b)"
-    r".*\Z",
-    re.IGNORECASE | re.DOTALL | re.MULTILINE,
-)
-
-#: Что сказать модели, поймав её на таком отчёте. Формулировка резкая по той же
+#: Что сказать модели, поймав её на выдуманном перечне вызовов (детекторы —
+#: в app/agent/honesty.py). Формулировка резкая по той же
 #: причине, что и у «СТОП» в `_handle_call`: мягкую модель дочитывает как совет.
 FABRICATION_NUDGE = (
     "СТОП: ты перечислил вызовы инструментов, но не вызвал ни одного — значит, "
@@ -97,6 +84,46 @@ UNBACKED_REPLY = (
     "Давайте попробуем ещё раз?"
 )
 
+#: Каноническая строка для упора в лимит шагов. Осталась запасной: когда
+#: инструменты успели что-то сделать или модель может сказать то же характером,
+#: человеку уходит честный пересказ, а не эта заготовка (`_overflow_answer`).
+BURIED_REPLY = "Похоже, я закопался в подсчётах. Давайте попробуем сформулировать проще?"
+
+#: Просьбы к голосу персоны (`app/agent/voice.py`) на аварийных путях. Все они
+#: пересказывают уже случившееся и прямо запрещают выдумывать: факт наружу,
+#: манера — от характера.
+_UNBACKED_HINT = (
+    "У тебя не получилось сделать то, о чём просил человек: ни один инструмент "
+    "не отработал, ничего не записано. Скажи ему это честно одной-двумя фразами "
+    "в своей манере и предложи попробовать ещё раз. Не говори «готово» и "
+    "«записал» и ничего не выдумывай."
+)
+_BURIED_HINT = (
+    "Ты запутался и не довёл ответ до конца: ничего не сделано. Скажи это честно "
+    "одной фразой в своей манере и попроси человека сформулировать проще. "
+    "Не говори «готово» и ничего не выдумывай."
+)
+_OVERFLOW_DONE_HINT = (
+    "Ты упёрся в лимит шагов и не довёл дело до конца, но часть работы сделана. "
+    "Перескажи человеку одной-двумя фразами в своей манере, что успел, — строго "
+    "по фактам ниже, ничего не добавляя, — и предложи продолжить, если нужно:\n{facts}"
+)
+_SILENT_AWAITING_HINT = (
+    "Ты подготовил действие, и оно ждёт подтверждения человека. Скажи одной "
+    "фразой в своей манере, что подготовил и ждёшь его «да». "
+    "Не говори, что уже сделал."
+)
+_SILENT_DONE_HINT = (
+    "Инструменты отработали, а слов для человека у тебя не нашлось. Перескажи "
+    "ему одной-двумя фразами в своей манере, что сделано, — строго по фактам, "
+    "ничего не добавляя:\n{facts}"
+)
+_SILENT_EMPTY_HINT = (
+    "Ответ не сложился: ничего не сделано и сказать нечего. Попроси человека "
+    "одной фразой в своей манере сказать ещё раз. Не говори «готово» и ничего "
+    "не выдумывай."
+)
+
 #: Чем помечается в истории реплика с таким отчётом. Модель, читающая свои
 #: прошлые «готово» как правду, повторяет узор ходом позже (прогон #82) и заодно
 #: ссылается на несделанное как на сделанное.
@@ -106,36 +133,12 @@ NOTHING_HAPPENED = (
     "как на сделанное."
 )
 
-#: Слова, которыми ассистент отчитывается о сделанном. Не «манера речи»: каждое
-#: из них — утверждение о состоянии данных, и без вызова инструмента любое из них
-#: ложно. «Подготовил» сюда не входит намеренно — это честные слова про действие,
-#: которое ждёт «да».
-_DONE_CLAIM = re.compile(
-    r"(?<![а-яё])(?:"
-    # «занёс» и «занесла» — разные основы, поэтому обе в списке; окончание
-    # необязательно, потому что род и число отчёта не меняют.
-    r"записал|дописал|вписал|занёс|занес|занесл|внёс|внес|внесл"
-    r"|добавил|завёл|завел|создал"
-    r"|переименовал|запомнил|сохранил|удалил|стёр|стер|стёрл|стерл|очистил|почистил"
-    r"|поставил|назначил|отметил|пометил|обновил|исправил|поправил|отправил"
-    r"|зафиксировал|выполнил|сделал"
-    r")(?:а|о|и)?(?![а-яё])",
-    re.IGNORECASE,
-)
-
-#: «Готово» — только с начала фразы: «блюдо готово» в рецепте ни о чём не
-#: отчитывается.
-_DONE_READY = re.compile(r"^[\s\-—«\"']*готово(?![а-яё])", re.IGNORECASE)
-
-#: Когда те же слова отчётом не являются: отрицание, условие, вопрос, чужое
-#: действие. Проверяется по всей фразе — грамматического разбора тут нет, и
-#: ошибаться лучше в сторону «не отчёт»: цена ложного срабатывания — выброшенный
-#: живой ответ.
-_NOT_A_CLAIM = re.compile(
-    r"(?<![а-яё])(?:не|бы|если|когда|ты|вы|тебе|вам|могу|могла|мог|можешь|можно"
-    r"|хочешь|давай|надо|нужно|скажи|попроси|просил|хотел)(?![а-яё])|\?",
-    re.IGNORECASE,
-)
+#: Детекторы отчётов о несделанном вынесены в app/agent/honesty.py вместе с
+#: опциональным LLM-судьёй второй ступени (HONESTY_JUDGE=1). Здесь остаются
+#: тонкие обёртки: имена прижились и в этом файле, и в его тестах.
+_own_words = honesty.own_words
+_looks_fabricated = honesty.looks_fabricated
+_claims_done = honesty.claims_done
 
 
 @dataclass
@@ -251,40 +254,6 @@ def load_history(db: Session, user: User, limit: int = HISTORY_LIMIT) -> List[di
     return history
 
 
-def _own_words(text: str) -> str:
-    """Реплика без перечня вызовов: и без выдуманного, и без старого настоящего.
-
-    Перечень — служебная запись; в словах ассистента ему места нет ни на экране,
-    ни в истории следующего хода, где он читался бы как правда о сделанном.
-    Режем до конца реплики: перечень по своей природе хвост, а хвост, начавшийся
-    с рассказа о несделанном, дальше правдой не становится.
-    """
-    return _FABRICATED_TRAIL.sub("", text or "").strip()
-
-
-def _looks_fabricated(text: str) -> bool:
-    """Модель отчиталась о вызовах прямо в тексте — значит, не вызвала."""
-    return bool(text) and _own_words(text) != text.strip()
-
-
-def _claims_done(text: str) -> bool:
-    """Реплика отчитывается о выполненном действии?
-
-    Разбор идёт по фразам, а не по всему тексту: «готово» в одной фразе и «не»
-    в другой — это по-прежнему отчёт, а вот «я бы записал» отчётом не является.
-    Фраза с отрицанием, условием, вопросом или обращением на «ты» отчётом не
-    считается: ошибка в эту сторону стоит нам пропущенного обмана, ошибка в
-    другую — выброшенного живого ответа.
-    """
-    for phrase in re.split(r"(?<=[.!?\n])\s*", text or ""):
-        if not (_DONE_READY.match(phrase) or _DONE_CLAIM.search(phrase)):
-            continue
-        if _NOT_A_CLAIM.search(phrase):
-            continue
-        return True
-    return False
-
-
 def _unbacked(text: str, traces: List[Trace]) -> bool:
     """Ответ рассказывает о работе, которой не было.
 
@@ -393,6 +362,15 @@ class Agent:
             boards = boards_prompt(db, actor.id)
             if boards:
                 system += f"\n{boards}"
+        if "relationship" in modules:
+            # Память за пределами окна истории: последние итоги разговоров,
+            # которые пишет разбор «Подхода». Ноль новых LLM-вызовов — итоги
+            # уже лежат на доске (тикет #77).
+            from app.agent.prompts import summaries_block
+            from app.modules.relationship.service import recent_summaries
+            summaries = summaries_block(recent_summaries(db, actor.id))
+            if summaries:
+                system += f"\n{summaries}"
         messages: List[dict] = [{"role": "system", "content": system}]
         messages.extend(history)
         messages.append({"role": "user", "content": user_content})
@@ -402,6 +380,9 @@ class Agent:
         answer = ""
 
         nudged = False
+        #: Реплика, которую судья честности уже оправдал в этом ходу, — финальная
+        #: проверка не судит её второй раз.
+        judged_clear = None
         try:
             for _ in range(MAX_STEPS):
                 response = self.llm.chat(
@@ -419,15 +400,23 @@ class Agent:
                     # останутся такой же неправдой, а «готово» без перечня и
                     # срезать нечего. Показываем ей, что вышло, и даём сделать
                     # по-настоящему — один раз, чтобы не кружить.
+                    # Выдуманный перечень — улика структурная, судья не нужен;
+                    # голое «готово» с включённой второй ступенью переспрашивается
+                    # (`honesty.confirmed_claim`), чтобы не глушить живую фразу
+                    # зря. Оправданная судьёй реплика запоминается — финальная
+                    # проверка не судит её второй раз.
                     if not nudged and _unbacked(response.content, traces):
-                        nudged = True
-                        logger.warning("Модель отчиталась о работе, которой не было "
-                                       "— прошу вызвать инструменты по-настоящему")
-                        messages.append({"role": "assistant", "content": response.content})
-                        messages.append({"role": "system", "content": (
-                            FABRICATION_NUDGE if _looks_fabricated(response.content)
-                            else CLAIM_NUDGE)})
-                        continue
+                        if (_looks_fabricated(response.content)
+                                or honesty.confirmed_claim(_own_words(response.content), self.llm)):
+                            nudged = True
+                            logger.warning("Модель отчиталась о работе, которой не было "
+                                           "— прошу вызвать инструменты по-настоящему")
+                            messages.append({"role": "assistant", "content": response.content})
+                            messages.append({"role": "system", "content": (
+                                FABRICATION_NUDGE if _looks_fabricated(response.content)
+                                else CLAIM_NUDGE)})
+                            continue
+                        judged_clear = answer
                     break
 
                 messages.append({
@@ -447,7 +436,7 @@ class Agent:
                         cards.append(card)
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": tool_message})
             else:
-                answer = "Похоже, я закопался в подсчётах. Давайте попробуем сформулировать проще?"
+                answer = _overflow_answer(subject, traces, self.llm)
         except LLMUnavailable:
             # Не сохраняем в chat_messages: иначе следующий вызов увидит этот текст как
             # свою же прошлую реплику и при повторном сбое начнёт его зацикленно повторять
@@ -457,17 +446,21 @@ class Agent:
             return reply
 
         if not answer:
-            answer = _fallback_answer(traces)
+            answer = _voiced_silence(subject, traces, self.llm)
 
         # Модель настояла на своём: второй раз подряд «готово» без единого вызова.
         # Слова над пустотой человеку отдавать нельзя — по ним он уйдёт уверенным,
         # что запись есть. Разбирать, что в ответе правда, а что нет, мы не умеем,
         # поэтому меняем его целиком: потерянная живая фраза — цена, ложное
-        # «записала» — нет.
-        if not traces and _claims_done(answer):
+        # «записала» — нет. Правду при этом можно сказать характером — но только
+        # правду: реплика голоса, снова похожая на отчёт, глушится канонической
+        # строкой тем же детектором.
+        if (not traces and _claims_done(answer) and answer != judged_clear
+                and honesty.confirmed_claim(answer, self.llm)):
             logger.warning("Модель отчиталась о работе, которой не было, — "
                            "отвечаю человеку правду вместо её слов")
-            answer = UNBACKED_REPLY
+            voiced = voice.speak(subject, _UNBACKED_HINT, fallback=UNBACKED_REPLY, llm=self.llm)
+            answer = UNBACKED_REPLY if _claims_done(voiced) else voiced
 
         reply = AgentReply(text=answer, traces=traces, cards=cards)
         save_message(db, actor, "assistant", answer, channel=channel, payload=reply.to_payload())
@@ -545,6 +538,45 @@ def _fallback_answer(traces: List[Trace]) -> str:
     return "Похоже, ответ не сложился. Скажите, пожалуйста, ещё раз?"
 
 
+def _facts(traces: List[Trace]) -> str:
+    return "\n".join(f"- {t.summary}" for t in traces if t.status == "done" and t.summary)
+
+
+def _voiced_silence(subject: User, traces: List[Trace], llm: LLMClient) -> str:
+    """Модель промолчала — сказать честное самим, но голосом персоны.
+
+    Факты и запасная строка — прежние (`_fallback_answer`); голос лишь
+    пересказывает их характером. В ветках без сделанной работы реплика голоса,
+    похожая на отчёт о сделанном, глушится запасной строкой: у аварийного пути
+    не может быть права соврать красивее.
+    """
+    fallback = _fallback_answer(traces)
+    done = [t for t in traces if t.status == "done"]
+    if any(t.status == "awaiting" for t in traces):
+        hint = _SILENT_AWAITING_HINT
+    elif done:
+        hint = _SILENT_DONE_HINT.format(facts=_facts(traces))
+    else:
+        hint = _SILENT_EMPTY_HINT
+    voiced = voice.speak(subject, hint, fallback=fallback, llm=llm)
+    if not done and _claims_done(voiced):
+        return fallback
+    return voiced
+
+
+def _overflow_answer(subject: User, traces: List[Trace], llm: LLMClient) -> str:
+    """Лимит шагов исчерпан. Раньше это всегда было «закопался в подсчётах» —
+    даже когда инструменты успели отработать и человеку было что рассказать.
+    Теперь: успел что-то сделать — честный пересказ сделанного, не успел ничего
+    — то же «закопался», по возможности голосом персоны."""
+    done = [t for t in traces if t.status == "done"]
+    if done:
+        return voice.speak(subject, _OVERFLOW_DONE_HINT.format(facts=_facts(traces)),
+                           fallback=_fallback_answer(traces), llm=llm)
+    voiced = voice.speak(subject, _BURIED_HINT, fallback=BURIED_REPLY, llm=llm)
+    return BURIED_REPLY if _claims_done(voiced) else voiced
+
+
 def _log_action(db: Session, user: User, spec: ToolSpec, arguments: dict,
                 result: ToolResult, mode: str, channel: str = None):
     db.add(ActionLog(
@@ -576,27 +608,6 @@ _REJECT_HINT = (
     "Человек отказался от подготовленного действия — нажал «не надо». "
     "Подтверди отказ одной короткой фразой в своей манере: ты ничего не делаешь."
 )
-
-
-def _phrase(subject: User, instruction: str, llm: LLMClient) -> str:
-    """Пересказать уже случившийся факт голосом ассистента этого человека.
-
-    Не `system_prompt()`: та функция собирает промпт для полноценного хода —
-    с инструментами, историей, памятками. Здесь решать нечего, кроме как
-    сказать одну фразу характером, — лишний контекст только рискует утащить
-    модель в сторону. Модель недоступна — вызывающий сам падает на сырой
-    `summary`, как было до этого шага.
-    """
-    system = "\n".join(part for part in (WHO, character_block(instructions.character(subject)), TONE)
-                       if part)
-    try:
-        response = llm.chat(
-            [{"role": "system", "content": system}, {"role": "user", "content": instruction}],
-            task=ROUTINE,
-        )
-    except LLMUnavailable:
-        return ""
-    return response.content.strip()
 
 
 def approve_action(db: Session, pending_id: int, actor: User, channel: str = "web",
@@ -635,8 +646,8 @@ def approve_action(db: Session, pending_id: int, actor: User, channel: str = "we
     db.commit()
 
     _log_action(db, subject, spec, arguments, result, mode="confirmed")
-    spoken = _phrase(subject, _APPROVE_HINT.format(fact=result.summary),
-                     llm or default_client) or result.summary
+    spoken = voice.speak(subject, _APPROVE_HINT.format(fact=result.summary),
+                         fallback=result.summary, llm=llm or default_client)
     reply = replace(result, summary=spoken)
     save_message(db, actor, "assistant", spoken, channel=channel,
                  payload=AgentReply(text=spoken,
@@ -661,7 +672,8 @@ def reject_action(db: Session, pending_id: int, actor: User, channel: str = "web
     pending.resolved_at = datetime.utcnow()
     db.commit()
 
-    spoken = _phrase(actor, _REJECT_HINT, llm or default_client) or "Хорошо, не делаю."
+    spoken = voice.speak(actor, _REJECT_HINT, fallback="Хорошо, не делаю.",
+                         llm=llm or default_client)
     # Сохраняем репликой в разговоре — иначе после перезагрузки экрана отказ
     # пропадает бесследно, а модель на следующем ходу не знает, что просьбу
     # сняли, и продолжает читать её как «ждёт подтверждения».

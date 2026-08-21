@@ -176,7 +176,8 @@ def cursor():
 @router.post("/model/script", dependencies=[Depends(guard)])
 def set_script(payload: Dict[str, Any] = Body(default={})):
     """Очередь ответов модели на ближайшие ходы (см. `app/testkit/director.py`)."""
-    director.set_script(chat=payload.get("chat"), json_replies=payload.get("json"))
+    director.set_script(chat=payload.get("chat"), json_replies=payload.get("json"),
+                        search=payload.get("search"))
     if payload.get("forget_calls"):
         director.forget_calls()
     return {"ok": True, "script": director.script()}

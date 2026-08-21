@@ -9,6 +9,9 @@
         <div class="row wrap" style="gap:8px">
           <span class="badge task">напоминание</span>
           <span class="tiny">⏱ {{ reminder.remind_at|ru_datetime }}</span>
+          {% if reminder.recurrence %}
+            <span class="tiny">↻ {{ recurrence_words[reminder.recurrence] }}</span>
+          {% endif %}
         </div>
         <div class="row" style="gap:8px;align-items:flex-start">
           <div style="flex:1">{{ reminder.text }}</div>

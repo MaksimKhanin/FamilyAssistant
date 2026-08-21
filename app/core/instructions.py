@@ -110,6 +110,15 @@ def set_memo(db: Session, user_id: int, module: str, text: str) -> str:
     return cleaned
 
 
+# --- авто-заметки модулей ---------------------------------------------------
+
+def auto_key(module: str) -> str:
+    """Ключ авто-заметки модуля — того, что пишет о человеке сам модуль,
+    а не человек. Живёт в той же таблице памяток, но под своим именем,
+    чтобы не затирать написанное руками (тикет #75)."""
+    return f"{module}.auto"
+
+
 # --- то, что уходит в промпт ----------------------------------------------
 
 def for_prompt(db: Session, user_id: int, modules: List[str]) -> List[Tuple[str, str]]:
@@ -124,11 +133,16 @@ def for_prompt(db: Session, user_id: int, modules: List[str]) -> List[Tuple[str,
     written = memos(db, user_id)
     pairs = []
     for name in modules:
-        text = written.get(name)
-        if not text:
-            continue
         module = known.get(name)
-        pairs.append((module.title if module else name, text))
+        title = module.title if module else name
+        text = written.get(name)
+        if text:
+            pairs.append((title, text))
+        # Авто-заметка модуля — отдельной парой: она о том же человеке, но
+        # писал её модуль, и человекова памятка ею не затирается.
+        auto = written.get(auto_key(name))
+        if auto:
+            pairs.append((f"{title} (заметки ассистента)", auto))
     return pairs
 
 
@@ -153,5 +167,6 @@ def memo_modules(db: Session, user_id: int, modules: List[str]) -> List[dict]:
             "title": module.title,
             "hint": module.memo_hint,
             "text": written.get(name, ""),
+            "auto": written.get(auto_key(name), ""),
         })
     return rows

@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.core.models import User
 from app.modules.memory import extraction
 from app.modules.memory.models import (
-    Board, BoardEntry, BoardEvent, BoardEventType, BoardShare, Section, RIGHT_EDIT, RIGHT_VIEW,
+    Board, BoardEntry, BoardEntryEmbedding, BoardEvent, BoardEventType, BoardShare, Section,
+    RIGHT_EDIT, RIGHT_VIEW,
 )
 
 #: Владелец — не третье право из board_shares, а вычисленное «доска в моём
@@ -320,6 +321,7 @@ def add_entry(db: Session, user_id: int, board_id: int, text: str,
     db.commit()
     db.refresh(entry)
     parse_entry(db, entry, llm=llm)
+    index_entry(db, entry)
     return entry
 
 
@@ -361,6 +363,7 @@ def edit_entry(db: Session, user_id: int, entry_id: int, text: str,
     entry.edited_at = datetime.utcnow()
     db.commit()
     parse_entry(db, entry, llm=llm)
+    index_entry(db, entry)
     return entry
 
 
@@ -673,10 +676,14 @@ def find_sections_by_name(db: Session, user_id: int, name: str) -> List[Section]
 
 
 def search_entries(db: Session, user_id: int, query: str, limit: int = 8):
-    """Поиск подстрокой по всем доступным доскам; выдача помнит, с какой доски
-    факт, — иначе он теряет контекст. Поиск не дотягивается до чужого:
-    границу держит board_grants. Пустой запрос — просто свежие записи:
-    «что ты помнишь» без ключевого слова тоже законный вопрос."""
+    """Поиск по всем доступным доскам; выдача помнит, с какой доски факт, —
+    иначе он теряет контекст. Поиск не дотягивается до чужого: границу держит
+    board_grants. Пустой запрос — просто свежие записи: «что ты помнишь» без
+    ключевого слова тоже законный вопрос.
+
+    Гибрид (тикет #82): точные подстрочные совпадения первыми — им веры больше,
+    — а недобор до limit добивается поиском по смыслу, если настроена модель
+    эмбеддингов. Без неё поведение прежнее: чистый ILIKE."""
     boards = {g.board.id: g.board for g in board_grants(db, user_id)}
     if not boards:
         return []
@@ -690,7 +697,101 @@ def search_entries(db: Session, user_id: int, query: str, limit: int = 8):
     rows = (rows.order_by(BoardEntry.created_at.desc(), BoardEntry.id.desc())
             .limit(limit)
             .all())
-    return [(entry, boards[entry.board_id]) for entry in rows]
+    found = [(entry, boards[entry.board_id]) for entry in rows]
+    if needle and len(found) < limit:
+        found.extend(_semantic_matches(db, boards, needle, limit - len(found),
+                                       exclude={entry.id for entry, _ in found}))
+    return found
+
+
+#: Ниже этого косинуса запись со своим смыслом не связана: полный перебор
+#: маленького корпуса без порога тащил бы в выдачу что попало.
+SEMANTIC_THRESHOLD = 0.35
+
+
+def _semantic_matches(db: Session, boards: dict, needle: str, count: int, exclude: set):
+    """Топ-k по косинусу среди доступных записей с векторами. Любой сбой —
+    пустой список: поиск по смыслу — добавка к подстрочному, не замена."""
+    from app.core import embeddings as emb
+
+    if count <= 0 or not emb.client.configured:
+        return []
+    try:
+        query_vector = emb.client.embed([needle])[0]
+    except emb.EmbeddingsUnavailable:
+        return []
+    rows = (
+        db.query(BoardEntry, BoardEntryEmbedding)
+        .join(BoardEntryEmbedding, BoardEntryEmbedding.entry_id == BoardEntry.id)
+        .filter(BoardEntry.board_id.in_(boards),
+                BoardEntryEmbedding.model == emb.client.cfg.model)
+        .all()
+    )
+    scored = []
+    for entry, row in rows:
+        if entry.id in exclude:
+            continue
+        score = emb.cosine(query_vector, emb.unpack(row.vector))
+        if score >= SEMANTIC_THRESHOLD:
+            scored.append((score, entry))
+    scored.sort(key=lambda pair: (-pair[0], -pair[1].id))
+    return [(entry, boards[entry.board_id]) for _score, entry in scored[:count]]
+
+
+def index_entry(db: Session, entry: BoardEntry) -> None:
+    """Посчитать записи вектор — best-effort: не настроено или не вышло — молча
+    без него, backfill в планировщике догонит."""
+    from app.core import embeddings as emb
+
+    if not emb.client.configured:
+        return
+    try:
+        vector = emb.client.embed([entry.text])[0]
+    except emb.EmbeddingsUnavailable:
+        return
+    row = db.get(BoardEntryEmbedding, entry.id)
+    if row is None:
+        row = BoardEntryEmbedding(entry_id=entry.id)
+        db.add(row)
+    row.model = emb.client.cfg.model
+    row.vector = emb.pack(vector)
+    row.updated_at = datetime.utcnow()
+    db.commit()
+
+
+def backfill_embeddings(db: Session, batch: int = 20) -> int:
+    """Догоняющая индексация: записи без вектора (или с вектором другой модели)
+    — пачками из тика планировщика. Возвращает, сколько посчитано."""
+    from app.core import embeddings as emb
+
+    if not emb.client.configured:
+        return 0
+    model = emb.client.cfg.model
+    from sqlalchemy import or_
+    rows = (
+        db.query(BoardEntry)
+        .outerjoin(BoardEntryEmbedding, BoardEntryEmbedding.entry_id == BoardEntry.id)
+        .filter(or_(BoardEntryEmbedding.entry_id.is_(None), BoardEntryEmbedding.model != model))
+        .order_by(BoardEntry.id)
+        .limit(batch)
+        .all()
+    )
+    if not rows:
+        return 0
+    try:
+        vectors = emb.client.embed([entry.text for entry in rows])
+    except emb.EmbeddingsUnavailable:
+        return 0
+    for entry, vector in zip(rows, vectors):
+        row = db.get(BoardEntryEmbedding, entry.id)
+        if row is None:
+            row = BoardEntryEmbedding(entry_id=entry.id)
+            db.add(row)
+        row.model = model
+        row.vector = emb.pack(vector)
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    return len(rows)
 
 
 def person_facts(db: Session, user_id: int, limit: int = 8) -> List[str]:
@@ -773,6 +874,19 @@ APPROACH_NOTES_BOARD_INSTRUCTION = (
     "несколько сообщений — дубли объединяет сам, то, против чего человек явно "
     "возразил, убирает сам. Не для показа другим членам семьи."
 )
+IDEAS_BOARD_NAME = "Идеи ассистента"
+IDEAS_BOARD_INSTRUCTION = (
+    "Предложения ассистента этому человеку: что можно упростить или завести — "
+    "табло, правило, напоминание. Ассистент только предлагает и никогда не "
+    "делает сам; человек решает и отвечает словами в разговоре."
+)
+
+
+def ideas_board(db: Session, user_id: int, create: bool = True) -> Optional[Board]:
+    """Доска «Идеи ассистента» — заводится лениво движком идей (тикет #83)."""
+    return _system_board(db, user_id, IDEAS_BOARD_NAME, IDEAS_BOARD_INSTRUCTION, create=create)
+
+
 APPROACH_SUMMARIES_BOARD_NAME = "Итоги разговоров"
 APPROACH_SUMMARIES_BOARD_INSTRUCTION = (
     "Личное. Одна запись — одно предложение о том, чем был очередной разобранный "
@@ -810,6 +924,7 @@ def add_assistant_entry(db: Session, user_id: int, board_id: int, text: str,
     db.commit()
     db.refresh(entry)
     parse_entry(db, entry, llm=llm)
+    index_entry(db, entry)
     return entry
 
 

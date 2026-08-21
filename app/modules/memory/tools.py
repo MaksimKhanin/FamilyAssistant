@@ -104,11 +104,14 @@ def remember(ctx: ToolContext, text: str) -> ToolResult:
     module=MODULE,
     title="Напомнить",
     description="""
-    Поставить разовое напоминание на конкретный момент: «напомни завтра в 9
-    позвонить врачу». Требует абсолютного времени — вычисли дату и время из слов
+    Поставить напоминание на конкретный момент: «напомни завтра в 9 позвонить
+    врачу». Требует абсолютного времени — вычисли дату и время из слов
     человека по текущему моменту из системного промпта («завтра в 9» → конкретная
     дата). Если человек не назвал время или его нельзя понять однозначно —
     не вызывай инструмент, а спроси, когда напомнить.
+    Просят повторять («каждый день», «каждый вторник», «каждое 5-е число») —
+    передай repeat, а в at — первый раз: «каждый вторник в 9» → ближайший
+    вторник 09:00 и repeat=weekly.
     """,
     parameters={
         "type": "object",
@@ -116,12 +119,15 @@ def remember(ctx: ToolContext, text: str) -> ToolResult:
             "text": {"type": "string", "description": "О чём напомнить, коротко"},
             "at": {"type": "string",
                    "description": "Абсолютное местное время «ГГГГ-ММ-ДД ЧЧ:ММ», например «2026-08-15 09:00»"},
+            "repeat": {"type": "string", "enum": ["daily", "weekly", "monthly"],
+                       "description": "Повторение: каждый день / каждую неделю (день недели из at) "
+                                      "/ каждый месяц (число из at). Не передавай для разового."},
         },
         "required": ["text", "at"],
     },
     auto_from=2,
 )
-def set_reminder(ctx: ToolContext, text: str, at: str) -> ToolResult:
+def set_reminder(ctx: ToolContext, text: str, at: str, repeat: str = None) -> ToolResult:
     remind_at = reminders.parse_remind_at(at)
     if remind_at is None:
         return ToolResult(
@@ -136,8 +142,11 @@ def set_reminder(ctx: ToolContext, text: str, at: str) -> ToolResult:
             ok=False,
         )
 
-    reminder = reminders.add_reminder(ctx.db, ctx.subject.id, text=text, remind_at=remind_at)
+    reminder = reminders.add_reminder(ctx.db, ctx.subject.id, text=text, remind_at=remind_at,
+                                      recurrence=repeat)
     when = ru_datetime(reminder.remind_at)
+    if reminder.recurrence:
+        when = f"{when}, {reminders.RECURRENCE_WORDS[reminder.recurrence]}"
     return ToolResult(
         summary=f"Напомню ({when}): {reminder.text}",
         data={"reminder_id": reminder.id},
