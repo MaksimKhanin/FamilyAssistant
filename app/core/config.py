@@ -201,6 +201,10 @@ class Settings:
     #: Сколько раз подряд агент может брать инструмент за один ответ. Ручка для
     #: установок, где модель любит длинные цепочки; умолчание — прежние четыре.
     agent_max_steps: int = 4
+    #: Вторая ступень анти-фабрикации: сработавший регекс переспрашивает модель
+    #: («правда ли это отчёт о сделанном?») и глушит ответ только при
+    #: подтверждении. По умолчанию выключено — регекс решает сам, бесплатно.
+    honesty_judge: bool = False
     #: Задан ли `PUBLIC_BASE_URL` в окружении на самом деле. Умолчание у него
     #: правдоподобное («localhost») и потому опасное: ссылка-приглашение с ним
     #: собирается без единой ошибки и не открывается ни с одного другого
@@ -233,6 +237,7 @@ def load_settings() -> Settings:
         control_api_token=os.environ.get("CONTROL_API_TOKEN", "").strip(),
         testkit_token=os.environ.get("TESTKIT_TOKEN", "").strip(),
         agent_max_steps=_int("AGENT_MAX_STEPS", 4),
+        honesty_judge=_flag("HONESTY_JUDGE", False),
         admin=AdminSettings(
             username=os.environ.get("ADMIN_USERNAME", "admin").strip(),
             password=os.environ.get("ADMIN_PASSWORD", ""),

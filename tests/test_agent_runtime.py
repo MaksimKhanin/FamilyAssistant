@@ -467,3 +467,49 @@ def test_confirmation_falls_back_to_the_raw_summary_without_voice(db, member):
 
     assert result.ok
     assert "хлеб" in result.summary or result.summary  # сырой summary инструмента
+
+
+# --- вторая ступень честности: LLM-судья (тикет #78, HONESTY_JUDGE) ---------
+
+def test_the_judge_can_save_a_falsely_accused_reply(db, member, monkeypatch):
+    """Регекс увидел «отчёт», судья не подтвердил — живая фраза остаётся."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "honesty_judge", True)
+    llm = FakeLLM([
+        LLMResponse(content="Всё записала бы с радостью, но сначала скажи, куда."),
+        {"claim": False},     # судья: это не отчёт о сделанном
+    ])
+    # «записала» без вызова: регекс промолчит из-за «бы»? Возьмём фразу без
+    # спасительных слов — «Уже сохранил твой настрой на неделю вперёд, шучу».
+    llm = FakeLLM([
+        LLMResponse(content="Сохранил твой настрой на неделю вперёд, шучу."),
+        {"claim": False},
+    ])
+    reply = Agent(llm).respond(db, member, "поболтаем?")
+
+    assert reply.text == "Сохранил твой настрой на неделю вперёд, шучу."
+
+
+def test_the_judge_confirms_a_real_claim(db, member, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "honesty_judge", True)
+    llm = FakeLLM([
+        LLMResponse(content=CLAIMED),
+        {"claim": True},      # судья подтвердил: нужен настоящий вызов
+        LLMResponse(content=CLAIMED),
+        {"claim": True},      # и финальная замена тоже подтверждена
+    ])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == UNBACKED_REPLY
+
+
+def test_without_the_flag_the_judge_is_never_called(db, member):
+    """Умолчание — прежнее поведение: регекс решает сам, лишних вызовов нет."""
+    llm = FakeLLM([LLMResponse(content=CLAIMED), LLMResponse(content=CLAIMED)])
+    reply = Agent(llm).respond(db, member, "занеси на доску")
+
+    assert reply.text == UNBACKED_REPLY
+    assert all("Реплика ассистента" not in str(c.get("system", "")) for c in llm.calls)
