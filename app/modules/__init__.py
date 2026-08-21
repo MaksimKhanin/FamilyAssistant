@@ -22,6 +22,12 @@ def load_modules() -> List[Module]:
     if _loaded:
         return _loaded
 
+    # Скиллы — подгружаемые инструкции ассистента (app/agent/skills.py). Не
+    # модуль: ни таблиц, ни экранов, — но часть той же сборки приложения, и
+    # индекс им, как и инструментам, нужен до первого разговора.
+    from app.agent import skills
+    skills.register()
+
     for name in ENABLED_MODULES:
         try:
             package = importlib.import_module(f"app.modules.{name}")
