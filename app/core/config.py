@@ -139,6 +139,26 @@ class SpeechSettings:
 
 
 @dataclass
+class EmbeddingSettings:
+    """Модель эмбеддингов: OpenAI-совместимый `/embeddings`.
+
+    Тот же приём, что у озвучки: адрес и ключ по умолчанию берутся у `LLM_*`
+    (чаще всего это один провайдер), а имя модели умолчания не имеет нарочно —
+    пока его не назвали, поиск по смыслу не включается, и recall ищет
+    подстрокой, как жил всегда. Ничего не ломается и ничего не уходит наружу
+    без явного решения хозяина дома.
+    """
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    request_timeout: float = 20.0
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.model)
+
+
+@dataclass
 class AdminSettings:
     """Первый вход в систему — администратор, заводится из окружения при первом старте.
 
@@ -217,6 +237,7 @@ class Settings:
     llm: LLMSettings = field(default_factory=lambda: LLMSettings("", "", "", "", 0.3, 1024, 60.0))
     speech: SpeechSettings = field(default_factory=SpeechSettings)
     web_search: WebSearchSettings = field(default_factory=WebSearchSettings)
+    embeddings: EmbeddingSettings = field(default_factory=EmbeddingSettings)
 
 
 def load_settings() -> Settings:
@@ -273,6 +294,14 @@ def load_settings() -> Settings:
             model=os.environ.get("SPEECH_MODEL", "").strip(),
             audio_format=os.environ.get("SPEECH_FORMAT", "mp3").strip().lower() or "mp3",
             request_timeout=float(os.environ.get("SPEECH_TIMEOUT", "30")),
+        ),
+        embeddings=EmbeddingSettings(
+            base_url=(os.environ.get("EMBED_BASE_URL", "").strip()
+                      or os.environ.get("LLM_BASE_URL", "").strip()),
+            api_key=(os.environ.get("EMBED_API_KEY", "").strip()
+                     or os.environ.get("LLM_API_KEY", "")),
+            model=os.environ.get("EMBED_MODEL", "").strip(),
+            request_timeout=float(os.environ.get("EMBED_TIMEOUT", "20")),
         ),
         web_search=WebSearchSettings(
             provider=os.environ.get("WEB_SEARCH_PROVIDER", "").strip().lower(),

@@ -256,6 +256,22 @@ def run_relationship_reviews(db: Session):
         processed += 1
 
 
+def run_embedding_backfill(db: Session):
+    """Догоняющая индексация записей для поиска по смыслу (тикет #82).
+
+    Пачка маленькая и молчаливая: без настроенной модели эмбеддингов выходит
+    сразу, с настроенной — довозит векторы записям, заведённым до включения
+    или при недоступном провайдере.
+    """
+    from app.modules.memory import knowledge
+
+    try:
+        knowledge.backfill_embeddings(db)
+    except Exception:
+        logger.exception("Индексация эмбеддингов упала — продолжаю без неё")
+        db.rollback()
+
+
 def run_retention(db: Session):
     from app.modules.memory import reminders as reminders_service
     from app.modules.security.retention import rotate
@@ -272,6 +288,7 @@ def tick(now: datetime = None):
         # После точных-по-минуте задач: разбор «Подхода» медленнее и не должен
         # мешать им попасть в свою минуту.
         run_relationship_reviews(db)
+        run_embedding_backfill(db)
         if local.hour == RETENTION_HOUR and local.minute == 0:
             run_retention(db)
 

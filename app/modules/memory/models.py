@@ -6,8 +6,8 @@
 """
 from datetime import datetime
 
-from sqlalchemy import (Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String,
-                        Text, UniqueConstraint)
+from sqlalchemy import (Boolean, Column, Date, DateTime, Float, ForeignKey, Integer,
+                        LargeBinary, String, Text, UniqueConstraint)
 
 from app.core.db import Base
 
@@ -74,6 +74,24 @@ class BoardEntry(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     #: Правки не тихие: у поправленной записи в ленте видна пометка «изменено».
     edited_at = Column(DateTime, nullable=True)
+
+
+class BoardEntryEmbedding(Base):
+    """Вектор записи для поиска по смыслу (тикет #82, ADR-0017).
+
+    float32-блоб, а не pgvector/sqlite-vec: корпус семьи — сотни записей с
+    капами, косинус по ним считается в Python за миллисекунды, а таблица
+    одинаково живёт в SQLite и Postgres. `model` — чьи это векторы: смена
+    модели эмбеддингов делает старые строки невалидными, и backfill их
+    пересчитывает.
+    """
+    __tablename__ = "board_entry_embeddings"
+
+    entry_id = Column(Integer, ForeignKey("board_entries.id", ondelete="CASCADE"),
+                      primary_key=True)
+    model = Column(String(128), nullable=False)
+    vector = Column(LargeBinary, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class BoardEventType(Base):
