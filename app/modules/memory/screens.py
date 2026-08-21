@@ -1,8 +1,12 @@
-"""Табло — экран одного показателя по ряду задачи статистики (тикет #32, спека #19).
+"""Табло — экран одного показателя по задаче статистики (тикет #32, спека #19).
 
-Табло ничего не считает. Числа посчитала задача статистики по событиям доски
-(#31), а табло только показывает накопленный ею ряд — поэтому оно и живёт ровно
-столько, сколько живёт задача за ним, и своего расписания не заводит.
+Числа табло считает код — при каждом показе, по самим событиям доски и по
+календарным дням семьи (`stats.day_series`, ADR-0013). Раньше экран показывал
+ряд, накопленный прогонами сводок, и это было главным источником вранья: пустой
+экран при выключенной сводке, вчерашние записи в сегодняшнем столбике,
+замороженная первым прогоном цифра. Модели в этих числах по-прежнему нет.
+Табло живёт ровно столько, сколько живёт задача за ним, и своего расписания
+не заводит.
 
 Вид — выбор из четырёх готовых форм, а не разметка, сочинённая моделью: модель
 предлагает, какая из четырёх подходит ряду, человек правит словами или руками.
@@ -16,6 +20,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import local_today
 from app.core.module import NavItem
 from app.core.models import User
 from app.modules.memory import knowledge, stats
@@ -172,15 +177,20 @@ def _line(values: List[float], peak: float) -> str:
 def screen_view(db: Session, user_id: int, screen: BoardStatsScreen) -> Optional[dict]:
     """Всё, что нужно экрану табло: ряд за окно, последнее число и его дельта.
 
-    Пустых дней в ряду нет и не выдумывается: задача не пишет точку за сутки, в
-    которых нечего было считать, — и табло честно говорит «данных за N дней из
-    M», а не рисует провал, которого не было (ADR-0002).
+    Ряд считается по событиям доски на каждый показ (`stats.day_series`,
+    ADR-0013) — табло не ждёт прогона сводки и видит поздние записи, правки и
+    ответы на плашку уточнения в их собственный день.
+
+    Пустых дней в ряду нет и не выдумывается: за сутки, в которых нечего было
+    считать, столбика нет — табло честно говорит «данных за N дней из M», а не
+    рисует провал, которого не было (ADR-0002).
     """
     task = stats.get_task(db, user_id, screen.task_id)
     if task is None:
         return None
-    points = stats.series(db, task.id, days=WINDOW_DAYS)
-    values = [point.value for point in points]
+    series = stats.day_series(db, task, days=WINDOW_DAYS)
+    points = series.points
+    values = [point["value"] for point in points]
     peak = max(values) if values else 0.0
     # Доска берётся из самого гранта: у права на неё она уже есть, и ходить за
     # ней вторым запросом незачем.
@@ -192,16 +202,22 @@ def screen_view(db: Session, user_id: int, screen: BoardStatsScreen) -> Optional
         "board_url": knowledge.board_url(grant) if grant is not None else "/memory",
         "form": screen.form if screen.form in FORMS else DEFAULT_FORM,
         "forms": FORMS,
-        "unit": points[-1].unit if points else None,
-        "points": [{"day": point.day, "value": point.value,
-                    "height": round(point.value / peak * 100) if peak else 0}
+        "unit": series.unit,
+        "points": [{"day": point["day"], "value": point["value"],
+                    "height": round(point["value"] / peak * 100) if peak else 0}
                    for point in points],
         "line": _line(values, peak or 1.0),
         "last": values[-1] if values else None,
         "delta": values[-1] - values[-2] if len(values) > 1 else None,
         # С чем сравнили: в ряду бывают дыры, и «ко вчерашнему» на разнице с
         # позапрошлой средой было бы неправдой (ADR-0002).
-        "delta_from": points[-2].day if len(points) > 1 else None,
+        "delta_from": points[-2]["day"] if len(points) > 1 else None,
+        # Последний столбик — сегодняшний, и день ещё идёт: число будет расти,
+        # и выдавать его за итог дня нельзя (ADR-0002).
+        "today": bool(points) and points[-1]["day"] == local_today(),
+        # События задачи, чью единицу точно не пересчитать в единицу ряда: в ось
+        # они не легли, но табло их называет, а не теряет молча.
+        "stray": series.stray,
         "peak": peak,
         "days_asked": WINDOW_DAYS,
         "days_have": len(points),

@@ -547,7 +547,8 @@ def show_stats(ctx: ToolContext, board: str, name: str, kind: str = None,
     if refusal is not None:
         return refusal
 
-    # Табло растёт из ряда, а ряд — из задачи: считать заново оно не умеет.
+    # Табло держится за задачу статистики: без неё некому назвать тип и окно,
+    # по которым код считает ряд.
     on_board = stats.list_tasks(ctx.db, grant.board.id)
     mine = stats.visible_tasks(ctx.db, ctx.actor.id, [task.id for task in on_board])
     tasks = [task for task in on_board if task.id in mine]
